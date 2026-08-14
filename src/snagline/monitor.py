@@ -18,6 +18,7 @@ import logging
 import threading
 from typing import List
 
+from snagline.config import Config
 from snagline.detectors.base import Detector
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk
@@ -84,3 +85,25 @@ class Monitor:
         that this is safe.
         """
         self.ingest(event)
+
+    @classmethod
+    def default(
+        cls,
+        config: Config | None = None,
+        sinks: list[AlertSink] | None = None,
+    ) -> "Monitor":
+        """Construct a zero-configuration Monitor with sensible defaults.
+
+        Wires up the tier-1 detectors available in this build phase
+        (loop + error-cascade) and, unless ``sinks`` is given, the console
+        sink. Later build phases register additional detectors here as they
+        land (project.md §5.4).
+        """
+        from snagline.detectors.error_cascade import ErrorCascadeDetector
+        from snagline.detectors.loop import LoopDetector
+        from snagline.sinks.console import ConsoleSink
+
+        cfg = config or Config()
+        detectors: list[Detector] = [LoopDetector(config=cfg), ErrorCascadeDetector(config=cfg)]
+        chosen_sinks: list[AlertSink] = sinks if sinks is not None else [ConsoleSink()]
+        return cls(detectors, chosen_sinks, fail_open=cfg.fail_open)

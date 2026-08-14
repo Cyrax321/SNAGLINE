@@ -1,0 +1,55 @@
+"""Loop detector (tier-1, deterministic, O(1) amortized).
+
+Per-episode sliding window (``collections.deque``) of recent
+``action_signature`` values. If the same signature appears
+``repeat_threshold`` times within ``window_size`` steps, emit a risk.
+
+No raw content is read -- only the one-way ``action_signature`` hash, so a
+loop of identical retry attempts is caught without ever seeing the prompt or
+response text (project.md §1.4).
+"""
+
+from __future__ import annotations
+
+from collections import deque
+from typing import Dict
+
+from snagline.config import Config
+from snagline.events import StepEvent
+from snagline.risk import FailureRisk
+
+
+class LoopDetector:
+    name = "loop"
+
+    def __init__(
+        self,
+        window_size: int | None = None,
+        repeat_threshold: int | None = None,
+        config: Config | None = None,
+    ) -> None:
+        cfg = config or Config()
+        self.window_size = window_size if window_size is not None else cfg.loop_window_size
+        self.repeat_threshold = (
+            repeat_threshold if repeat_threshold is not None else cfg.loop_repeat_threshold
+        )
+        self._windows: Dict[str, deque] = {}
+
+    def observe(self, event: StepEvent) -> FailureRisk | None:
+        w = self._windows.setdefault(event.episode_id, deque(maxlen=self.window_size))
+        w.append(event.action_signature)
+        count = w.count(event.action_signature)
+        if count >= self.repeat_threshold:
+            score = min(1.0, count / self.repeat_threshold * 0.5)
+            return FailureRisk(
+                event.episode_id,
+                event.step_id,
+                score,
+                "loop",
+                f"action repeated {count}x in last {len(w)} steps",
+                event.timestamp,
+            )
+        return None
+
+    def reset(self, episode_id: str) -> None:
+        self._windows.pop(episode_id, None)

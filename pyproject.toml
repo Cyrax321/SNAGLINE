@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "snagline-agent"
+version = "0.1.0"
+description = "Lightweight, dependency-free real-time failure detection for AI agents."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["agents", "llm", "observability", "monitoring", "fail-open"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = []  # core: zero required dependencies, non-negotiable
+
+[project.optional-dependencies]
+langchain  = ["langchain-core>=0.2"]
+langgraph  = ["langgraph>=0.2"]
+autogen    = ["pyautogen>=0.2"]
+crewai     = ["crewai>=0.30"]
+openai     = ["openai>=1.0"]
+anthropic  = ["anthropic>=0.30"]
+continuum  = []  # depends on CONTINUUM's actual package name/version -- confirm before release
+ml         = ["numpy>=1.24", "scikit-learn>=1.3"]
+drift      = ["sentence-transformers>=2.2"]
+slack      = ["httpx>=0.27"]
+all        = ["snagline-agent[langchain,langgraph,autogen,crewai,openai,anthropic,continuum,ml,drift,slack]"]
+
+[project.scripts]
+snagline = "snagline.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Cyrax321/SNAGLINE"
+
+[tool.setuptools.packages.find]
+where = ["src"]
