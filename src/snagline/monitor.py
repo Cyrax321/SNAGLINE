@@ -86,6 +86,28 @@ class Monitor:
         """
         self.ingest(event)
 
+    def end_episode(self, episode_id: str) -> None:
+        """Signal that ``episode_id`` has finished; clear its per-episode state.
+
+        Calls ``reset(episode_id)`` on every detector so loop windows, CUSUM
+        baselines, and cascade counters for that episode are dropped. This is
+        the teardown hook adapters call when an agent run completes; without it,
+        per-episode state would accumulate for the life of the Monitor.
+
+        Fail-open: a detector's ``reset`` exception is logged, never propagated.
+        """
+        with self._lock:
+            for detector in self._detectors:
+                try:
+                    detector.reset(episode_id)
+                except Exception:
+                    logger.exception(
+                        "snagline detector %s reset raised; ignoring (fail-open)",
+                        getattr(detector, "name", repr(detector)),
+                    )
+                    if not self._fail_open:
+                        raise
+
     @classmethod
     def default(
         cls,
