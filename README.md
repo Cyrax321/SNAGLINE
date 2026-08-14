@@ -101,6 +101,16 @@ PYTHONPATH=src python3 examples/replay_offline_trajectory.py
 # Real LangChain run via the callback handler (needs the langchain extra)
 pip install snagline-agent[langchain]
 PYTHONPATH=src python3 examples/langchain_example.py            # repeated prompt -> loop
+
+# Real-framework chaos harness: prove each detector fires on a genuine
+# LangChain agent loop (no API key required; uses a real langchain_core Tool
+# + callback path, with a scripted fake model). One mode per detector:
+PYTHONPATH=src python3 examples/real_agent_demo.py --mode healthy   # expect SILENCE
+PYTHONPATH=src python3 examples/real_agent_demo.py --mode loop      # loop
+PYTHONPATH=src python3 examples/real_agent_demo.py --mode error     # error_cascade
+PYTHONPATH=src python3 examples/real_agent_demo.py --mode latency   # latency_anomaly
+# With OPENAI_API_KEY / ANTHROPIC_API_KEY + the matching package installed, the
+# healthy run uses a REAL chat model as a false-positive check.
 ```
 
 ## Replay (offline analysis)
