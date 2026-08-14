@@ -143,12 +143,14 @@ class SnaglineCallbackHandler(BaseCallbackHandler):
     def on_llm_start(
         self, serialized: dict, prompts: list, *, run_id: Any, parent_run_id: Any = None, **kwargs: Any
     ) -> None:
-        self._runs.setdefault(str(run_id), {"start": self._clock(), "type": "message", "tool": "llm", "args": "prompt"})
+        # Hash the real prompt text so distinct prompts get distinct signatures
+        # (a constant args would make every LLM call look identical -> false loops).
+        self._runs.setdefault(str(run_id), {"start": self._clock(), "type": "message", "tool": "llm", "args": str(prompts)})
 
     def on_chat_model_start(
         self, serialized: dict, messages: list, *, run_id: Any, parent_run_id: Any = None, **kwargs: Any
     ) -> None:
-        self._runs.setdefault(str(run_id), {"start": self._clock(), "type": "message", "tool": "chat", "args": "messages"})
+        self._runs.setdefault(str(run_id), {"start": self._clock(), "type": "message", "tool": "chat", "args": str(messages)})
 
     def on_llm_end(
         self, response: Any, *, run_id: Any, parent_run_id: Any = None, **kwargs: Any
