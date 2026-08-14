@@ -1,4 +1,4 @@
-"""Tests for ``snagline replay`` against the fixture trajectories (project.md §9)."""
+"""Replay tests against the fixture trajectories (project.md §9/§10)."""
 
 from __future__ import annotations
 
@@ -39,3 +39,15 @@ def test_replay_injected_cascade_detected():
     mon = _monitor()
     replay(os.path.join(FIX, "injected_error_cascade.jsonl"), monitor=mon)
     assert any(r.trigger == "error_cascade" for r in mon._sinks[0].risks)
+
+
+def test_replay_injected_latency_detected():
+    mon = _monitor()
+    replay(os.path.join(FIX, "injected_latency_spike.jsonl"), monitor=mon)
+    assert any(r.trigger == "latency_anomaly" for r in mon._sinks[0].risks)
+
+
+def test_replay_healthy_no_latency_false_positive():
+    mon = _monitor()
+    replay(os.path.join(FIX, "healthy_run.jsonl"), monitor=mon)
+    assert not any(r.trigger == "latency_anomaly" for r in mon._sinks[0].risks)

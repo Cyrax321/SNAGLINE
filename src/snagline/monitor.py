@@ -100,10 +100,15 @@ class Monitor:
         land (project.md §5.4).
         """
         from snagline.detectors.error_cascade import ErrorCascadeDetector
+        from snagline.detectors.latency_anomaly import LatencyAnomalyDetector
         from snagline.detectors.loop import LoopDetector
         from snagline.sinks.console import ConsoleSink
 
         cfg = config or Config()
-        detectors: list[Detector] = [LoopDetector(config=cfg), ErrorCascadeDetector(config=cfg)]
+        detectors: list[Detector] = [
+            LoopDetector(config=cfg),
+            ErrorCascadeDetector(config=cfg),
+            LatencyAnomalyDetector(config=cfg),
+        ]
         chosen_sinks: list[AlertSink] = sinks if sinks is not None else [ConsoleSink()]
         return cls(detectors, chosen_sinks, fail_open=cfg.fail_open)

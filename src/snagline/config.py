@@ -24,6 +24,7 @@ class Config:
     # Latency / CUSUM detector (used once that detector lands)
     cusum_k: float = 0.5
     cusum_h: float = 5.0
+    cusum_min_samples: int = 20  # warm-up: learn baseline before alarming
 
     # Global
     fail_open: bool = True

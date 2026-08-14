@@ -1,9 +1,9 @@
 """Command-line interface for SNAGLINE (project.md §9).
 
-This build phase (v0.1) implements ``snagline replay``. The other subcommands
-(``watch``, ``baseline``, ``bench``) are registered but intentionally not yet
-implemented -- they land in later, explicitly-ordered build steps and will
-error clearly rather than silently do nothing.
+This build phase (v0.1) implements ``snagline replay`` and ``snagline bench``.
+``watch`` and ``baseline`` are registered but intentionally not yet implemented
+-- they land in later, explicitly-ordered build steps and will error clearly
+rather than silently do nothing.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 from typing import List, Optional
 
 from snagline.events import StepEvent
@@ -71,16 +72,34 @@ def _build_parser() -> argparse.ArgumentParser:
         "--summary", action="store_true", help="Print a trailing summary line."
     )
 
+    p_bench = sub.add_parser(
+        "bench", help="Run the ingest() overhead benchmark and print us/step."
+    )
+
     # Registered but not yet implemented in this build phase.
     for name, help_text in [
         ("watch", "Live monitoring mode (dev/debug). [not in v0.1]"),
         ("baseline", "Fit a healthy-run baseline. [not in v0.1]"),
-        ("bench", "Run the overhead benchmark. [not in v0.1]"),
     ]:
         sp = sub.add_parser(name, help=help_text)
         sp.add_argument("__rest", nargs="*", help=argparse.SUPPRESS)
 
     return parser
+
+
+def _cmd_bench() -> int:
+    try:
+        from benchmarks.overhead_benchmark import run_benchmark
+    except ImportError:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+        from benchmarks.overhead_benchmark import run_benchmark
+
+    stats = run_benchmark()
+    print("snagline overhead benchmark")
+    print(f"  steps measured : {stats['n']}")
+    print(f"  median        : {stats['median_us']:.2f} us/step")
+    print(f"  p99           : {stats['p99_us']:.2f} us/step")
+    return 0
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -104,7 +123,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
         return 0
 
-    if args.command in {"watch", "baseline", "bench"}:
+    if args.command == "bench":
+        return _cmd_bench()
+
+    if args.command in {"watch", "baseline"}:
         print(
             f"snagline {args.command} is not implemented in this build phase (v0.1). "
             "It will arrive in a later, explicitly-ordered step.",

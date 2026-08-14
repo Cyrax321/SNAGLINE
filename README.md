@@ -5,9 +5,10 @@ execution stream and flags loops and error cascades in real time** — cheap
 enough to run on every step of a week-long unattended run, with a hard
 fail-open guarantee so it can never crash or stall the agent it monitors.
 
-Current build phase: **v0.1** (loop + error-cascade detection, console sink,
-`raw` adapter, `replay` CLI). The latency/CUSUM detector, overhead benchmark,
-and framework adapters are scheduled for later build steps.
+Current build phase: **v0.1** (loop + error-cascade + latency/CUSUM detection,
+console sink, `raw` adapter, `replay` + `bench` CLIs). Framework adapters
+(LangChain, LangGraph, CONTINUUM, etc.) and the optional ML/goal-drift extras
+are scheduled for later, explicitly-ordered build steps.
 
 ## What it detects
 
@@ -15,6 +16,10 @@ and framework adapters are scheduled for later build steps.
   window (catches retry storms and stuck agents).
 - **Error cascades** — `N` consecutive errors, or `N` errors within a recent
   window (catches both fast and slow-burn failures).
+- **Latency anomalies** — a sustained deviation of a tool's `latency_ms` from
+  its own running baseline, via a Welford/CUSUM statistic (stdlib only, no
+  numpy). A short warm-up learns the baseline before any alarm can fire, so
+  normal run-to-run jitter does not produce false positives.
 
 Detection is deterministic and `O(1)` amortized per step. It runs with no
 network calls and no LLM calls.
@@ -89,7 +94,20 @@ snagline replay trajectory.jsonl --summary
 ```
 
 Each line must be a JSON object with the `StepEvent` fields (see
-`tests/fixtures/trajectories/` for worked examples).
+`tests/fixtures/trajectories/` for worked examples, including an injected loop,
+an injected error cascade, and an injected latency spike).
+
+## Overhead
+
+`ingest()` is cheap enough to run on every step of a long unattended run. The
+claim is measured, not asserted -- `benchmarks/overhead_benchmark.py` (run via
+`snagline bench`) times `Monitor.ingest()` over 200,000 synthetic steps:
+
+```
+median 1.4 us/step, p99 ~5-25 us/step   (measured on a 2026 Apple Silicon dev machine; run `snagline bench` to reproduce on yours)
+```
+
+This is comfortably under the sub-100-microsecond per-step target.
 
 ## Fail-open guarantee
 
