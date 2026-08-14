@@ -129,6 +129,38 @@ class SnaglineCallbackHandler(BaseCallbackHandler):
             error_type=type(error).__name__,
         )
 
+    # -- errors (LLM / chat / chain) -----------------------------------------
+    def on_llm_error(
+        self, error: BaseException, *, run_id: Any, parent_run_id: Any = None, **kwargs: Any
+    ) -> None:
+        info = self._runs.pop(str(run_id), None) or {"tool": "llm", "args": ""}
+        self._emit(
+            "message",
+            info["tool"],
+            args=info["args"],
+            error=True,
+            error_type=type(error).__name__,
+        )
+
+    def on_chat_model_error(
+        self, error: BaseException, *, run_id: Any, parent_run_id: Any = None, **kwargs: Any
+    ) -> None:
+        # In langchain-core chat-model errors route through on_llm_error. Delegate
+        # so exactly one error event is emitted regardless of which hook fires.
+        self.on_llm_error(error, run_id=run_id, parent_run_id=parent_run_id, **kwargs)
+
+    def on_chain_error(
+        self, error: BaseException, *, run_id: Any, parent_run_id: Any = None, **kwargs: Any
+    ) -> None:
+        info = self._runs.pop(str(run_id), None) or {"tool": "chain", "args": ""}
+        self._emit(
+            "plan_step",
+            info["tool"],
+            args=info["args"],
+            error=True,
+            error_type=type(error).__name__,
+        )
+
     # -- agent decisions ----------------------------------------------------
     def on_agent_action(self, action: Any, *, run_id: Any, parent_run_id: Any = None, **kwargs: Any) -> None:
         tool = getattr(action, "tool", None)

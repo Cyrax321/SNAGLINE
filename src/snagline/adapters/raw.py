@@ -19,11 +19,14 @@ Usage::
 from __future__ import annotations
 
 import itertools
+import logging
 import time
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, Iterator, Optional
 
-from snagline.events import EpisodeMeta, StepEvent, make_signature
+from snagline.events import StepEvent, make_signature
+
+logger = logging.getLogger("snagline")
 
 
 def _build_signature(action_type: str, tool_name: Optional[str], args: Any) -> str:
@@ -47,7 +50,6 @@ def watch(
     ``metadata`` (which detectors never read).
     """
     counter = itertools.count()
-    EpisodeMeta(episode_id, agent_name=agent_name, started_at=time.time())
 
     def step(
         action_type: str,
@@ -85,4 +87,11 @@ def watch(
     try:
         yield step
     finally:
-        pass
+        # Tear down per-episode detector state so it does not leak across runs
+        # or accumulate for the life of the Monitor (see Monitor.end_episode).
+        try:
+            monitor.end_episode(episode_id)
+        except Exception:
+            logger.exception(
+                "snagline raw adapter end_episode raised; ignoring (fail-open)"
+            )

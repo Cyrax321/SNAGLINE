@@ -65,3 +65,48 @@ def test_reset_clears_state():
     d.reset("ep")
     # after reset, a single spike should not immediately alarm (no baseline yet)
     assert d.observe(_event(6, 400.0)) is None
+
+
+def test_single_spike_detected_after_warmup():
+    # Regression test for the CUSUM rewrite: a single large deviation from a
+    # stable baseline must alarm immediately. The old implementation diluted
+    # the deviation by including the anomaly in the running std and could only
+    # fire after several sustained spikes (and never on a constant baseline).
+    d = LatencyAnomalyDetector(min_samples=15)
+    for i in range(15):
+        assert d.observe(_event(i, 80.0)) is None
+    r = d.observe(_event(15, 400.0))  # lone 5x spike
+    assert r is not None, "single large spike should alarm"
+    assert r.trigger == "latency_anomaly"
+    assert r.score >= 0.6
+
+
+def test_small_variation_does_not_false_positive():
+    # Benign, symmetric jitter around a stable baseline must not alarm.
+    d = LatencyAnomalyDetector(min_samples=15)
+    risks = []
+    for i in range(40):
+        if i < 15:
+            latency = 100.0
+        else:
+            # +/-5ms around the 100ms baseline (mean stays ~100ms, no real shift)
+            latency = 100.0 + ((i % 3) - 1) * 5.0
+        r = d.observe(_event(i, latency))
+        if r is not None:
+            risks.append(r)
+    assert not risks, f"false positive on benign jitter: {risks}"
+
+
+def test_sustained_shift_keeps_alarming():
+    # A permanent regression must keep the CUSUM elevated (not be learned away
+    # and forgotten). The old implementation reset to baseline and went quiet.
+    d = LatencyAnomalyDetector(min_samples=15)
+    for i in range(15):
+        d.observe(_event(i, 100.0))
+    alarmed = []
+    for i in range(15, 25):
+        r = d.observe(_event(i, 300.0))
+        alarmed.append(r is not None)
+    assert any(alarmed), "sustained shift should keep alerting"
+    # it should not drop back to silent mid-shift
+    assert alarmed[-1], "alert stopped during a still-elevated shift"

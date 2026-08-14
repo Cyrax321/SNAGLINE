@@ -98,3 +98,28 @@ def test_close_clears_episode_state():
     h.on_tool_start({"name": "retry"}, "same-args", run_id="c3")
     h.on_tool_end("out", run_id="c3")
     assert not mon._sinks[0].risks
+
+
+def test_llm_error_emits_error_event():
+    # LLM / chat-model failures route through on_llm_error (or
+    # on_chat_model_error); the adapter must capture them as error events so
+    # error_cascade can fire. Previously only on_tool_error existed.
+    mon = _monitor()
+    h = SnaglineCallbackHandler(mon, "ep1")
+    h.on_chat_model_start({"name": "chat"}, [["user", "hi"]], run_id="rl")
+    h.on_llm_error(RuntimeError("model down"), run_id="rl")
+    e = mon.events[-1]
+    assert e.error is True
+    assert e.error_type == "RuntimeError"
+    assert e.action_type == "message"
+
+
+def test_chain_error_emits_error_event():
+    mon = _monitor()
+    h = SnaglineCallbackHandler(mon, "ep1")
+    h.on_chain_start({"name": "planner"}, {"input": 1}, run_id="rc")
+    h.on_chain_error(ValueError("bad plan"), run_id="rc")
+    e = mon.events[-1]
+    assert e.error is True
+    assert e.error_type == "ValueError"
+    assert e.action_type == "plan_step"
