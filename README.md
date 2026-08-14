@@ -113,6 +113,18 @@ PYTHONPATH=src python3 examples/real_agent_demo.py --mode latency   # latency_an
 # healthy run uses a REAL chat model as a false-positive check.
 ```
 
+The same chaos scenarios, but driven through a **real LangChain 1.x
+`create_agent` agent** (a LangGraph `CompiledStateGraph`) instead of a hand-rolled
+loop, so the adapter is proven against the actual framework:
+
+```
+pip install langchain snagline-agent[langchain]
+PYTHONPATH=src python3 examples/real_agent_executor_demo.py --mode loop
+PYTHONPATH=src python3 examples/real_agent_executor_demo.py --mode error
+PYTHONPATH=src python3 examples/real_agent_executor_demo.py --mode latency
+PYTHONPATH=src python3 examples/real_agent_executor_demo.py --mode healthy
+```
+
 ## Replay (offline analysis)
 
 The same detectors run over an exported trajectory file:
