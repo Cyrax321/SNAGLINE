@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Test / benchmark artifacts
+.pytest_cache/
+.benchmarks/
+*.bench.json
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Local config (never commit secrets)
+*.local.toml
+.env
