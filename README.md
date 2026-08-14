@@ -85,6 +85,24 @@ Any detected failure is printed as a JSON line to stderr, e.g.:
 
 See `examples/raw_loop_example.py` for a runnable end-to-end example.
 
+## Runnable examples
+
+All examples live under `examples/` and run against the source tree with
+`PYTHONPATH=src`:
+
+```
+# Plain agent loop (the `raw` adapter); shows loop + error-cascade + latency risks
+PYTHONPATH=src python3 examples/raw_loop_example.py
+PYTHONPATH=src python3 examples/raw_loop_example.py --healthy   # clean run, no risks
+
+# Offline trajectory replay (loop + error-cascade + latency)
+PYTHONPATH=src python3 examples/replay_offline_trajectory.py
+
+# Real LangChain run via the callback handler (needs the langchain extra)
+pip install snagline-agent[langchain]
+PYTHONPATH=src python3 examples/langchain_example.py            # repeated prompt -> loop
+```
+
 ## Replay (offline analysis)
 
 The same detectors run over an exported trajectory file:
