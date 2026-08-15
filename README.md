@@ -28,73 +28,112 @@ bench : median 1.05 us/step, p99 1.14 us/step over 200,000 synthetic steps
 
 ```mermaid
 flowchart TB
-    subgraph Runtimes["Agent runtimes"]
-        Raw["Raw Python loop"]
-        LC["LangChain / LangGraph agent"]
-        CC["Claude Code / OpenClaw / Hermes (external process)"]
-        Other["AutoGen / CrewAI / CONTINUUM ledger"]
+    subgraph Sources["Agent runtimes / event sources"]
+        S1["Raw Python agent loop"]
+        S2["LangChain agent<br/>(BaseCallbackHandler)"]
+        S3["LangGraph graph.stream()"]
+        S4["Claude Code / OpenClaw / Hermes<br/>(external process)"]
+        S5["Any framework writing JSONL logs"]
     end
 
-    subgraph Adapters["Adapters (canonicalize to StepEvent)"]
-        A_Raw["raw.watch / watch_graph"]
-        A_LC["langchain / langgraph adapter"]
-        A_CC["claude_code hooks bridge"]
-        A_File["snagline watch --file"]
+    subgraph InProc["In-process adapters (snagline/adapters/)"]
+        A1["raw.watch()<br/>stdlib, always available"]
+        A2["SnaglineCallbackHandler<br/>[langchain] extra"]
+        A3["watch_graph()<br/>[langgraph] extra"]
     end
 
-    CC -->|"HTTP / command / file hook"| Sidecar
-    Sidecar["snagline serve (stdlib HTTP sidecar)"] -->|"/events, /hooks/claude-code"| A_CC
+    S1 --> A1
+    S2 --> A2
+    S3 --> A3
 
-    Raw --> A_Raw
-    LC --> A_LC
-    Other --> A_File
-
-    A_Raw --> Stream
-    A_LC --> Stream
-    A_CC --> Stream
-    A_File --> Stream
-
-    Stream["Canonical StepEvent stream"]
-
-    subgraph Monitor["Monitor (fail-open)"]
-        Ingest["ingest()"]
-        Loop["Loop detector"]
-        Err["Error-cascade detector"]
-        Lat["Latency / CUSUM detector"]
-        Ingest --> Loop
-        Ingest --> Err
-        Ingest --> Lat
+    subgraph Schema["Canonical schema (snagline/events.py)"]
+        E["StepEvent<br/>action_signature = SHA-256<br/>(make_signature, one-way)"]
     end
 
-    Stream --> Ingest
-    Loop --> Risk["FailureRisk (JSON)"]
-    Err --> Risk
-    Lat --> Risk
+    A1 --> E
+    A2 --> E
+    A3 --> E
 
-    subgraph Sinks["Sinks"]
-        Console["Console (stderr)"]
-        Webhook["Webhook (urllib, fire-and-forget)"]
+    subgraph Monitor["Monitor orchestrator (snagline/monitor.py)"]
+        M["Monitor.ingest()<br/>per-instance lock, fail_open=True<br/>swallows detector/sink errors"]
+        CF["Config (snagline/config.py)<br/>loop / cascade / CUSUM thresholds"]
+        M -.- CF
     end
 
-    Risk --> Console
-    Risk --> Webhook
+    E --> M
 
-    subgraph CLI["snagline CLI"]
-        C_Watch["watch"]
-        C_Serve["serve"]
-        C_Replay["replay"]
-        C_Bench["bench"]
+    subgraph Detectors["Detectors (snagline/detectors/)"]
+        D1["LoopDetector<br/>repeat Nx in sliding window"]
+        D2["ErrorCascadeDetector<br/>N consecutive / window errors"]
+        D3["LatencyAnomalyDetector<br/>Welford/CUSUM vs baseline"]
     end
 
-    Console --> CLI
-    Webhook --> CLI
+    M --> D1
+    M --> D2
+    M --> D3
+
+    subgraph Risk["FailureRisk (snagline/risk.py)"]
+        R["episode_id, step_id, score,<br/>trigger, detail, timestamp<br/>(no raw content / metadata)"]
+    end
+
+    D1 --> R
+    D2 --> R
+    D3 --> R
+
+    subgraph Sinks["Sinks (snagline/sinks/)"]
+        K1["ConsoleSink<br/>JSON line to stderr"]
+        K2["WebhookSink<br/>urllib POST, fire-and-forget"]
+    end
+
+    R --> K1
+    R --> K2
+
+    subgraph Sidecar["Sidecar server (snagline/server/http_server.py)"]
+        SV["ThreadingHTTPServer<br/>POST /events -> StepEvent.ingest()<br/>POST /hooks/claude-code -><br/>claude_code.ingest_payload()<br/>GET /health, GET /risks, POST /risks"]
+    end
+
+    S4 -->|"http / command / file hook"| SV
+    SV --> E
+    A3 -.->|"served by"| SV
+
+    subgraph CLI["snagline CLI (snagline/cli.py)"]
+        C1["replay (offline JSONL)"]
+        C2["bench (overhead)"]
+        C3["watch (stdin / --file --follow)"]
+        C4["serve (sidecar)"]
+        C5["hook (command bridge)"]
+        C6["baseline (stub, [ml] extra)"]
+    end
+
+    S5 --> C3
+    S4 --> C5
+    K1 --> CLI
+    K2 -->|"POST /risks"| SV
+    C3 --> E
+    C5 --> E
 ```
 
-The diagram shows the three layers: agent runtimes feed adapters that
-canonicalize every step into a `StepEvent`; the `Monitor` runs the deterministic
-detectors and emits `FailureRisk` JSON; sinks deliver alerts. External,
-non-Python agents bridge in through the stdlib sidecar over HTTP, command, or
-file, so the same detector core serves every runtime.
+How the real pieces fit:
+
+- **In-process adapters** (`raw.watch`, `SnaglineCallbackHandler`, `watch_graph`)
+  build a `StepEvent` and call `Monitor.ingest()` directly. `raw.watch` is
+  stdlib-only and always available; the LangChain and LangGraph adapters are
+  optional extras.
+- **External agents** (Claude Code, OpenClaw, Hermes) run as separate
+  processes. They bridge in through `snagline serve` (a stdlib
+  `ThreadingHTTPServer`): `POST /events` ingests a `StepEvent`, and
+  `POST /hooks/claude-code` maps a native Claude Code hook payload via
+  `claude_code.ingest_payload` (with `HookTracker` pairing `PreToolUse` /
+  `PostToolUse` to derive `latency_ms`). The `snagline hook` CLI is the
+  equivalent command bridge, and `snagline watch --file` tails a JSONL log.
+- **`Monitor`** holds the fail-open guarantee: every detector `observe()` and
+  sink `emit()` is wrapped so an exception is logged and swallowed, never
+  propagated into the host agent (`fail_open=False` for strict/test use).
+- **Detectors** (`LoopDetector`, `ErrorCascadeDetector`, `LatencyAnomalyDetector`)
+  are configured from a single `Config` and each return a `FailureRisk` or
+  `None`. `FailureRisk` carries no raw content or `metadata`.
+- **Sinks** (`ConsoleSink`, `WebhookSink`) deliver the `FailureRisk` JSON.
+  `WebhookSink` can POST to a sibling sidecar's `POST /risks` endpoint.
 
 ## What it detects
 
