@@ -179,9 +179,16 @@ and HTTP sidecar with **real detection** (nothing faked): a genuine
 fires, and a `WebhookSink` POSTs that real `FailureRisk` over HTTP to the
 sidecar's `POST /risks` endpoint, which receives and prints it live.
 
+Full reproducible walkthrough plus verbatim evidence from a ~5-minute live run:
+[`docs/REAL_WORLD_PROOF.md`](docs/REAL_WORLD_PROOF.md).
+
 ```
 # terminal 1: the sidecar (receives risks at POST /risks)
-PYTHONPATH=src python -m snagline.server.http_server serve --port 8787
+snagline serve --port 8787
+# (or without installing the console script:
+#  PYTHONPATH=src python -c "from snagline import Monitor; \
+#    from snagline.server.http_server import serve; \
+#    serve(Monitor.default(), host='127.0.0.1', port=8787)")
 # terminal 2: real LLM -> real detector -> WebhookSink -> sidecar
 export OPENAI_API_KEY=sk-or-...
 PYTHONPATH=src python3 examples/real_time_webhook_demo.py \

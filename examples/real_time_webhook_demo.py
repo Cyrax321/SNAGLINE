@@ -18,7 +18,11 @@ the alert is delivered over HTTP to the sidecar for real.
 
 Setup (two processes, real HTTP between them):
     # terminal 1: the sidecar (receives risks at POST /risks, detects at POST /events)
-    PYTHONPATH=src python -m snagline.server.http_server serve --port 8787
+    snagline serve --port 8787
+    # (or without installing the console script:
+    #  PYTHONPATH=src python -c "from snagline import Monitor; \
+    #    from snagline.server.http_server import serve; \
+    #    serve(Monitor.default(), host='127.0.0.1', port=8787)")
     # terminal 2: this demo
     export OPENAI_API_KEY=sk-or-...
     PYTHONPATH=src python examples/real_time_webhook_demo.py \\
