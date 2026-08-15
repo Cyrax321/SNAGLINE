@@ -1,9 +1,10 @@
 """Command-line interface for SNAGLINE (project.md §9).
 
-This build phase (v0.1) implements ``snagline replay`` and ``snagline bench``.
-``watch`` and ``baseline`` are registered but intentionally not yet implemented
--- they land in later, explicitly-ordered build steps and will error clearly
-rather than silently do nothing.
+Implements ``snagline replay``, ``snagline bench``, ``snagline watch`` (live
+stdin mode), and ``snagline serve`` (the stdlib sidecar HTTP server).
+``baseline`` is registered but intentionally not implemented -- it belongs to
+the ``ml`` extra, a later, explicitly-ordered build step -- and errors clearly
+rather than silently doing nothing.
 """
 
 from __future__ import annotations
@@ -76,15 +77,78 @@ def _build_parser() -> argparse.ArgumentParser:
         "bench", help="Run the ingest() overhead benchmark and print us/step."
     )
 
-    # Registered but not yet implemented in this build phase.
-    for name, help_text in [
-        ("watch", "Live monitoring mode (dev/debug). [not in v0.1]"),
-        ("baseline", "Fit a healthy-run baseline. [not in v0.1]"),
-    ]:
-        sp = sub.add_parser(name, help=help_text)
-        sp.add_argument("__rest", nargs="*", help=argparse.SUPPRESS)
+    p_watch = sub.add_parser(
+        "watch",
+        help="Live mode: read StepEvent JSON lines from stdin, ingest each as it arrives.",
+    )
+    p_watch.add_argument(
+        "--episode-id",
+        default="stdin",
+        help="Episode id for the watched stream [default: stdin].",
+    )
+    p_watch.add_argument(
+        "--sink",
+        choices=["console", "webhook"],
+        default="console",
+        help="Escalation sink [default: console].",
+    )
+    p_watch.add_argument(
+        "--webhook-url",
+        default=None,
+        help="Webhook endpoint (required with --sink webhook).",
+    )
+
+    p_serve = sub.add_parser(
+        "serve",
+        help="Run the sidecar HTTP server (POST /events, GET /health) for non-Python agents.",
+    )
+    p_serve.add_argument("--host", default="127.0.0.1", help="Bind address [default: 127.0.0.1].")
+    p_serve.add_argument("--port", type=int, default=8787, help="Port [default: 8787].")
+
+    # Registered but not yet implemented: belongs to the ml extra (later phase).
+    sp = sub.add_parser("baseline", help="Fit a healthy-run baseline. [ml extra, not built yet]")
+    sp.add_argument("__rest", nargs="*", help=argparse.SUPPRESS)
 
     return parser
+
+
+def _cmd_watch(args: argparse.Namespace) -> int:
+    sinks: list = []
+    if args.sink == "webhook":
+        if not args.webhook_url:
+            print("--webhook-url is required with --sink webhook", file=sys.stderr)
+            return 2
+        from snagline.sinks.webhook import WebhookSink
+
+        sinks.append(WebhookSink(args.webhook_url))
+    monitor = Monitor.default(sinks=sinks or None)
+    steps = 0
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+            event = StepEvent(**obj)
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            print(f"snagline watch: skipping malformed line: {exc}", file=sys.stderr)
+            continue
+        monitor.ingest(event)
+        steps += 1
+    monitor.end_episode(args.episode_id)
+    print(f"snagline watch: ingested {steps} step(s)", file=sys.stderr)
+    return 0
+
+
+def _cmd_serve(args: argparse.Namespace) -> int:
+    from snagline.server.http_server import serve
+
+    print(f"snagline serve: listening on http://{args.host}:{args.port} (POST /events, GET /health)", file=sys.stderr)
+    try:
+        serve(Monitor.default(), host=args.host, port=args.port)
+    except KeyboardInterrupt:
+        pass
+    return 0
 
 
 def _cmd_bench() -> int:
@@ -126,7 +190,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.command == "bench":
         return _cmd_bench()
 
-    if args.command in {"watch", "baseline"}:
+    if args.command == "watch":
+        return _cmd_watch(args)
+
+    if args.command == "serve":
+        return _cmd_serve(args)
+
+    if args.command == "baseline":
         print(
             f"snagline {args.command} is not implemented in this build phase (v0.1). "
             "It will arrive in a later, explicitly-ordered step.",

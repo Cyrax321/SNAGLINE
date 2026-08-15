@@ -1,22 +1,24 @@
 # SNAGLINE
 
 **Lightweight, dependency-free companion library that watches any agent's
-execution stream and flags loops and error cascades in real time** — cheap
+execution stream and flags loops and error cascades in real time** - cheap
 enough to run on every step of a week-long unattended run, with a hard
 fail-open guarantee so it can never crash or stall the agent it monitors.
 
-Current build phase: **v0.1** (loop + error-cascade + latency/CUSUM detection,
-console sink, `raw` adapter, `replay` + `bench` CLIs). Framework adapters
-(LangChain, LangGraph, CONTINUUM, etc.) and the optional ML/goal-drift extras
-are scheduled for later, explicitly-ordered build steps.
+Current build phase: v0.1+ - core detectors (loop, error cascade, latency/CUSUM),
+console + webhook sinks, `raw` / LangChain / LangGraph adapters, a stdlib HTTP
+sidecar for non-Python agents, and `watch` / `serve` / `replay` / `bench` CLIs.
+The optional ML/goal-drift extras and the demand-driven adapters (AutoGen,
+CrewAI, Claude Code hooks, CONTINUUM) are explicitly out of scope until they
+have a verified upstream API or real demand (see `project.md` §13).
 
 ## What it detects
 
-- **Loops** — the same logical action repeating `N` times within a sliding
+- **Loops** - the same logical action repeating `N` times within a sliding
   window (catches retry storms and stuck agents).
-- **Error cascades** — `N` consecutive errors, or `N` errors within a recent
+- **Error cascades** - `N` consecutive errors, or `N` errors within a recent
   window (catches both fast and slow-burn failures).
-- **Latency anomalies** — a sustained deviation of a tool's `latency_ms` from
+- **Latency anomalies** - a sustained deviation of a tool's `latency_ms` from
   its own running baseline, via a Welford/CUSUM statistic (stdlib only, no
   numpy). A short warm-up learns the baseline before any alarm can fire, so
   normal run-to-run jitter does not produce false positives.
@@ -26,15 +28,15 @@ network calls and no LLM calls.
 
 ## What it does NOT do (explicit non-goals)
 
-- **No goal-drift detection** — that needs embeddings and is a real
+- **No goal-drift detection** - that needs embeddings and is a real
   dependency; planned for v2 at earliest.
-- **No automatic repair** — detection and escalation only. Repair is a
+- **No automatic repair** - detection and escalation only. Repair is a
   distinct, harder problem.
 - **No claim to beat the source paper** (arXiv:2608.02464). v1 uses
   deterministic detectors; the paper's statistical ensemble is an optional
   later extra. No detection-accuracy number is claimed here until it has been
   measured honestly.
-- **Not a replacement for human review** on high-stakes actions — it is a cheap
+- **Not a replacement for human review** on high-stakes actions - it is a cheap
   first-pass signal that routes to existing escalation paths.
 
 ## Relationship to CONTINUUM
@@ -48,7 +50,7 @@ CONTINUUM users.
 
 ## Privacy
 
-Detectors reason only about **hashes, timings, counts, and booleans** — never
+Detectors reason only about **hashes, timings, counts, and booleans** - never
 raw prompt or response content. `action_signature` is a one-way SHA-256 digest,
 and the `FailureRisk` payload a sink receives deliberately carries no
 `metadata` field, so an alerting channel (webhook, Slack) cannot become an
@@ -124,6 +126,61 @@ PYTHONPATH=src python3 examples/real_agent_executor_demo.py --mode error
 PYTHONPATH=src python3 examples/real_agent_executor_demo.py --mode latency
 PYTHONPATH=src python3 examples/real_agent_executor_demo.py --mode healthy
 ```
+
+## LangGraph adapter
+
+For code that consumes `graph.stream(...)` directly (LangGraph's default
+`updates` mode), `watch_graph` is a pass-through iterator that monitors as it
+yields - a one-line change to the host code:
+
+```python
+from snagline import Monitor
+from snagline.adapters.langgraph_adapter import watch_graph
+
+monitor = Monitor.default()
+for update in watch_graph(monitor, "ep-1", graph.stream(inputs)):
+    ...  # your normal stream consumption, unchanged
+```
+
+Node name → `tool_name`, time between superstep yields → `latency_ms`, a node
+update carrying an `error` key (or an exception) → `error=True`, and the
+signature hashes the node name plus the update's shape so a node repeatedly
+failing the same way is loop-detectable.
+
+## Sinks
+
+- **Console** (default): `FailureRisk` as a JSON line on stderr.
+- **Webhook**: `WebhookSink(url)` POSTs the same JSON via stdlib
+  `urllib.request` - fire-and-forget with a short timeout, never blocks
+  `ingest()`, silently ignores a dead endpoint. Only `FailureRisk` fields are
+  ever transmitted (no `StepEvent.metadata`), so an alerting channel can't
+  become an accidental data-exfiltration path.
+
+## Sidecar server (non-Python agents)
+
+Any runtime - TypeScript, Node, a Claude Code hook script - can POST events to
+a stdlib-only sidecar:
+
+```
+snagline serve --host 127.0.0.1 --port 8787
+# POST /events   body: StepEvent JSON   -> 202, ingested
+# GET  /health                         -> 200
+```
+
+## Live watch mode
+
+`snagline watch` reads StepEvent JSON lines from stdin and ingests them as
+they arrive (e.g. `tail -f agent_events.jsonl | snagline watch`), with optional
+webhook escalation:
+
+```
+snagline watch --sink webhook --webhook-url https://hooks.example/alerts
+```
+
+## Extending
+
+- `docs/ADAPTER_GUIDE.md` - wire any framework into SNAGLINE in an afternoon.
+- `docs/DETECTOR_GUIDE.md` - the detector contract, constraints, and test shape.
 
 ## Replay (offline analysis)
 

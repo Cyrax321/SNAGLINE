@@ -1,0 +1,96 @@
+"""Sidecar server mode (project.md §7) -- for non-Python agents.
+
+A minimal stdlib ``http.server`` endpoint any runtime (TypeScript, Node, a
+shell script, a Claude Code hook) can POST ``StepEvent`` JSON to:
+
+    POST /events     body: a StepEvent as a JSON object   -> monitor.ingest()
+    GET  /health                                              -> 200 OK
+
+No framework, no third-party dependency -- this keeps the zero-dependency
+principle intact even for server mode. For high-throughput production use,
+front it with a real ASGI server / reverse proxy; that is the user's infra
+choice, not this library's concern.
+
+Risks produced during ingestion are dispatched to the Monitor's sinks as
+usual (console by default), not returned in the HTTP response: ingestion is
+one-way telemetry, and callers should not block on detection results.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any
+
+from snagline.events import StepEvent
+from snagline.monitor import Monitor
+
+logger = logging.getLogger("snagline")
+
+
+def _handle_event_body(monitor: Monitor, body: bytes) -> StepEvent:
+    obj = json.loads(body.decode("utf-8"))
+    if not isinstance(obj, dict):
+        raise ValueError("event body must be a JSON object")
+    return StepEvent(**obj)
+
+
+def make_handler(monitor: Monitor) -> type[BaseHTTPRequestHandler]:
+    """Build a request-handler class bound to ``monitor``."""
+
+    class _Handler(BaseHTTPRequestHandler):
+        # Class attribute set below; typed as Any to satisfy the checker.
+        snagline_monitor: Any = None
+
+        def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+            # Route http.server's access log through logging, not stderr raw.
+            logger.debug("snagline http: " + format, *args)
+
+        def do_GET(self) -> None:  # noqa: N802 - http.server naming
+            if self.path == "/health":
+                self._respond(200, {"status": "ok"})
+            else:
+                self._respond(404, {"error": "not found"})
+
+        def do_POST(self) -> None:  # noqa: N802 - http.server naming
+            if self.path != "/events":
+                self._respond(404, {"error": "not found"})
+                return
+            length = int(self.headers.get("Content-Length") or 0)
+            body = self.rfile.read(length)
+            try:
+                event = _handle_event_body(self.snagline_monitor, body)
+            except (ValueError, TypeError, json.JSONDecodeError):
+                self._respond(400, {"error": "invalid StepEvent JSON"})
+                return
+            # Ingest itself is fail-open inside the Monitor; a bad event shape
+            # above is the only client-visible error.
+            self.snagline_monitor.ingest(event)
+            self._respond(202, {"status": "ingested", "step_id": event.step_id})
+
+        def _respond(self, code: int, payload: dict) -> None:
+            data = (json.dumps(payload) + "\n").encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+    _Handler.snagline_monitor = monitor
+    return _Handler
+
+
+def make_server(monitor: Monitor, host: str = "127.0.0.1", port: int = 8787) -> ThreadingHTTPServer:
+    """Construct a ready-to-``serve_forever()`` sidecar server."""
+    return ThreadingHTTPServer((host, port), make_handler(monitor))
+
+
+def serve(monitor: Monitor, host: str = "127.0.0.1", port: int = 8787) -> None:
+    """Run the sidecar server in the foreground until interrupted."""
+    server = make_server(monitor, host, port)
+    logger.info("snagline sidecar listening on http://%s:%d (POST /events, GET /health)", host, port)
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()
