@@ -1,10 +1,12 @@
 """Command-line interface for SNAGLINE (project.md §9).
 
 Implements ``snagline replay``, ``snagline bench``, ``snagline watch`` (live
-stdin mode), and ``snagline serve`` (the stdlib sidecar HTTP server).
-``baseline`` is registered but intentionally not implemented -- it belongs to
-the ``ml`` extra, a later, explicitly-ordered build step -- and errors clearly
-rather than silently doing nothing.
+stdin or file-follow mode), ``snagline serve`` (the stdlib sidecar HTTP
+server), and ``snagline hook`` (the universal command-hook bridge for
+external agent processes: Claude Code, OpenClaw, Hermes, anything that can
+run a shell command). ``baseline`` is registered but intentionally not
+implemented - it belongs to the ``ml`` extra, a later, explicitly-ordered
+build step - and errors clearly rather than silently doing nothing.
 """
 
 from __future__ import annotations
@@ -12,8 +14,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Iterator, List, Optional
 
 from snagline.events import StepEvent
 from snagline.monitor import Monitor
@@ -82,9 +85,19 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Live mode: read StepEvent JSON lines from stdin, ingest each as it arrives.",
     )
     p_watch.add_argument(
+        "--file",
+        default=None,
+        help="Read StepEvent JSON lines from this file instead of stdin.",
+    )
+    p_watch.add_argument(
+        "--follow",
+        action="store_true",
+        help="With --file: keep reading as the file grows (tail -f).",
+    )
+    p_watch.add_argument(
         "--episode-id",
-        default="stdin",
-        help="Episode id for the watched stream [default: stdin].",
+        default=None,
+        help="Episode id override [default: from the events / file name].",
     )
     p_watch.add_argument(
         "--sink",
@@ -105,11 +118,48 @@ def _build_parser() -> argparse.ArgumentParser:
     p_serve.add_argument("--host", default="127.0.0.1", help="Bind address [default: 127.0.0.1].")
     p_serve.add_argument("--port", type=int, default=8787, help="Port [default: 8787].")
 
+    p_hook = sub.add_parser(
+        "hook",
+        help="Universal hook bridge: map a native hook payload from stdin and forward it.",
+    )
+    p_hook.add_argument(
+        "--url",
+        default=None,
+        help="Forward to a snagline sidecar (POST /events with a canonical StepEvent).",
+    )
+    p_hook.add_argument(
+        "--out",
+        default=None,
+        help="Append the mapped StepEvent as a JSON line to this file (for snagline watch).",
+    )
+    p_hook.add_argument(
+        "--timeout", type=float, default=1.0, help="HTTP timeout when --url is used [s]."
+    )
+
     # Registered but not yet implemented: belongs to the ml extra (later phase).
     sp = sub.add_parser("baseline", help="Fit a healthy-run baseline. [ml extra, not built yet]")
     sp.add_argument("__rest", nargs="*", help=argparse.SUPPRESS)
 
     return parser
+
+
+def _iter_lines(path: Optional[str], follow: bool) -> Iterator[str]:
+    """Yield lines from stdin, or from a file; with ``follow``, tail like -f."""
+    if path is None:
+        yield from sys.stdin
+        return
+    fh = open(path, "r", encoding="utf-8")
+    try:
+        while True:
+            line = fh.readline()
+            if line:
+                yield line
+            elif follow:
+                time.sleep(0.2)
+            else:
+                return
+    finally:
+        fh.close()
 
 
 def _cmd_watch(args: argparse.Namespace) -> int:
@@ -122,22 +172,106 @@ def _cmd_watch(args: argparse.Namespace) -> int:
 
         sinks.append(WebhookSink(args.webhook_url))
     monitor = Monitor.default(sinks=sinks or None)
+    episode = args.episode_id or (args.file or "stdin")
     steps = 0
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-            event = StepEvent(**obj)
-        except (json.JSONDecodeError, TypeError, ValueError) as exc:
-            print(f"snagline watch: skipping malformed line: {exc}", file=sys.stderr)
-            continue
-        monitor.ingest(event)
-        steps += 1
-    monitor.end_episode(args.episode_id)
+    try:
+        for line in _iter_lines(args.file, args.follow):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                event = StepEvent(**obj)
+            except (json.JSONDecodeError, TypeError, ValueError) as exc:
+                print(f"snagline watch: skipping malformed line: {exc}", file=sys.stderr)
+                continue
+            monitor.ingest(event)
+            steps += 1
+    except KeyboardInterrupt:
+        pass
+    finally:
+        monitor.end_episode(episode)
     print(f"snagline watch: ingested {steps} step(s)", file=sys.stderr)
     return 0
+
+
+def _cmd_hook(args: argparse.Namespace) -> int:
+    """Universal command-hook bridge (fail-open: ALWAYS exits 0).
+
+    Reads one hook payload from stdin. Claude Code payloads (detected by
+    ``hook_event_name``) are mapped to a canonical StepEvent; a payload that
+    is already a StepEvent is passed through as-is. The event is then POSTed
+    to ``--url`` and/or appended to ``--out``; with neither, it is ingested
+    into a local default Monitor. Malformed input and network failures are
+    logged to stderr and swallowed - a hook must never break the host agent.
+    """
+    try:
+        raw = sys.stdin.read()
+        payload = json.loads(raw)
+        if not isinstance(payload, dict):
+            raise ValueError("payload must be a JSON object")
+        from snagline.adapters.claude_code import (
+            HookTracker,
+            is_claude_code_payload,
+            payload_to_event,
+        )
+
+        if is_claude_code_payload(payload):
+            event = payload_to_event(payload, tracker=None)
+        else:
+            event = StepEvent(**payload)  # already canonical
+    except Exception as exc:
+        print(f"snagline hook: ignoring malformed payload: {exc}", file=sys.stderr)
+        return 0  # fail-open: never fail the host's hook invocation
+
+    if event is None:  # unmapped lifecycle event (e.g. SessionStart)
+        return 0
+
+    if args.out:
+        try:
+            with open(args.out, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(_event_to_json(event)) + "\n")
+        except OSError as exc:
+            print(f"snagline hook: cannot append to {args.out}: {exc}", file=sys.stderr)
+
+    if args.url:
+        try:
+            import urllib.request
+
+            req = urllib.request.Request(
+                args.url,
+                data=json.dumps(_event_to_json(event)).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=args.timeout) as resp:
+                resp.read()
+        except Exception as exc:
+            print(f"snagline hook: forward to {args.url} failed: {exc}", file=sys.stderr)
+
+    if not args.url and not args.out:
+        try:
+            monitor = Monitor.default()
+            monitor.ingest(event)
+        except Exception:
+            pass  # fail-open by construction; Monitor.default() is also fail-open
+    return 0
+
+
+def _event_to_json(event: StepEvent) -> dict:
+    return {
+        "step_id": event.step_id,
+        "episode_id": event.episode_id,
+        "timestamp": event.timestamp,
+        "action_type": event.action_type,
+        "action_signature": event.action_signature,
+        "tool_name": event.tool_name,
+        "latency_ms": event.latency_ms,
+        "error": event.error,
+        "error_type": event.error_type,
+        "tokens_in": event.tokens_in,
+        "tokens_out": event.tokens_out,
+    }
 
 
 def _cmd_serve(args: argparse.Namespace) -> int:
@@ -192,6 +326,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.command == "watch":
         return _cmd_watch(args)
+
+    if args.command == "hook":
+        return _cmd_hook(args)
 
     if args.command == "serve":
         return _cmd_serve(args)

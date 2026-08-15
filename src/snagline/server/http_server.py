@@ -3,8 +3,9 @@
 A minimal stdlib ``http.server`` endpoint any runtime (TypeScript, Node, a
 shell script, a Claude Code hook) can POST ``StepEvent`` JSON to:
 
-    POST /events     body: a StepEvent as a JSON object   -> monitor.ingest()
-    GET  /health                                              -> 200 OK
+    POST /events             body: a StepEvent as a JSON object      -> monitor.ingest()
+    POST /hooks/claude-code  body: a native Claude Code hook payload -> mapped + ingested
+    GET  /health                                                     -> 200 OK
 
 No framework, no third-party dependency -- this keeps the zero-dependency
 principle intact even for server mode. For high-throughput production use,
@@ -23,6 +24,7 @@ import logging
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
+from snagline.adapters.claude_code import HookTracker, ingest_payload
 from snagline.events import StepEvent
 from snagline.monitor import Monitor
 
@@ -38,10 +40,12 @@ def _handle_event_body(monitor: Monitor, body: bytes) -> StepEvent:
 
 def make_handler(monitor: Monitor) -> type[BaseHTTPRequestHandler]:
     """Build a request-handler class bound to ``monitor``."""
+    tracker = HookTracker()
 
     class _Handler(BaseHTTPRequestHandler):
         # Class attribute set below; typed as Any to satisfy the checker.
         snagline_monitor: Any = None
+        snagline_tracker: Any = None
 
         def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
             # Route http.server's access log through logging, not stderr raw.
@@ -54,11 +58,15 @@ def make_handler(monitor: Monitor) -> type[BaseHTTPRequestHandler]:
                 self._respond(404, {"error": "not found"})
 
         def do_POST(self) -> None:  # noqa: N802 - http.server naming
-            if self.path != "/events":
+            if self.path == "/events":
+                self._post_events()
+            elif self.path == "/hooks/claude-code":
+                self._post_claude_hook()
+            else:
                 self._respond(404, {"error": "not found"})
-                return
-            length = int(self.headers.get("Content-Length") or 0)
-            body = self.rfile.read(length)
+
+        def _post_events(self) -> None:
+            body = self._read_body()
             try:
                 event = _handle_event_body(self.snagline_monitor, body)
             except (ValueError, TypeError, json.JSONDecodeError):
@@ -69,6 +77,35 @@ def make_handler(monitor: Monitor) -> type[BaseHTTPRequestHandler]:
             self.snagline_monitor.ingest(event)
             self._respond(202, {"status": "ingested", "step_id": event.step_id})
 
+        def _post_claude_hook(self) -> None:
+            """Accept a native Claude Code hook payload (http hook type).
+
+            Claude Code posts its own JSON (hook_event_name, session_id,
+            tool_name, ...); the adapter maps it to a StepEvent. Used for
+            unmapped lifecycle events too, responding 202 so the host never
+            retries noise.
+            """
+            body = self._read_body()
+            try:
+                payload = json.loads(body.decode("utf-8"))
+                if not isinstance(payload, dict):
+                    raise ValueError
+            except (ValueError, json.JSONDecodeError):
+                self._respond(400, {"error": "invalid hook JSON"})
+                return
+            event = ingest_payload(self.snagline_monitor, payload, self.snagline_tracker)
+            self._respond(
+                202,
+                {
+                    "status": "ingested" if event is not None else "ignored",
+                    "step_id": event.step_id if event else None,
+                },
+            )
+
+        def _read_body(self) -> bytes:
+            length = int(self.headers.get("Content-Length") or 0)
+            return self.rfile.read(length)
+
         def _respond(self, code: int, payload: dict) -> None:
             data = (json.dumps(payload) + "\n").encode("utf-8")
             self.send_response(code)
@@ -78,6 +115,7 @@ def make_handler(monitor: Monitor) -> type[BaseHTTPRequestHandler]:
             self.wfile.write(data)
 
     _Handler.snagline_monitor = monitor
+    _Handler.snagline_tracker = tracker
     return _Handler
 
 

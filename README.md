@@ -127,6 +127,31 @@ PYTHONPATH=src python3 examples/real_agent_executor_demo.py --mode latency
 PYTHONPATH=src python3 examples/real_agent_executor_demo.py --mode healthy
 ```
 
+### Real LLM, real time (OpenRouter / OpenAI / Anthropic)
+
+`examples/real_time_llm_demo.py` attaches SNAGLINE to a genuine `create_agent`
+run backed by a **real chat model** and **real tools**, so detections stream
+out as the model drives tools. Modes: `healthy` (should be silent —
+false-positive check), `error` (a tool that raises on every call →
+`error_cascade`), `latency` (one tool with variable latency →
+`latency_anomaly`).
+
+OpenRouter serves an OpenAI-compatible API with free models — no paid key
+needed. The key is read from `OPENAI_API_KEY` at runtime and never written to
+disk by the script:
+
+```
+export OPENAI_API_KEY=sk-or-...
+PYTHONPATH=src python3 examples/real_time_llm_demo.py \
+    --provider openai --base-url https://openrouter.ai/api/v1 \
+    --model openai/gpt-oss-20b:free --mode error
+```
+
+> Note: free-tier models are often rate-limited / return transient `502`s.
+> SNAGLINE correctly flags repeated model failures as an `error_cascade` (see
+> issue #16 — LLM errors currently count toward the cascade). For a stable
+> `healthy`=silent run, use a reliable model.
+
 ## LangGraph adapter
 
 For code that consumes `graph.stream(...)` directly (LangGraph's default
@@ -177,10 +202,39 @@ webhook escalation:
 snagline watch --sink webhook --webhook-url https://hooks.example/alerts
 ```
 
+## Connecting external agent processes (Claude Code, OpenClaw, Hermes, ...)
+
+Claude Code, OpenClaw, and Hermes are processes, not Python libraries, so
+SNAGLINE bridges at the process level with three universal mechanisms - HTTP,
+command, and file - documented with copy-paste wiring for each framework in
+`docs/FRAMEWORK_BRIDGES.md`. The short version:
+
+```
+# start the receiver once (stdlib only)
+snagline serve --port 8787
+
+# Claude Code: add a native http hook to .claude/settings.json
+#   { "type": "http", "url": "http://127.0.0.1:8787/hooks/claude-code" }
+# -> SNAGLINE maps the native hook payload itself: tool loops, error
+#    cascades (PostToolUseFailure), and latency (Pre/Post paired by
+#    tool_use_id) are detected with zero glue code.
+
+# any shell-capable framework: pipe any hook payload through the bridge
+some-hook-event.json | snagline hook --url http://127.0.0.1:8787/events
+
+# any framework that can only append to a file
+snagline watch --file /var/log/agent/events.jsonl --follow
+```
+
+`snagline hook` always exits 0 and never blocks, so a monitoring bridge can
+never break the agent it monitors.
+
 ## Extending
 
 - `docs/ADAPTER_GUIDE.md` - wire any framework into SNAGLINE in an afternoon.
 - `docs/DETECTOR_GUIDE.md` - the detector contract, constraints, and test shape.
+- `docs/FRAMEWORK_BRIDGES.md` - connect external agent processes (Claude Code,
+  OpenClaw, Hermes) via HTTP, command, or file bridges.
 
 ## Replay (offline analysis)
 
