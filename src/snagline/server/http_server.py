@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -46,6 +47,7 @@ def make_handler(monitor: Monitor) -> type[BaseHTTPRequestHandler]:
         # Class attribute set below; typed as Any to satisfy the checker.
         snagline_monitor: Any = None
         snagline_tracker: Any = None
+        snagline_risks: Any = None
 
         def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
             # Route http.server's access log through logging, not stderr raw.
@@ -54,6 +56,8 @@ def make_handler(monitor: Monitor) -> type[BaseHTTPRequestHandler]:
         def do_GET(self) -> None:  # noqa: N802 - http.server naming
             if self.path == "/health":
                 self._respond(200, {"status": "ok"})
+            elif self.path == "/risks":
+                self._respond(200, {"risks": self.snagline_risks})
             else:
                 self._respond(404, {"error": "not found"})
 
@@ -62,8 +66,36 @@ def make_handler(monitor: Monitor) -> type[BaseHTTPRequestHandler]:
                 self._post_events()
             elif self.path == "/hooks/claude-code":
                 self._post_claude_hook()
+            elif self.path == "/risks":
+                self._post_risks()
             else:
                 self._respond(404, {"error": "not found"})
+
+        def _post_risks(self) -> None:
+            """Receive a ``FailureRisk`` JSON emitted by a WebhookSink elsewhere.
+
+            This closes the loop with ``sinks.webhook.WebhookSink``: a remote
+            or sibling agent posts its detected risks here, and the sidecar
+            records/displays them. Validation is lenient and fail-open -- a
+            malformed body is acknowledged (202) so the sender never retries.
+            """
+            body = self._read_body()
+            try:
+                risk = json.loads(body.decode("utf-8"))
+                if not isinstance(risk, dict):
+                    raise ValueError
+            except (ValueError, json.JSONDecodeError):
+                self._respond(400, {"error": "invalid risk JSON"})
+                return
+            self.snagline_risks.append(risk)
+            logger.info("snagline sidecar received risk: %s", risk)
+            print(
+                f"[sidecar] RECEIVED risk -> trigger={risk.get('trigger')} "
+                f"score={risk.get('score')} detail={risk.get('detail')}",
+                file=sys.stderr,
+                flush=True,
+            )
+            self._respond(202, {"status": "received", "trigger": risk.get("trigger")})
 
         def _post_events(self) -> None:
             body = self._read_body()
@@ -116,6 +148,7 @@ def make_handler(monitor: Monitor) -> type[BaseHTTPRequestHandler]:
 
     _Handler.snagline_monitor = monitor
     _Handler.snagline_tracker = tracker
+    _Handler.snagline_risks = []
     return _Handler
 
 

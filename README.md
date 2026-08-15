@@ -171,6 +171,28 @@ Note: free-tier models are often rate-limited or return transient `502`s.
 SNAGLINE correctly flags repeated model failures as an `error_cascade`. For a
 stable `healthy` = silent run, use a reliable model.
 
+### Webhook sink → HTTP sidecar (real-time, end-to-end)
+
+`examples/real_time_webhook_demo.py` closes the loop on the NEW webhook sink
+and HTTP sidecar with **real detection** (nothing faked): a genuine
+`create_agent` run drives a real failing tool, the real `ErrorCascadeDetector`
+fires, and a `WebhookSink` POSTs that real `FailureRisk` over HTTP to the
+sidecar's `POST /risks` endpoint, which receives and prints it live.
+
+```
+# terminal 1: the sidecar (receives risks at POST /risks)
+PYTHONPATH=src python -m snagline.server.http_server serve --port 8787
+# terminal 2: real LLM -> real detector -> WebhookSink -> sidecar
+export OPENAI_API_KEY=sk-or-...
+PYTHONPATH=src python3 examples/real_time_webhook_demo.py \
+    --provider openai --base-url https://openrouter.ai/api/v1 \
+    --model openai/gpt-oss-20b:free --mode error
+# terminal 1 prints: [sidecar] RECEIVED risk -> trigger=error_cascade ...
+```
+
+The sidecar also accepts canonical `StepEvent`s at `POST /events` (any runtime
+can POST them) and detects locally; see `docs/FRAMEWORK_BRIDGES.md`.
+
 ## LangGraph adapter
 
 For code that consumes `graph.stream(...)` directly (LangGraph's default
