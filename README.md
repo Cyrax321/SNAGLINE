@@ -108,6 +108,16 @@ PYTHONPATH=src python3 examples/raw_loop_example.py --healthy
 # [demo] finished healthy (expect no detections); see stderr above for any FailureRisk lines.
 ```
 
+## Validation — proven on a real LLM
+
+SNAGLINE is not just unit-tested: it has been run against a **real language
+model** (live `create_agent` + real tools) with its full pipeline — adapter →
+detectors → `WebhookSink` → HTTP sidecar — and it detected **real loops, real
+error cascades, and real latency anomalies**, all shipped over real HTTP.
+Verbatim evidence and a copy-paste reproduction are in
+[`docs/REAL_WORLD_PROOF.md`](docs/REAL_WORLD_PROOF.md) (includes a no-key path
+and a real-LLM path via OpenRouter/OpenAI/Anthropic).
+
 ## Runnable examples
 
 All examples live under `examples/` and run against the source tree with
