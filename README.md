@@ -24,6 +24,78 @@ bench : median 1.05 us/step, p99 1.14 us/step over 200,000 synthetic steps
         (measured 2026-08-15 on Apple M1, arm64, CPython 3.14.5)
 ```
 
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph Runtimes["Agent runtimes"]
+        Raw["Raw Python loop"]
+        LC["LangChain / LangGraph agent"]
+        CC["Claude Code / OpenClaw / Hermes (external process)"]
+        Other["AutoGen / CrewAI / CONTINUUM ledger"]
+    end
+
+    subgraph Adapters["Adapters (canonicalize to StepEvent)"]
+        A_Raw["raw.watch / watch_graph"]
+        A_LC["langchain / langgraph adapter"]
+        A_CC["claude_code hooks bridge"]
+        A_File["snagline watch --file"]
+    end
+
+    CC -->|"HTTP / command / file hook"| Sidecar
+    Sidecar["snagline serve (stdlib HTTP sidecar)"] -->|"/events, /hooks/claude-code"| A_CC
+
+    Raw --> A_Raw
+    LC --> A_LC
+    Other --> A_File
+
+    A_Raw --> Stream
+    A_LC --> Stream
+    A_CC --> Stream
+    A_File --> Stream
+
+    Stream["Canonical StepEvent stream"]
+
+    subgraph Monitor["Monitor (fail-open)"]
+        Ingest["ingest()"]
+        Loop["Loop detector"]
+        Err["Error-cascade detector"]
+        Lat["Latency / CUSUM detector"]
+        Ingest --> Loop
+        Ingest --> Err
+        Ingest --> Lat
+    end
+
+    Stream --> Ingest
+    Loop --> Risk["FailureRisk (JSON)"]
+    Err --> Risk
+    Lat --> Risk
+
+    subgraph Sinks["Sinks"]
+        Console["Console (stderr)"]
+        Webhook["Webhook (urllib, fire-and-forget)"]
+    end
+
+    Risk --> Console
+    Risk --> Webhook
+
+    subgraph CLI["snagline CLI"]
+        C_Watch["watch"]
+        C_Serve["serve"]
+        C_Replay["replay"]
+        C_Bench["bench"]
+    end
+
+    Console --> CLI
+    Webhook --> CLI
+```
+
+The diagram shows the three layers: agent runtimes feed adapters that
+canonicalize every step into a `StepEvent`; the `Monitor` runs the deterministic
+detectors and emits `FailureRisk` JSON; sinks deliver alerts. External,
+non-Python agents bridge in through the stdlib sidecar over HTTP, command, or
+file, so the same detector core serves every runtime.
+
 ## What it detects
 
 - **Loops** - the same logical action repeating `N` times within a sliding
