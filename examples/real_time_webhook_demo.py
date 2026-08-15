@@ -30,7 +30,17 @@ from __future__ import annotations
 
 import argparse
 import os
+import signal
+import time
 import urllib.request
+
+
+class _AttemptTimeout(Exception):
+    """Raised by SIGALRM when a single agent.stream call runs too long."""
+
+
+def _on_alarm(signum, frame):  # noqa: ANN001, ARG001 - signal handler signature
+    raise _AttemptTimeout()
 
 from snagline import Monitor
 from snagline.adapters.langchain_adapter import SnaglineCallbackHandler
@@ -98,14 +108,17 @@ def main() -> None:
     parser.add_argument("--model", default=None, help="Model name (e.g. openai/gpt-oss-20b:free for OpenRouter).")
     parser.add_argument("--base-url", default=None, help="API base URL (e.g. https://openrouter.ai/api/v1).")
     parser.add_argument("--mode", choices=list(MODE_TASKS), default="error")
+    parser.add_argument("--task", default=None, help="Override the mode's task with a custom real prompt.")
+    parser.add_argument("--recursion-limit", type=int, default=40, help="LangGraph recursion limit (max agent steps).")
     parser.add_argument("--webhook-url", default="http://127.0.0.1:8787/risks", help="Where the WebhookSink POSTs risks.")
     args = parser.parse_args()
 
     provider = _pick_provider(args.provider)
     model = args.model or ("gpt-4o-mini" if provider == "openai" else "claude-3-5-haiku-latest")
-    task = MODE_TASKS[args.mode]
+    task = args.task or MODE_TASKS[args.mode]
     print(f"[demo] provider={provider} model={model} mode={args.mode}")
-    print(f"[demo] WebhookSink -> {args.webhook_url} (the local sidecar)\n")
+    print(f"[demo] WebhookSink -> {args.webhook_url} (the local sidecar)")
+    print(f"[demo] recursion_limit={args.recursion_limit}\n")
 
     cfg = Config(cusum_min_samples=3)
     detectors = [LoopDetector(config=cfg), ErrorCascadeDetector(config=cfg), LatencyAnomalyDetector(config=cfg)]
@@ -118,15 +131,41 @@ def main() -> None:
     agent = __import__("langchain.agents", fromlist=["create_agent"]).create_agent(model=model_obj, tools=_build_tools())
 
     print(f"[demo] task: {task}\n[demo] local detection + HTTP delivery to sidecar...\n")
-    for chunk in agent.stream(
-        {"messages": [("user", task)]},
-        config={"callbacks": [handler], "recursion_limit": 40},
-    ):
-        if "messages" in chunk and chunk["messages"]:
-            msg = chunk["messages"][-1]
-            content = getattr(msg, "content", None)
-            if content and getattr(msg, "type", "") in ("ai", "human", "tool"):
-                print(f"[{msg.type}] {content if isinstance(content, str) else content}")
+    signal.signal(signal.SIGALRM, _on_alarm)
+    # Time-budgeted monitoring window: keep the real agent running against the
+    # real model for up to BUDGET seconds. Each single stream call is capped by
+    # SIGALRM (ATTEMPT_MAX) so a slow/queued free-tier model can't hang the run
+    # past the window. Transient 502s are retried so the window actually fills.
+    BUDGET = 270.0
+    ATTEMPT_MAX = 55.0
+    deadline = time.time() + BUDGET
+    attempt = 0
+    while time.time() < deadline:
+        attempt += 1
+        signal.alarm(int(ATTEMPT_MAX))
+        try:
+            for chunk in agent.stream(
+                {"messages": [("user", task)]},
+                config={"callbacks": [handler], "recursion_limit": args.recursion_limit},
+            ):
+                if "messages" in chunk and chunk["messages"]:
+                    msg = chunk["messages"][-1]
+                    content = getattr(msg, "content", None)
+                    if content and getattr(msg, "type", "") in ("ai", "human", "tool"):
+                        print(f"[{msg.type}] {content if isinstance(content, str) else content}")
+            signal.alarm(0)
+            print(f"\n[demo] agent finished the task on attempt {attempt}.")
+            break
+        except _AttemptTimeout:
+            signal.alarm(0)
+            print(f"\n[demo] attempt {attempt} exceeded {ATTEMPT_MAX:.0f}s (slow model); retrying...")
+            time.sleep(2)
+        except Exception as exc:  # fail-open: survive a transient model/API error
+            signal.alarm(0)
+            print(f"\n[demo] attempt {attempt} interrupted ({type(exc).__name__}); retrying in 5s...")
+            time.sleep(5)
+    else:
+        print(f"\n[demo] hit the {int(BUDGET)}s monitoring budget without finishing; stopping.")
 
     handler.close()
     print("\n[demo] done. The sidecar process should have printed '[sidecar] RECEIVED risk' lines.")
