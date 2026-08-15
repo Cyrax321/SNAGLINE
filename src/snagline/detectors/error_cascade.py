@@ -45,38 +45,69 @@ class ErrorCascadeDetector:
             if consecutive_threshold is not None
             else cfg.cascade_consecutive_threshold
         )
+        # A tool failure and an LLM/chain error are different signals. By
+        # default we only escalate *tool* failures as a cascade; flip
+        # ``cascade_count_non_tool_errors`` to widen to every error step
+        # (issue #16).
+        self._count_non_tool = bool(
+            getattr(cfg, "cascade_count_non_tool_errors", False)
+        )
         self._windows: Dict[str, deque] = {}
         self._consecutive: Dict[str, int] = {}
+        # Dedupe: emit at most once per cascade episode, then stay quiet until
+        # the alarm condition clears and re-arms (issue #4).
+        self._fired: Dict[str, bool] = {}
+
+    def _is_error(self, event: StepEvent) -> bool:
+        if not event.error:
+            return False
+        if event.action_type == "tool_call":
+            return True
+        return self._count_non_tool
 
     def observe(self, event: StepEvent) -> FailureRisk | None:
+        counted = self._is_error(event)
+        # Only *counted* errors feed the cascade window; an LLM/chain error
+        # (when excluded) is treated as a clean step so it cannot inflate the
+        # cascade signal.
         w = self._windows.setdefault(event.episode_id, deque(maxlen=self.window_size))
-        w.append(event.error)
-        self._consecutive[event.episode_id] = (
-            self._consecutive.get(event.episode_id, 0) + 1 if event.error else 0
+        w.append(counted)
+        if counted:
+            self._consecutive[event.episode_id] = (
+                self._consecutive.get(event.episode_id, 0) + 1
+            )
+        else:
+            self._consecutive[event.episode_id] = 0
+
+        consecutive = self._consecutive[event.episode_id]
+        consecutive_alarm = consecutive >= self.consecutive_threshold
+        density_alarm = (
+            sum(w) >= self.error_threshold and len(w) >= self.error_threshold
         )
 
-        if self._consecutive[event.episode_id] >= self.consecutive_threshold:
-            return FailureRisk(
-                event.episode_id,
-                event.step_id,
-                0.8,
-                "error_cascade",
-                f"{self._consecutive[event.episode_id]} consecutive errors",
-                event.timestamp,
-            )
+        if not (consecutive_alarm or density_alarm):
+            return None
+        # Already escalated this cascade -- suppress until it clears.
+        if self._fired.get(event.episode_id, False):
+            return None
 
-        if sum(w) >= self.error_threshold and len(w) >= self.error_threshold:
-            return FailureRisk(
-                event.episode_id,
-                event.step_id,
-                0.6,
-                "error_cascade",
-                f"{sum(w)} errors in last {len(w)} steps",
-                event.timestamp,
-            )
-
-        return None
+        self._fired[event.episode_id] = True
+        if consecutive_alarm:
+            score = min(1.0, consecutive / self.consecutive_threshold)
+            detail = f"{consecutive} consecutive errors"
+        else:
+            score = min(1.0, sum(w) / self.error_threshold)
+            detail = f"{sum(w)} errors in last {len(w)} steps"
+        return FailureRisk(
+            event.episode_id,
+            event.step_id,
+            score,
+            "error_cascade",
+            detail,
+            event.timestamp,
+        )
 
     def reset(self, episode_id: str) -> None:
         self._windows.pop(episode_id, None)
         self._consecutive.pop(episode_id, None)
+        self._fired.pop(episode_id, None)

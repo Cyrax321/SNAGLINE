@@ -46,15 +46,30 @@ def replay(path: str, monitor: Optional[Monitor] = None) -> int:
         monitor = Monitor.default()
 
     steps = 0
+    skipped = 0
     with open(path, "r", encoding="utf-8") as fh:
-        for line in fh:
+        for lineno, line in enumerate(fh, start=1):
             line = line.strip()
             if not line:
                 continue
-            obj = json.loads(line)
-            event = StepEvent(**obj)
+            try:
+                obj = json.loads(line)
+                event = StepEvent(**obj)
+            except (json.JSONDecodeError, TypeError, ValueError) as exc:
+                # Fail-soft on the input side too: a malformed trajectory line
+                # must never crash the whole replay (issue #5).
+                print(
+                    f"snagline replay: skipping malformed line {lineno}: {exc}",
+                    file=sys.stderr,
+                )
+                skipped += 1
+                continue
             monitor.ingest(event)
             steps += 1
+    if skipped:
+        print(
+            f"snagline replay: skipped {skipped} malformed line(s)", file=sys.stderr
+        )
     return steps
 
 
@@ -285,12 +300,56 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _inline_benchmark(n: int = 200_000, block: int = 2_000) -> dict:
+    """Fallback benchmark used when the ``benchmarks`` extra is not importable
+    (e.g. running from an installed wheel that does not ship it). Mirrors the
+    shape of ``benchmarks.overhead_benchmark.run_benchmark`` so the CLI output
+    is identical (issue #6)."""
+    import statistics
+
+    from snagline import Monitor
+    from snagline.events import StepEvent, make_signature
+
+    monitor = Monitor.default()
+    events = [
+        StepEvent(
+            step_id=str(i),
+            episode_id="bench",
+            timestamp=__import__("time").time(),
+            action_type="tool_call",
+            action_signature=make_signature("tool_call", "tool", str(i)),
+            tool_name="tool",
+            latency_ms=100.0,
+        )
+        for i in range(n)
+    ]
+    for e in events[:block]:
+        monitor.ingest(e)
+    per_step_us: list[float] = []
+    for start in range(block, n, block):
+        chunk = events[start : start + block]
+        t0 = time.perf_counter()
+        for e in chunk:
+            monitor.ingest(e)
+        t1 = time.perf_counter()
+        per_step_us.append((t1 - t0) / len(chunk) * 1e6)
+    ordered = sorted(per_step_us)
+    p99_idx = min(len(ordered) - 1, int(0.99 * len(ordered)))
+    return {
+        "n": n,
+        "blocks": len(per_step_us),
+        "median_us": statistics.median(per_step_us),
+        "p99_us": ordered[p99_idx],
+    }
+
+
 def _cmd_bench() -> int:
     try:
         from benchmarks.overhead_benchmark import run_benchmark
     except ImportError:
-        sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-        from benchmarks.overhead_benchmark import run_benchmark
+        # Running from an installed package: the benchmarks module is not
+        # shipped, so fall back to an inline measurement rather than crashing.
+        run_benchmark = _inline_benchmark
 
     stats = run_benchmark()
     print("snagline overhead benchmark")

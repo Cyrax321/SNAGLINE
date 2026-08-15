@@ -45,39 +45,60 @@ class Monitor:
         self._sinks = list(sinks)
         self._fail_open = fail_open
         self._lock = threading.Lock()
+        # A faulty detector or sink must not spam the logs on every single step
+        # (issue #14) -- log each distinct fault exactly once.
+        self._fault_lock = threading.Lock()
+        self._fault_logged: set[str] = set()
 
     def ingest(self, event: StepEvent) -> None:
         """Run all detectors against ``event`` and dispatch any risks.
 
         Never raises under the default ``fail_open=True``. With
         ``fail_open=False``, a detector or sink exception propagates.
+
+        Detection runs under a per-instance lock, but dispatch to sinks happens
+        *outside* that lock (issue #8): a slow or network-bound sink (e.g. the
+        webhook sink) must not block concurrent ``ingest`` calls, and a sink
+        that re-enters ``ingest`` must not deadlock.
         """
+        risks: List[FailureRisk] = []
         with self._lock:
             for detector in self._detectors:
                 try:
                     risk = detector.observe(event)
                 except Exception:
-                    logger.exception(
-                        "snagline detector %s raised; ignoring (fail-open)",
-                        getattr(detector, "name", repr(detector)),
+                    self._log_fault_once(
+                        f"detector {getattr(detector, 'name', repr(detector))} "
+                        "raised; ignoring (fail-open)"
                     )
                     if not self._fail_open:
                         raise
                     continue
                 if risk is not None:
-                    self._dispatch(risk)
+                    risks.append(risk)
+        for risk in risks:
+            self._dispatch(risk)
 
     def _dispatch(self, risk: FailureRisk) -> None:
         for sink in self._sinks:
             try:
                 sink.emit(risk)
             except Exception:
-                logger.exception(
-                    "snagline sink %s raised; ignoring (fail-open)",
-                    type(sink).__name__,
+                self._log_fault_once(
+                    f"sink {type(sink).__name__} raised; ignoring (fail-open)"
                 )
                 if not self._fail_open:
                     raise
+
+    def _log_fault_once(self, key: str) -> None:
+        """Log a fail-open fault, but only the first time we see this exact
+        message (issue #14). Avoids dumping a traceback on every step when a
+        detector or sink is consistently broken."""
+        with self._fault_lock:
+            if key in self._fault_logged:
+                return
+            self._fault_logged.add(key)
+        logger.error("snagline: %s", key)
 
     async def ingest_async(self, event: StepEvent) -> None:
         """Thin async wrapper for async adapters (LangGraph/AutoGen async
@@ -101,9 +122,9 @@ class Monitor:
                 try:
                     detector.reset(episode_id)
                 except Exception:
-                    logger.exception(
-                        "snagline detector %s reset raised; ignoring (fail-open)",
-                        getattr(detector, "name", repr(detector)),
+                    self._log_fault_once(
+                        f"detector {getattr(detector, 'name', repr(detector))} "
+                        "reset raised; ignoring (fail-open)"
                     )
                     if not self._fail_open:
                         raise

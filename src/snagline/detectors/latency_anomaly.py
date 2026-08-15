@@ -108,6 +108,12 @@ class LatencyAnomalyDetector:
     def observe(self, event: StepEvent) -> Optional[FailureRisk]:
         if event.latency_ms is None:
             return None
+        # Only leaf tool calls carry a meaningful per-tool latency. A planning
+        # chain (``plan_step``) or other aggregate step reports the duration of
+        # a whole reasoning turn, not a single tool -- counting it would flag
+        # every nested LangChain/LangGraph run as a latency anomaly (issue #10).
+        if event.action_type != "tool_call":
+            return None
         key = (event.episode_id, event.tool_name or "default")
         state = self._states.get(key)
         if state is None:

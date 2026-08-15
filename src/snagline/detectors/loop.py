@@ -34,22 +34,33 @@ class LoopDetector:
             repeat_threshold if repeat_threshold is not None else cfg.loop_repeat_threshold
         )
         self._windows: Dict[str, deque] = {}
+        # Dedupe: emit once per repetition episode (issue #4). Without this the
+        # detector re-fires on every step while the same action keeps repeating,
+        # which is alert spam.
+        self._fired: Dict[str, bool] = {}
 
     def observe(self, event: StepEvent) -> FailureRisk | None:
         w = self._windows.setdefault(event.episode_id, deque(maxlen=self.window_size))
         w.append(event.action_signature)
         count = w.count(event.action_signature)
-        if count >= self.repeat_threshold:
-            score = min(1.0, count / self.repeat_threshold * 0.5)
-            return FailureRisk(
-                event.episode_id,
-                event.step_id,
-                score,
-                "loop",
-                f"action repeated {count}x in last {len(w)} steps",
-                event.timestamp,
-            )
-        return None
+        if count < self.repeat_threshold:
+            # The repeated signature has dropped out of the window: allow a
+            # future repetition to re-escalate.
+            self._fired[event.episode_id] = False
+            return None
+        if self._fired.get(event.episode_id, False):
+            return None
+        self._fired[event.episode_id] = True
+        score = min(1.0, count / self.repeat_threshold * 0.5)
+        return FailureRisk(
+            event.episode_id,
+            event.step_id,
+            score,
+            "loop",
+            f"action repeated {count}x in last {len(w)} steps",
+            event.timestamp,
+        )
 
     def reset(self, episode_id: str) -> None:
         self._windows.pop(episode_id, None)
+        self._fired.pop(episode_id, None)

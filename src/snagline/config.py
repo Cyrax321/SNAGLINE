@@ -20,11 +20,20 @@ class Config:
     cascade_window_size: int = 10
     cascade_error_threshold: int = 3
     cascade_consecutive_threshold: int = 3
+    # By default the cascade detector only counts *tool* failures. A LangChain
+    # LLM 502 or a planning-chain error is infrastructure noise that should not
+    # trip a "tool is failing" alert (issue #16). Flip this to True to count
+    # every error-bearing step regardless of action_type.
+    cascade_count_non_tool_errors: bool = False
 
     # Latency / CUSUM detector (used once that detector lands)
     cusum_k: float = 0.5
     cusum_h: float = 5.0
-    cusum_min_samples: int = 20  # warm-up: learn baseline before alarming
+    # Warm-up: learn a baseline before alarming. Lowered from 20 to 5 so that
+    # tools called only a handful of times are still monitored (issue #9) --
+    # the frozen baseline + sigma floor make a single large spike alarm after
+    # the warm-up rather than requiring several sustained ones.
+    cusum_min_samples: int = 5
     # A perfectly stable baseline has sample std 0, which would make every
     # deviation infinite and force a div-by-zero guard that never fires. These
     # floors give the detector a meaningful deviation scale even for constant

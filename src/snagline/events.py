@@ -63,10 +63,16 @@ def make_signature(action_type: str, tool_name: str | None, *stable_parts: str) 
         every retry look unique.
       * Hashing already-sensitive values is fine (SHA-256 is one-way), but
         prefer hashing only the minimum needed to detect repetition, not the
-        full payload, to keep signatures meaningful and short.
+        full payload, to keep signatures meaningful.
 
-    Returns the first 16 hex chars of the SHA-256 digest of the joined
-    stable parts.
+    The parts are serialized as a canonical JSON array before hashing. JSON
+    array encoding is unambiguous (``["a", "b||c"]`` can never be confused
+    with ``["a||b", "c"]``), and the full 64-character SHA-256 digest is
+    returned -- truncating to 16 hex chars invited collisions between
+    distinct actions (issue #15).
     """
-    raw = "||".join([action_type, tool_name or "", *stable_parts])
-    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+    import json
+
+    parts = [action_type, tool_name or "", *stable_parts]
+    raw = json.dumps(parts, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()

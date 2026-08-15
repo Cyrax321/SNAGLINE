@@ -224,8 +224,13 @@ class SnaglineCallbackHandler(BaseCallbackHandler):
         info = self._runs.pop(str(run_id), None)
         if info is None:
             return
-        latency = (self._clock() - info["start"]) * 1000.0
-        self._emit("plan_step", info["tool"], args=info["args"], latency_ms=latency)
+        # Emit the planning step WITHOUT a latency sample: a chain's duration is
+        # the whole reasoning turn (often tens of seconds for a real LLM), not a
+        # single tool call. Feeding it to the latency/CUSUM detector would flag
+        # every nested LangChain/LangGraph run as an anomaly (issue #10). The
+        # latency detector also refuses non-``tool_call`` action types as a
+        # belt-and-suspenders guard.
+        self._emit("plan_step", info["tool"], args=info["args"])
 
     def close(self) -> None:
         """Clear per-episode detector state via the Monitor (project.md §2)."""
