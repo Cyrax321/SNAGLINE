@@ -1,16 +1,28 @@
 # SNAGLINE
 
 **Lightweight, dependency-free companion library that watches any agent's
-execution stream and flags loops and error cascades in real time** - cheap
+execution stream and flags loops and error cascades in real time.** It is cheap
 enough to run on every step of a week-long unattended run, with a hard
 fail-open guarantee so it can never crash or stall the agent it monitors.
 
-Current build phase: v0.1+ - core detectors (loop, error cascade, latency/CUSUM),
+Current build phase: v0.1+. Core detectors (loop, error cascade, latency/CUSUM),
 console + webhook sinks, `raw` / LangChain / LangGraph adapters, a stdlib HTTP
-sidecar for non-Python agents, and `watch` / `serve` / `replay` / `bench` CLIs.
-The optional ML/goal-drift extras and the demand-driven adapters (AutoGen,
-CrewAI, Claude Code hooks, CONTINUUM) are explicitly out of scope until they
-have a verified upstream API or real demand (see `project.md` §13).
+sidecar for non-Python agents, and `watch` / `serve` / `replay` / `bench` CLIs
+are implemented and tested. The Claude Code hooks bridge and the
+framework-bridge docs (`docs/FRAMEWORK_BRIDGES.md`) are implemented. The
+optional ML/goal-drift extras and the demand-driven adapters (AutoGen, CrewAI)
+are explicitly out of scope until they have a verified upstream API or real
+demand (see `project.md` §13).
+
+## Verification status
+
+These numbers are measured, not asserted. Run them yourself to reproduce.
+
+```
+tests : 76 passed, 1 skipped  (pytest, Python 3.14.5, 2026-08-15)
+bench : median 1.05 us/step, p99 1.14 us/step over 200,000 synthetic steps
+        (measured 2026-08-15 on Apple M1, arm64, CPython 3.14.5)
+```
 
 ## What it detects
 
@@ -32,10 +44,10 @@ network calls and no LLM calls.
   dependency; planned for v2 at earliest.
 - **No automatic repair** - detection and escalation only. Repair is a
   distinct, harder problem.
-- **No claim to beat the source paper** (arXiv:2608.02464). v1 uses
-  deterministic detectors; the paper's statistical ensemble is an optional
-  later extra. No detection-accuracy number is claimed here until it has been
-  measured honestly.
+- **No claim to beat a reference statistical ensemble.** v1 uses
+  deterministic detectors; a statistical ensemble is an optional later extra.
+  No detection-accuracy number is claimed here until it has been measured
+  honestly.
 - **Not a replacement for human review** on high-stakes actions - it is a cheap
   first-pass signal that routes to existing escalation paths.
 
@@ -85,7 +97,16 @@ Any detected failure is printed as a JSON line to stderr, e.g.:
 {"episode_id": "ep-1", "step_id": "3", "score": 0.5, "trigger": "loop", "detail": "action repeated 3x in last 4 steps", "timestamp": 1718300000.0}
 ```
 
-See `examples/raw_loop_example.py` for a runnable end-to-end example.
+(The `timestamp` is the wall-clock time `ingest()` was called; the example
+above is illustrative.)
+
+See `examples/raw_loop_example.py` for a runnable end-to-end example. The
+`--healthy` flag runs a clean trajectory with no detections:
+
+```
+PYTHONPATH=src python3 examples/raw_loop_example.py --healthy
+# [demo] finished healthy (expect no detections); see stderr above for any FailureRisk lines.
+```
 
 ## Runnable examples
 
@@ -94,13 +115,12 @@ All examples live under `examples/` and run against the source tree with
 
 ```
 # Plain agent loop (the `raw` adapter); shows loop + error-cascade + latency risks
-PYTHONPATH=src python3 examples/raw_loop_example.py
 PYTHONPATH=src python3 examples/raw_loop_example.py --healthy   # clean run, no risks
 
 # Offline trajectory replay (loop + error-cascade + latency)
 PYTHONPATH=src python3 examples/replay_offline_trajectory.py
 
-# Real LangChain run via the callback handler (needs the langchain extra)
+# Real LangChain run via the callback handler (requires the langchain extra)
 pip install snagline-agent[langchain]
 PYTHONPATH=src python3 examples/langchain_example.py            # repeated prompt -> loop
 
@@ -131,12 +151,12 @@ PYTHONPATH=src python3 examples/real_agent_executor_demo.py --mode healthy
 
 `examples/real_time_llm_demo.py` attaches SNAGLINE to a genuine `create_agent`
 run backed by a **real chat model** and **real tools**, so detections stream
-out as the model drives tools. Modes: `healthy` (should be silent —
-false-positive check), `error` (a tool that raises on every call →
-`error_cascade`), `latency` (one tool with variable latency →
+out as the model drives tools. Modes: `healthy` (should be silent,
+false-positive check), `error` (a tool that raises on every call,
+`error_cascade`), `latency` (one tool with variable latency,
 `latency_anomaly`).
 
-OpenRouter serves an OpenAI-compatible API with free models — no paid key
+OpenRouter serves an OpenAI-compatible API with free models, no paid key
 needed. The key is read from `OPENAI_API_KEY` at runtime and never written to
 disk by the script:
 
@@ -147,16 +167,15 @@ PYTHONPATH=src python3 examples/real_time_llm_demo.py \
     --model openai/gpt-oss-20b:free --mode error
 ```
 
-> Note: free-tier models are often rate-limited / return transient `502`s.
-> SNAGLINE correctly flags repeated model failures as an `error_cascade` (see
-> issue #16 — LLM errors currently count toward the cascade). For a stable
-> `healthy`=silent run, use a reliable model.
+Note: free-tier models are often rate-limited or return transient `502`s.
+SNAGLINE correctly flags repeated model failures as an `error_cascade`. For a
+stable `healthy` = silent run, use a reliable model.
 
 ## LangGraph adapter
 
 For code that consumes `graph.stream(...)` directly (LangGraph's default
 `updates` mode), `watch_graph` is a pass-through iterator that monitors as it
-yields - a one-line change to the host code:
+yields, a one-line change to the host code:
 
 ```python
 from snagline import Monitor
@@ -167,30 +186,35 @@ for update in watch_graph(monitor, "ep-1", graph.stream(inputs)):
     ...  # your normal stream consumption, unchanged
 ```
 
-Node name → `tool_name`, time between superstep yields → `latency_ms`, a node
-update carrying an `error` key (or an exception) → `error=True`, and the
-signature hashes the node name plus the update's shape so a node repeatedly
-failing the same way is loop-detectable.
+Node name maps to `tool_name`, time between superstep yields maps to
+`latency_ms`, a node update carrying an `error` key (or an exception) maps to
+`error=True`, and the signature hashes the node name plus the update's shape so
+a node repeatedly failing the same way is loop-detectable.
 
 ## Sinks
 
 - **Console** (default): `FailureRisk` as a JSON line on stderr.
 - **Webhook**: `WebhookSink(url)` POSTs the same JSON via stdlib
-  `urllib.request` - fire-and-forget with a short timeout, never blocks
+  `urllib.request`, fire-and-forget with a short timeout, never blocks
   `ingest()`, silently ignores a dead endpoint. Only `FailureRisk` fields are
   ever transmitted (no `StepEvent.metadata`), so an alerting channel can't
   become an accidental data-exfiltration path.
 
 ## Sidecar server (non-Python agents)
 
-Any runtime - TypeScript, Node, a Claude Code hook script - can POST events to
+Any runtime, TypeScript, Node, a Claude Code hook script, can POST events to
 a stdlib-only sidecar:
 
 ```
 snagline serve --host 127.0.0.1 --port 8787
-# POST /events   body: StepEvent JSON   -> 202, ingested
-# GET  /health                         -> 200
+# POST /events              body: StepEvent JSON   -> 202, ingested
+# POST /hooks/claude-code   body: native Claude Code hook payload -> 202, mapped + ingested
+# GET  /health                                     -> 200
 ```
+
+Verified live (2026-08-15): `GET /health` returns `200`; `POST /events` with a
+`StepEvent` returns `202`; `POST /hooks/claude-code` with a native hook payload
+returns `202` and is mapped into the detector stream.
 
 ## Live watch mode
 
@@ -202,11 +226,14 @@ webhook escalation:
 snagline watch --sink webhook --webhook-url https://hooks.example/alerts
 ```
 
+Verified live: feeding three repeated `StepEvent` lines through `snagline watch`
+emits a `loop` `FailureRisk` and reports `ingested 3 step(s)`.
+
 ## Connecting external agent processes (Claude Code, OpenClaw, Hermes, ...)
 
 Claude Code, OpenClaw, and Hermes are processes, not Python libraries, so
-SNAGLINE bridges at the process level with three universal mechanisms - HTTP,
-command, and file - documented with copy-paste wiring for each framework in
+SNAGLINE bridges at the process level with three universal mechanisms, HTTP,
+command, and file, documented with copy-paste wiring for each framework in
 `docs/FRAMEWORK_BRIDGES.md`. The short version:
 
 ```
@@ -218,7 +245,18 @@ snagline serve --port 8787
 # -> SNAGLINE maps the native hook payload itself: tool loops, error
 #    cascades (PostToolUseFailure), and latency (Pre/Post paired by
 #    tool_use_id) are detected with zero glue code.
+```
 
+Verified live (2026-08-15): posting five `PostToolUseFailure` Claude Code hook
+payloads (same `tool_name`, distinct `tool_use_id`) to `/hooks/claude-code`
+produced both a `loop` and an `error_cascade` `FailureRisk`:
+
+```json
+{"episode_id": "sess-abc", "step_id": "call-5", "score": 0.8333333333333334, "trigger": "loop", "detail": "action repeated 5x in last 5 steps", "timestamp": 1786769090.730109}
+{"episode_id": "sess-abc", "step_id": "call-5", "score": 0.8, "trigger": "error_cascade", "detail": "5 consecutive errors", "timestamp": 1786769090.730109}
+```
+
+```
 # any shell-capable framework: pipe any hook payload through the bridge
 some-hook-event.json | snagline hook --url http://127.0.0.1:8787/events
 
@@ -246,16 +284,29 @@ snagline replay trajectory.jsonl --summary
 
 Each line must be a JSON object with the `StepEvent` fields (see
 `tests/fixtures/trajectories/` for worked examples, including an injected loop,
-an injected error cascade, and an injected latency spike).
+an injected error cascade, and an injected latency spike). Verified live
+(2026-08-15):
+
+```
+snagline replay tests/fixtures/trajectories/injected_loop.jsonl --summary
+# replayed 24 steps; 2 risk(s) emitted   -> 2 loop FailureRisk lines
+
+snagline replay tests/fixtures/trajectories/injected_error_cascade.jsonl --summary
+# replayed 24 steps; 2 risk(s) emitted   -> 2 error_cascade FailureRisk lines
+
+snagline replay tests/fixtures/trajectories/injected_latency_spike.jsonl --summary
+# replayed 52 steps; 12 risk(s) emitted  -> 12 latency_anomaly FailureRisk lines
+```
 
 ## Overhead
 
 `ingest()` is cheap enough to run on every step of a long unattended run. The
-claim is measured, not asserted -- `benchmarks/overhead_benchmark.py` (run via
-`snagline bench`) times `Monitor.ingest()` over 200,000 synthetic steps:
+claim is measured, not asserted. `benchmarks/overhead_benchmark.py` (run via
+`snagline bench`) times `Monitor.ingest()` over 200,000 synthetic steps. Real
+measured result (2026-08-15, Apple M1 arm64, CPython 3.14.5):
 
 ```
-median 1.4 us/step, p99 ~5-25 us/step   (measured on a 2026 Apple Silicon dev machine; run `snagline bench` to reproduce on yours)
+median 1.05 us/step, p99 1.14 us/step   (run `snagline bench` to reproduce on yours)
 ```
 
 This is comfortably under the sub-100-microsecond per-step target.
