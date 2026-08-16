@@ -15,9 +15,12 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from typing import IO, Any, Optional
+from contextlib import suppress
+from typing import IO, Any
 
 from snagline.risk import FailureRisk
+
+logger = logging.getLogger("snagline")
 
 
 class ConsoleSink:
@@ -33,8 +36,8 @@ class ConsoleSink:
 
     def __init__(
         self,
-        stream: Optional[IO[str]] = None,
-        logger: Optional[logging.Logger] = None,
+        stream: IO[str] | None = None,
+        logger: logging.Logger | None = None,
         level: int = logging.WARNING,
     ) -> None:
         self._stream = stream if stream is not None else sys.stderr
@@ -52,7 +55,19 @@ class ConsoleSink:
         }
         line = json.dumps(payload)
         if self._logger is not None:
-            self._logger.log(self._level, line)
-        else:
+            # A broken logging pipeline must never break ingest(); stay
+            # fire-and-forget like every other AlertSink (issue #19).
+            with suppress(Exception):  # pragma: no cover - host logger failure
+                self._logger.log(self._level, line)
+            return
+        # The raw-stream path is fire-and-forget too: a closed pipe or invalid
+        # file descriptor must not raise out of emit() and into the host's
+        # ingest path, so we swallow write/flush errors and log once (issue #19).
+        try:
             self._stream.write(line + "\n")
             self._stream.flush()
+        except OSError:
+            logger.warning(
+                "snagline ConsoleSink: write to stream failed; dropping alert "
+                "(fire-and-forget)"
+            )
