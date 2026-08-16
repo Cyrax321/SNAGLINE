@@ -62,7 +62,9 @@ def test_tool_error_emits_error_event():
 def test_agent_action_and_finish_emit_plan_steps():
     mon = _monitor()
     h = SnaglineCallbackHandler(mon, "ep1")
-    h.on_agent_action(type("A", (), {"tool": "lookup", "tool_input": {"x": 1}})(), run_id="ra")
+    h.on_agent_action(
+        type("A", (), {"tool": "lookup", "tool_input": {"x": 1}})(), run_id="ra"
+    )
     h.on_agent_finish(type("F", (), {"return_values": {"out": 2}})(), run_id="rf")
     types = [e.action_type for e in mon.events]
     assert types == ["plan_step", "plan_step"]
@@ -73,7 +75,18 @@ def test_llm_end_emits_message_with_tokens():
     mon = _monitor()
     h = SnaglineCallbackHandler(mon, "ep1")
     h.on_llm_start({"name": "llm"}, ["prompt"], run_id="r3")
-    h.on_llm_end(type("R", (), {"llm_output": {"token_usage": {"prompt_tokens": 10, "completion_tokens": 20}}})(), run_id="r3")
+    h.on_llm_end(
+        type(
+            "R",
+            (),
+            {
+                "llm_output": {
+                    "token_usage": {"prompt_tokens": 10, "completion_tokens": 20}
+                }
+            },
+        )(),
+        run_id="r3",
+    )
     e = mon.events[-1]
     assert e.action_type == "message"
     assert e.tokens_in == 10 and e.tokens_out == 20
@@ -123,3 +136,29 @@ def test_chain_error_emits_error_event():
     assert e.error is True
     assert e.error_type == "ValueError"
     assert e.action_type == "plan_step"
+
+
+def test_error_callbacks_carry_latency_ms():
+    # Issue #17: error callbacks (tool/llm/chain) must compute latency_ms from
+    # the captured start time, just like the success callbacks, so the CUSUM
+    # detector can analyze latency for failed operations too.
+    import time
+
+    mon = _monitor()
+    h = SnaglineCallbackHandler(mon, "ep-lat", clock=time.monotonic)
+
+    h.on_tool_start({"name": "search"}, "query=cat", run_id="e1")
+    time.sleep(0.01)
+    h.on_tool_error(RuntimeError("timeout"), run_id="e1")
+    h.on_chat_model_start({"name": "chat"}, [["user", "hi"]], run_id="e2")
+    time.sleep(0.01)
+    h.on_llm_error(RuntimeError("model down"), run_id="e2")
+    h.on_chain_start({"name": "planner"}, {"input": 1}, run_id="e3")
+    time.sleep(0.01)
+    h.on_chain_error(ValueError("bad plan"), run_id="e3")
+
+    errors = [e for e in mon.events if e.error]
+    assert len(errors) == 3
+    for e in errors:
+        assert e.latency_ms is not None
+        assert e.latency_ms > 0
