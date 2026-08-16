@@ -40,9 +40,15 @@ monitor._detectors.append(MyDetector())   # or: Monitor(default_detectors + [min
    every step of a week-long run; anything slower than ~100 µs is a bug.
 2. **Never read `StepEvent.metadata`.** Detectors reason on hashes, timings,
    counts, and booleans only. This is the privacy property adopters rely on.
-3. **Never raise on bad input.** The Monitor is fail-open and will swallow the
-   exception, but a detector that throws on malformed fields is effectively
-   disabled from then on. Validate defensively.
+3. **Never raise on bad input.** The Monitor is fail-open *by default* and will
+   swallow the exception, but a detector that throws on malformed fields is
+   effectively disabled from then on. Validate defensively.
+
+   Note: fail-open is the default but not unconditional. `Monitor(...,
+   fail_open=False)` makes detector and sink exceptions propagate (this is how
+   the test suite asserts the fire-and-forget contract). Treat fail-open as the
+   production-safe default; flip it off only in tests or in callers that want
+   strict error reporting.
 4. **Key all state by `episode_id`** and clear it in `reset()`. A single
    Monitor can watch several episodes concurrently.
 5. **Prefer no false positives on healthy traffic.** A noisy detector gets

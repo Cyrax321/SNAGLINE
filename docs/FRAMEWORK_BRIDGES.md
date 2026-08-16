@@ -160,9 +160,17 @@ some-hook-output.json | jq -c '
 
 `action_signature` just needs to be a stable string: identical logical
 attempts must produce identical signatures, or loop detection cannot see
-repetition. Any deterministic function of (tool, arguments) works; a plain
-concatenation is fine (it never leaves the process unhashed if you route
-through the Python adapters, which apply SHA-256).
+repetition. Any deterministic function of (tool, arguments) works.
+
+Important: SHA-256 hashing of the action signature is a property of the
+**Python adapters** (`raw.watch`, `SnaglineCallbackHandler`,
+`watch_graph`, the Claude Code hook bridge). When an external process sends
+events directly over the bridge (via `POST /events`, `snagline hook`, or
+`snagline watch`), the `action_signature` is whatever that process puts in the
+JSON. SNAGLINE accepts it as-is and does no hashing on the HTTP/CLI side. So
+if you bridge a non-Python agent, hash the signature yourself (for example
+with a one-way digest of the tool plus arguments) before sending, or loops
+will not be detected correctly.
 
 ## File bridge (frameworks that can only write logs)
 
