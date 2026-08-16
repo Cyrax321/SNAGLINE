@@ -15,12 +15,13 @@ import argparse
 import json
 import sys
 import time
-from pathlib import Path
-from typing import Iterator, List, Optional
+from collections.abc import Iterator
+from contextlib import suppress
 
 from snagline.events import StepEvent
 from snagline.monitor import Monitor
 from snagline.risk import FailureRisk
+from snagline.sinks.base import AlertSink
 
 
 class _CountingSink:
@@ -28,14 +29,14 @@ class _CountingSink:
 
     def __init__(self) -> None:
         self.count = 0
-        self.risks: List[FailureRisk] = []
+        self.risks: list[FailureRisk] = []
 
     def emit(self, risk: FailureRisk) -> None:
         self.count += 1
         self.risks.append(risk)
 
 
-def replay(path: str, monitor: Optional[Monitor] = None) -> int:
+def replay(path: str, monitor: Monitor | None = None) -> int:
     """Replay a JSONL trajectory file through ``monitor`` (live offline analysis).
 
     Each line must be a JSON object with the ``StepEvent`` fields. Returns the
@@ -47,7 +48,12 @@ def replay(path: str, monitor: Optional[Monitor] = None) -> int:
 
     steps = 0
     skipped = 0
-    with open(path, "r", encoding="utf-8") as fh:
+    # Track every episode touched so we can clear per-episode detector state
+    # (loop windows, cascade counters, CUSUM baselines) when replay ends.
+    # Without this, reusing the same monitor across replay() calls leaks state
+    # from one trajectory into the next (issue #18).
+    episodes: set = set()
+    with open(path, encoding="utf-8") as fh:
         for lineno, line in enumerate(fh, start=1):
             line = line.strip()
             if not line:
@@ -64,12 +70,17 @@ def replay(path: str, monitor: Optional[Monitor] = None) -> int:
                 )
                 skipped += 1
                 continue
+            episodes.add(event.episode_id)
             monitor.ingest(event)
             steps += 1
+    # Tear down per-episode state so a later replay() on the same monitor starts
+    # clean (fail-open: a teardown error must not abort the summary).
+    for episode_id in episodes:
+        # Fail-open: a teardown error must not abort the summary.
+        with suppress(Exception):  # pragma: no cover - defensive
+            monitor.end_episode(episode_id)
     if skipped:
-        print(
-            f"snagline replay: skipped {skipped} malformed line(s)", file=sys.stderr
-        )
+        print(f"snagline replay: skipped {skipped} malformed line(s)", file=sys.stderr)
     return steps
 
 
@@ -91,7 +102,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--summary", action="store_true", help="Print a trailing summary line."
     )
 
-    p_bench = sub.add_parser(
+    sub.add_parser(
         "bench", help="Run the ingest() overhead benchmark and print us/step."
     )
 
@@ -130,7 +141,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "serve",
         help="Run the sidecar HTTP server (POST /events, GET /health) for non-Python agents.",
     )
-    p_serve.add_argument("--host", default="127.0.0.1", help="Bind address [default: 127.0.0.1].")
+    p_serve.add_argument(
+        "--host", default="127.0.0.1", help="Bind address [default: 127.0.0.1]."
+    )
     p_serve.add_argument("--port", type=int, default=8787, help="Port [default: 8787].")
 
     p_hook = sub.add_parser(
@@ -148,23 +161,27 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Append the mapped StepEvent as a JSON line to this file (for snagline watch).",
     )
     p_hook.add_argument(
-        "--timeout", type=float, default=1.0, help="HTTP timeout when --url is used [s]."
+        "--timeout",
+        type=float,
+        default=1.0,
+        help="HTTP timeout when --url is used [s].",
     )
 
     # Registered but not yet implemented: belongs to the ml extra (later phase).
-    sp = sub.add_parser("baseline", help="Fit a healthy-run baseline. [ml extra, not built yet]")
+    sp = sub.add_parser(
+        "baseline", help="Fit a healthy-run baseline. [ml extra, not built yet]"
+    )
     sp.add_argument("__rest", nargs="*", help=argparse.SUPPRESS)
 
     return parser
 
 
-def _iter_lines(path: Optional[str], follow: bool) -> Iterator[str]:
+def _iter_lines(path: str | None, follow: bool) -> Iterator[str]:
     """Yield lines from stdin, or from a file; with ``follow``, tail like -f."""
     if path is None:
         yield from sys.stdin
         return
-    fh = open(path, "r", encoding="utf-8")
-    try:
+    with open(path, encoding="utf-8") as fh:
         while True:
             line = fh.readline()
             if line:
@@ -173,8 +190,6 @@ def _iter_lines(path: Optional[str], follow: bool) -> Iterator[str]:
                 time.sleep(0.2)
             else:
                 return
-    finally:
-        fh.close()
 
 
 def _cmd_watch(args: argparse.Namespace) -> int:
@@ -190,20 +205,22 @@ def _cmd_watch(args: argparse.Namespace) -> int:
     episode = args.episode_id or (args.file or "stdin")
     steps = 0
     try:
-        for line in _iter_lines(args.file, args.follow):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-                event = StepEvent(**obj)
-            except (json.JSONDecodeError, TypeError, ValueError) as exc:
-                print(f"snagline watch: skipping malformed line: {exc}", file=sys.stderr)
-                continue
-            monitor.ingest(event)
-            steps += 1
-    except KeyboardInterrupt:
-        pass
+        with suppress(KeyboardInterrupt):
+            for line in _iter_lines(args.file, args.follow):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                    event = StepEvent(**obj)
+                except (json.JSONDecodeError, TypeError, ValueError) as exc:
+                    print(
+                        f"snagline watch: skipping malformed line: {exc}",
+                        file=sys.stderr,
+                    )
+                    continue
+                monitor.ingest(event)
+                steps += 1
     finally:
         monitor.end_episode(episode)
     print(f"snagline watch: ingested {steps} step(s)", file=sys.stderr)
@@ -226,7 +243,6 @@ def _cmd_hook(args: argparse.Namespace) -> int:
         if not isinstance(payload, dict):
             raise ValueError("payload must be a JSON object")
         from snagline.adapters.claude_code import (
-            HookTracker,
             is_claude_code_payload,
             payload_to_event,
         )
@@ -262,14 +278,15 @@ def _cmd_hook(args: argparse.Namespace) -> int:
             with urllib.request.urlopen(req, timeout=args.timeout) as resp:
                 resp.read()
         except Exception as exc:
-            print(f"snagline hook: forward to {args.url} failed: {exc}", file=sys.stderr)
+            print(
+                f"snagline hook: forward to {args.url} failed: {exc}", file=sys.stderr
+            )
 
     if not args.url and not args.out:
-        try:
+        # Fail-open by construction; Monitor.default() is also fail-open.
+        with suppress(Exception):
             monitor = Monitor.default()
             monitor.ingest(event)
-        except Exception:
-            pass  # fail-open by construction; Monitor.default() is also fail-open
     return 0
 
 
@@ -292,11 +309,12 @@ def _event_to_json(event: StepEvent) -> dict:
 def _cmd_serve(args: argparse.Namespace) -> int:
     from snagline.server.http_server import serve
 
-    print(f"snagline serve: listening on http://{args.host}:{args.port} (POST /events, GET /health)", file=sys.stderr)
-    try:
+    print(
+        f"snagline serve: listening on http://{args.host}:{args.port} (POST /events, GET /health)",
+        file=sys.stderr,
+    )
+    with suppress(KeyboardInterrupt):
         serve(Monitor.default(), host=args.host, port=args.port)
-    except KeyboardInterrupt:
-        pass
     return 0
 
 
@@ -359,12 +377,12 @@ def _cmd_bench() -> int:
     return 0
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
     if args.command == "replay":
-        sinks = []
+        sinks: list[AlertSink] = []
         counter = _CountingSink()
         if not args.quiet:
             from snagline.sinks.console import ConsoleSink
