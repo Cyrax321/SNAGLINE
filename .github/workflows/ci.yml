@@ -27,7 +27,7 @@ jobs:
           . .venv/bin/activate
           python -m pip install --upgrade pip
           pip install -e . --no-deps
-          pip install pytest pytest-cov ruff mypy
+          pip install "pytest" "pytest-cov==7.1.0" "ruff==0.16.3" "mypy"
 
       - name: Lint (ruff)
         run: |
