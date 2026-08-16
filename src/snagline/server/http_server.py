@@ -125,7 +125,9 @@ def make_handler(monitor: Monitor) -> type[BaseHTTPRequestHandler]:
             except (ValueError, json.JSONDecodeError):
                 self._respond(400, {"error": "invalid hook JSON"})
                 return
-            event = ingest_payload(self.snagline_monitor, payload, self.snagline_tracker)
+            event = ingest_payload(
+                self.snagline_monitor, payload, self.snagline_tracker
+            )
             self._respond(
                 202,
                 {
@@ -152,7 +154,9 @@ def make_handler(monitor: Monitor) -> type[BaseHTTPRequestHandler]:
     return _Handler
 
 
-def make_server(monitor: Monitor, host: str = "127.0.0.1", port: int = 8787) -> ThreadingHTTPServer:
+def make_server(
+    monitor: Monitor, host: str = "127.0.0.1", port: int = 8787
+) -> ThreadingHTTPServer:
     """Construct a ready-to-``serve_forever()`` sidecar server."""
     return ThreadingHTTPServer((host, port), make_handler(monitor))
 
@@ -160,7 +164,11 @@ def make_server(monitor: Monitor, host: str = "127.0.0.1", port: int = 8787) -> 
 def serve(monitor: Monitor, host: str = "127.0.0.1", port: int = 8787) -> None:
     """Run the sidecar server in the foreground until interrupted."""
     server = make_server(monitor, host, port)
-    logger.info("snagline sidecar listening on http://%s:%d (POST /events, GET /health)", host, port)
+    logger.info(
+        "snagline sidecar listening on http://%s:%d (POST /events, GET /health)",
+        host,
+        port,
+    )
     try:
         server.serve_forever()
     finally:

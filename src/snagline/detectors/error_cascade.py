@@ -16,7 +16,6 @@ Only the boolean ``error`` flag is consulted; no content is read
 from __future__ import annotations
 
 from collections import deque
-from typing import Dict
 
 from snagline.config import Config
 from snagline.events import StepEvent
@@ -38,7 +37,9 @@ class ErrorCascadeDetector:
             window_size if window_size is not None else cfg.cascade_window_size
         )
         self.error_threshold = (
-            error_threshold if error_threshold is not None else cfg.cascade_error_threshold
+            error_threshold
+            if error_threshold is not None
+            else cfg.cascade_error_threshold
         )
         self.consecutive_threshold = (
             consecutive_threshold
@@ -52,11 +53,11 @@ class ErrorCascadeDetector:
         self._count_non_tool = bool(
             getattr(cfg, "cascade_count_non_tool_errors", False)
         )
-        self._windows: Dict[str, deque] = {}
-        self._consecutive: Dict[str, int] = {}
+        self._windows: dict[str, deque] = {}
+        self._consecutive: dict[str, int] = {}
         # Dedupe: emit at most once per cascade episode, then stay quiet until
         # the alarm condition clears and re-arms (issue #4).
-        self._fired: Dict[str, bool] = {}
+        self._fired: dict[str, bool] = {}
 
     def _is_error(self, event: StepEvent) -> bool:
         if not event.error:

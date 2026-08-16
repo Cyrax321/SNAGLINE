@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import itertools
 import time
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 from snagline.events import StepEvent, make_signature
 
@@ -46,8 +47,8 @@ class SnaglineCallbackHandler(BaseCallbackHandler):
         self,
         monitor: Any,
         episode_id: str,
-        agent_name: Optional[str] = None,
-        clock: Optional[Callable[[], float]] = None,
+        agent_name: str | None = None,
+        clock: Callable[[], float] | None = None,
     ) -> None:
         super().__init__()
         self._monitor = monitor
@@ -60,14 +61,14 @@ class SnaglineCallbackHandler(BaseCallbackHandler):
     def _emit(
         self,
         action_type: str,
-        tool_name: Optional[str],
+        tool_name: str | None,
         *,
         args: Any = "",
-        latency_ms: Optional[float] = None,
+        latency_ms: float | None = None,
         error: bool = False,
-        error_type: Optional[str] = None,
-        tokens_in: Optional[int] = None,
-        tokens_out: Optional[int] = None,
+        error_type: str | None = None,
+        tokens_in: int | None = None,
+        tokens_out: int | None = None,
     ) -> StepEvent:
         sig = make_signature(action_type, tool_name, str(args))
         event = StepEvent(
@@ -86,6 +87,16 @@ class SnaglineCallbackHandler(BaseCallbackHandler):
         )
         self._monitor.ingest(event)
         return event
+
+    def _latency_from(self, info: dict) -> float | None:
+        """Derive ``latency_ms`` from a run-tracking dict if a start time was
+        captured. Both success and error callbacks share this so failed
+        operations still carry latency for the CUSUM detector (issue #17).
+        """
+        start = info.get("start")
+        if start is None:
+            return None
+        return (self._clock() - start) * 1000.0
 
     # -- tool calls ---------------------------------------------------------
     def on_tool_start(
@@ -118,71 +129,143 @@ class SnaglineCallbackHandler(BaseCallbackHandler):
         self._emit("tool_call", info["tool"], args=info["args"], latency_ms=latency)
 
     def on_tool_error(
-        self, error: BaseException, *, run_id: Any, parent_run_id: Any = None, **kwargs: Any
+        self,
+        error: BaseException,
+        *,
+        run_id: Any,
+        parent_run_id: Any = None,
+        **kwargs: Any,
     ) -> None:
-        info = self._runs.pop(str(run_id), None) or {"tool": "tool", "args": ""}
+        info = self._runs.pop(str(run_id), None) or {
+            "tool": "tool",
+            "args": "",
+            "start": None,
+        }
+        latency_ms = self._latency_from(info)
         self._emit(
             "tool_call",
             info["tool"],
             args=info["args"],
+            latency_ms=latency_ms,
             error=True,
             error_type=type(error).__name__,
         )
 
     # -- errors (LLM / chat / chain) -----------------------------------------
     def on_llm_error(
-        self, error: BaseException, *, run_id: Any, parent_run_id: Any = None, **kwargs: Any
+        self,
+        error: BaseException,
+        *,
+        run_id: Any,
+        parent_run_id: Any = None,
+        **kwargs: Any,
     ) -> None:
-        info = self._runs.pop(str(run_id), None) or {"tool": "llm", "args": ""}
+        info = self._runs.pop(str(run_id), None) or {
+            "tool": "llm",
+            "args": "",
+            "start": None,
+        }
+        latency_ms = self._latency_from(info)
         self._emit(
             "message",
             info["tool"],
             args=info["args"],
+            latency_ms=latency_ms,
             error=True,
             error_type=type(error).__name__,
         )
 
     def on_chat_model_error(
-        self, error: BaseException, *, run_id: Any, parent_run_id: Any = None, **kwargs: Any
+        self,
+        error: BaseException,
+        *,
+        run_id: Any,
+        parent_run_id: Any = None,
+        **kwargs: Any,
     ) -> None:
         # In langchain-core chat-model errors route through on_llm_error. Delegate
         # so exactly one error event is emitted regardless of which hook fires.
         self.on_llm_error(error, run_id=run_id, parent_run_id=parent_run_id, **kwargs)
 
     def on_chain_error(
-        self, error: BaseException, *, run_id: Any, parent_run_id: Any = None, **kwargs: Any
+        self,
+        error: BaseException,
+        *,
+        run_id: Any,
+        parent_run_id: Any = None,
+        **kwargs: Any,
     ) -> None:
-        info = self._runs.pop(str(run_id), None) or {"tool": "chain", "args": ""}
+        info = self._runs.pop(str(run_id), None) or {
+            "tool": "chain",
+            "args": "",
+            "start": None,
+        }
+        latency_ms = self._latency_from(info)
         self._emit(
             "plan_step",
             info["tool"],
             args=info["args"],
+            latency_ms=latency_ms,
             error=True,
             error_type=type(error).__name__,
         )
 
     # -- agent decisions ----------------------------------------------------
-    def on_agent_action(self, action: Any, *, run_id: Any, parent_run_id: Any = None, **kwargs: Any) -> None:
+    def on_agent_action(
+        self, action: Any, *, run_id: Any, parent_run_id: Any = None, **kwargs: Any
+    ) -> None:
         tool = getattr(action, "tool", None)
         tool_input = getattr(action, "tool_input", None)
-        self._emit("plan_step", tool, args="" if tool_input is None else str(tool_input))
+        self._emit(
+            "plan_step", tool, args="" if tool_input is None else str(tool_input)
+        )
 
-    def on_agent_finish(self, finish: Any, *, run_id: Any, parent_run_id: Any = None, **kwargs: Any) -> None:
+    def on_agent_finish(
+        self, finish: Any, *, run_id: Any, parent_run_id: Any = None, **kwargs: Any
+    ) -> None:
         rv = getattr(finish, "return_values", None)
         self._emit("plan_step", "agent_finish", args="" if rv is None else str(rv))
 
     # -- LLM / chat model calls (latency + token counts) --------------------
     def on_llm_start(
-        self, serialized: dict, prompts: list, *, run_id: Any, parent_run_id: Any = None, **kwargs: Any
+        self,
+        serialized: dict,
+        prompts: list,
+        *,
+        run_id: Any,
+        parent_run_id: Any = None,
+        **kwargs: Any,
     ) -> None:
         # Hash the real prompt text so distinct prompts get distinct signatures
         # (a constant args would make every LLM call look identical -> false loops).
-        self._runs.setdefault(str(run_id), {"start": self._clock(), "type": "message", "tool": "llm", "args": str(prompts)})
+        self._runs.setdefault(
+            str(run_id),
+            {
+                "start": self._clock(),
+                "type": "message",
+                "tool": "llm",
+                "args": str(prompts),
+            },
+        )
 
     def on_chat_model_start(
-        self, serialized: dict, messages: list, *, run_id: Any, parent_run_id: Any = None, **kwargs: Any
+        self,
+        serialized: dict,
+        messages: list,
+        *,
+        run_id: Any,
+        parent_run_id: Any = None,
+        **kwargs: Any,
     ) -> None:
-        self._runs.setdefault(str(run_id), {"start": self._clock(), "type": "message", "tool": "chat", "args": str(messages)})
+        self._runs.setdefault(
+            str(run_id),
+            {
+                "start": self._clock(),
+                "type": "message",
+                "tool": "chat",
+                "args": str(messages),
+            },
+        )
 
     def on_llm_end(
         self, response: Any, *, run_id: Any, parent_run_id: Any = None, **kwargs: Any
@@ -208,7 +291,13 @@ class SnaglineCallbackHandler(BaseCallbackHandler):
 
     # -- generic chains -----------------------------------------------------
     def on_chain_start(
-        self, serialized: dict, inputs: dict, *, run_id: Any, parent_run_id: Any = None, **kwargs: Any
+        self,
+        serialized: dict,
+        inputs: dict,
+        *,
+        run_id: Any,
+        parent_run_id: Any = None,
+        **kwargs: Any,
     ) -> None:
         name = (serialized or {}).get("name") or (serialized or {}).get("id") or "chain"
         self._runs[str(run_id)] = {

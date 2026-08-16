@@ -27,9 +27,9 @@ def test_watch_ingests_stdin_and_reports(capsys, monkeypatch):
     assert "ingested" in err
     # The injected-loop fixture must fire the loop detector through the CLI.
     risks = [
-        json.loads(l)
-        for l in err.splitlines()
-        if l.startswith("{") and '"trigger"' in l
+        json.loads(line)
+        for line in err.splitlines()
+        if line.startswith("{") and '"trigger"' in line
     ]
     assert any(r["trigger"] == "loop" for r in risks)
 

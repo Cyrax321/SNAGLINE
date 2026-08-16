@@ -36,14 +36,15 @@ from __future__ import annotations
 import itertools
 import logging
 import time
-from typing import Any, Callable, Iterator, Optional
+from collections.abc import Callable, Iterator
+from typing import Any
 
 from snagline.events import StepEvent, make_signature
 
 logger = logging.getLogger("snagline")
 
 
-def _node_error(update: Any) -> tuple[bool, Optional[str]]:
+def _node_error(update: Any) -> tuple[bool, str | None]:
     if isinstance(update, BaseException):
         return True, type(update).__name__
     if isinstance(update, dict):
@@ -59,7 +60,7 @@ def watch_graph(
     monitor: Any,
     episode_id: str,
     stream: Iterator[dict],
-    clock: Optional[Callable[[], float]] = None,
+    clock: Callable[[], float] | None = None,
 ) -> Iterator[dict]:
     """Pass-through iterator over a LangGraph update stream that monitors it.
 

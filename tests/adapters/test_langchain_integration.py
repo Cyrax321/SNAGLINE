@@ -18,7 +18,6 @@ from langchain_core.messages import AIMessage, HumanMessage
 from snagline import Monitor
 from snagline.adapters.langchain_adapter import SnaglineCallbackHandler
 from snagline.detectors.loop import LoopDetector
-from snagline.sinks.console import ConsoleSink
 
 
 class RecordingSink:

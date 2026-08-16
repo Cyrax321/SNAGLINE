@@ -71,8 +71,6 @@ def test_emit_never_raises_on_bad_status():
     with mock.patch.object(
         urllib.request,
         "urlopen",
-        side_effect=urllib.error.HTTPError(
-            "url", 500, "boom", hdrs=None, fp=None
-        ),
+        side_effect=urllib.error.HTTPError("url", 500, "boom", hdrs=None, fp=None),
     ):
         WebhookSink("http://hooks.example/alerts").emit(_risk())

@@ -30,7 +30,9 @@ class StepEvent:
     step_id: str
     episode_id: str
     timestamp: float  # unix epoch seconds, float for sub-second precision
-    action_type: str  # "tool_call" | "message" | "plan_step" | "observation" | adapter-defined
+    action_type: (
+        str  # "tool_call" | "message" | "plan_step" | "observation" | adapter-defined
+    )
     action_signature: str  # normalized hash -- see make_signature()
 
     tool_name: str | None = None
@@ -39,7 +41,9 @@ class StepEvent:
     error_type: str | None = None
     tokens_in: int | None = None
     tokens_out: int | None = None
-    metadata: dict = field(default_factory=dict)  # adapter-specific; detectors never read this
+    metadata: dict = field(
+        default_factory=dict
+    )  # adapter-specific; detectors never read this
 
 
 @dataclass(frozen=True, slots=True)

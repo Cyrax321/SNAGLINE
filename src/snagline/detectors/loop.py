@@ -12,7 +12,6 @@ response text (project.md §1.4).
 from __future__ import annotations
 
 from collections import deque
-from typing import Dict
 
 from snagline.config import Config
 from snagline.events import StepEvent
@@ -29,15 +28,19 @@ class LoopDetector:
         config: Config | None = None,
     ) -> None:
         cfg = config or Config()
-        self.window_size = window_size if window_size is not None else cfg.loop_window_size
-        self.repeat_threshold = (
-            repeat_threshold if repeat_threshold is not None else cfg.loop_repeat_threshold
+        self.window_size = (
+            window_size if window_size is not None else cfg.loop_window_size
         )
-        self._windows: Dict[str, deque] = {}
+        self.repeat_threshold = (
+            repeat_threshold
+            if repeat_threshold is not None
+            else cfg.loop_repeat_threshold
+        )
+        self._windows: dict[str, deque] = {}
         # Dedupe: emit once per repetition episode (issue #4). Without this the
         # detector re-fires on every step while the same action keeps repeating,
         # which is alert spam.
-        self._fired: Dict[str, bool] = {}
+        self._fired: dict[str, bool] = {}
 
     def observe(self, event: StepEvent) -> FailureRisk | None:
         w = self._windows.setdefault(event.episode_id, deque(maxlen=self.window_size))

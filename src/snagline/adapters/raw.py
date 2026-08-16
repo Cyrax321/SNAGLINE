@@ -21,15 +21,16 @@ from __future__ import annotations
 import itertools
 import logging
 import time
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from typing import Any, Callable, Dict, Iterator, Optional
+from typing import Any
 
 from snagline.events import StepEvent, make_signature
 
 logger = logging.getLogger("snagline")
 
 
-def _build_signature(action_type: str, tool_name: Optional[str], args: Any) -> str:
+def _build_signature(action_type: str, tool_name: str | None, args: Any) -> str:
     # Volatile fields (timestamps, nonces, retry counters) must NOT enter the
     # signature or every retry would look unique and defeat loop detection.
     return make_signature(action_type, tool_name, str(args))
@@ -39,7 +40,7 @@ def _build_signature(action_type: str, tool_name: Optional[str], args: Any) -> s
 def watch(
     monitor: Any,
     episode_id: str,
-    agent_name: Optional[str] = None,
+    agent_name: str | None = None,
 ) -> Iterator[Callable[..., StepEvent]]:
     """Context manager yielding a ``step`` callable bound to ``monitor``/``episode_id``.
 
@@ -53,19 +54,19 @@ def watch(
 
     def step(
         action_type: str,
-        tool_name: Optional[str] = None,
+        tool_name: str | None = None,
         *,
         args: Any = "",
-        latency_ms: Optional[float] = None,
+        latency_ms: float | None = None,
         error: bool = False,
-        error_type: Optional[str] = None,
-        tokens_in: Optional[int] = None,
-        tokens_out: Optional[int] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        error_type: str | None = None,
+        tokens_in: int | None = None,
+        tokens_out: int | None = None,
+        metadata: dict[str, Any] | None = None,
         **extra: Any,
     ) -> StepEvent:
         sig = _build_signature(action_type, tool_name, args)
-        md: Dict[str, Any] = dict(metadata or {})
+        md: dict[str, Any] = dict(metadata or {})
         md.update(extra)
         event = StepEvent(
             step_id=str(next(counter)),
