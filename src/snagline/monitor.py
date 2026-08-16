@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import List
 
 from snagline.config import Config
 from snagline.detectors.base import Detector
@@ -37,8 +36,8 @@ class Monitor:
 
     def __init__(
         self,
-        detectors: List[Detector],
-        sinks: List[AlertSink],
+        detectors: list[Detector],
+        sinks: list[AlertSink],
         fail_open: bool = True,
     ) -> None:
         self._detectors = list(detectors)
@@ -61,7 +60,7 @@ class Monitor:
         webhook sink) must not block concurrent ``ingest`` calls, and a sink
         that re-enters ``ingest`` must not deadlock.
         """
-        risks: List[FailureRisk] = []
+        risks: list[FailureRisk] = []
         with self._lock:
             for detector in self._detectors:
                 try:
@@ -134,13 +133,12 @@ class Monitor:
         cls,
         config: Config | None = None,
         sinks: list[AlertSink] | None = None,
-    ) -> "Monitor":
+    ) -> Monitor:
         """Construct a zero-configuration Monitor with sensible defaults.
 
-        Wires up the tier-1 detectors available in this build phase
-        (loop + error-cascade) and, unless ``sinks`` is given, the console
-        sink. Later build phases register additional detectors here as they
-        land (project.md §5.4).
+        Wires up the three tier-1 detectors that ship in this build
+        (loop, error-cascade, and the latency-anomaly/CUSUM detector) and,
+        unless ``sinks`` is given, the console sink.
         """
         from snagline.detectors.error_cascade import ErrorCascadeDetector
         from snagline.detectors.latency_anomaly import LatencyAnomalyDetector
