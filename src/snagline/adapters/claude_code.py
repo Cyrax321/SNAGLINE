@@ -30,7 +30,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from typing import Any, Optional
+from typing import Any
 
 from snagline.events import StepEvent, make_signature
 
@@ -77,7 +77,7 @@ class HookTracker:
         if len(self._starts) > 256:
             self._starts.clear()
 
-    def latency_ms(self, payload: dict) -> Optional[float]:
+    def latency_ms(self, payload: dict) -> float | None:
         tool_use_id = payload.get("tool_use_id")
         if not isinstance(tool_use_id, str):
             return None
@@ -89,25 +89,23 @@ class HookTracker:
 
 def payload_to_event(
     payload: dict,
-    tracker: Optional[HookTracker] = None,
-    timestamp: Optional[float] = None,
-) -> Optional[StepEvent]:
+    tracker: HookTracker | None = None,
+    timestamp: float | None = None,
+) -> StepEvent | None:
     """Map one Claude Code hook payload to a ``StepEvent`` (or ``None``).
 
     ``tracker`` is consulted for latency: call ``tracker.note(payload)`` on
     every payload (including unmapped ones), then this function fills
     ``latency_ms`` on ``PostToolUse`` events.
     """
-    mapped = _EVENT_MAP.get(payload.get("hook_event_name"))
+    mapped = _EVENT_MAP.get(str(payload.get("hook_event_name")))
     if mapped is None:
         return None
     action_type, subkind = mapped
 
     episode_id = str(payload.get("session_id") or "claude-code")
     step_id = str(
-        payload.get("tool_use_id")
-        or payload.get("prompt_id")
-        or uuid.uuid4().hex[:12]
+        payload.get("tool_use_id") or payload.get("prompt_id") or uuid.uuid4().hex[:12]
     )
     tool_name = payload.get("tool_name")
     is_tool = action_type == "tool_call"
@@ -127,11 +125,15 @@ def payload_to_event(
     error_type = None
     if error:
         err = payload.get("error")
-        error_type = type(err).__name__ if isinstance(err, BaseException) else (
-            str(err) if err else payload.get("hook_event_name")
+        error_type = (
+            type(err).__name__
+            if isinstance(err, BaseException)
+            else (str(err) if err else payload.get("hook_event_name"))
         )
 
-    latency_ms = tracker.latency_ms(payload) if tracker is not None and is_tool else None
+    latency_ms = (
+        tracker.latency_ms(payload) if tracker is not None and is_tool else None
+    )
 
     return StepEvent(
         step_id=step_id,
@@ -149,7 +151,9 @@ def payload_to_event(
     )
 
 
-def ingest_payload(monitor: Any, payload: dict, tracker: Optional[HookTracker] = None) -> Optional[StepEvent]:
+def ingest_payload(
+    monitor: Any, payload: dict, tracker: HookTracker | None = None
+) -> StepEvent | None:
     """Convenience: note the payload on ``tracker`` and ingest the mapped event.
 
     Returns the event that was ingested, or ``None`` for unmapped events.

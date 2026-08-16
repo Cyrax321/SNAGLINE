@@ -10,10 +10,8 @@ and the fail-open guarantee holds for custom code too.
 from __future__ import annotations
 
 from snagline import Monitor
-from snagline.detectors.base import Detector
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk
-from snagline.sinks.base import AlertSink
 
 
 class CustomDetector:

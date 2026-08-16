@@ -40,3 +40,46 @@ Homepage = "https://github.com/Cyrax321/SNAGLINE"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# --- Lint / format (issue #11) -------------------------------------------------
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B", "C4", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests intentionally use loose typing and dummy implementations.
+"tests/*" = ["B", "C4", "SIM"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+# --- Static typing (issue #11) -------------------------------------------------
+[tool.mypy]
+python_version = "3.10"
+warn_unused_ignores = false
+warn_redundant_casts = false
+ignore_missing_imports = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+
+# --- Coverage (issue #11) ------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=snagline --cov-fail-under=80"
+
+[tool.coverage.run]
+source = ["src/snagline"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]

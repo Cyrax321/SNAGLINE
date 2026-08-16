@@ -25,7 +25,6 @@ content (project.md §1.4).
 from __future__ import annotations
 
 import math
-from typing import Dict, Optional, Tuple
 
 from snagline.config import Config
 from snagline.events import StepEvent
@@ -50,7 +49,7 @@ class _WelfordCUSUM:
         self.mean = 0.0
         self._m2 = 0.0
         self.cusum = 0.0
-        self.mu0: Optional[float] = None
+        self.mu0: float | None = None
         self.sigma0: float = 0.0
         self.frozen = False
 
@@ -86,26 +85,32 @@ class LatencyAnomalyDetector:
 
     def __init__(
         self,
-        k: Optional[float] = None,
-        h: Optional[float] = None,
-        min_samples: Optional[int] = None,
-        sigma_floor_abs: Optional[float] = None,
-        sigma_floor_rel: Optional[float] = None,
-        config: Optional[Config] = None,
+        k: float | None = None,
+        h: float | None = None,
+        min_samples: int | None = None,
+        sigma_floor_abs: float | None = None,
+        sigma_floor_rel: float | None = None,
+        config: Config | None = None,
     ) -> None:
         cfg = config or Config()
         self.k = k if k is not None else cfg.cusum_k
         self.h = h if h is not None else cfg.cusum_h
-        self.min_samples = min_samples if min_samples is not None else cfg.cusum_min_samples
+        self.min_samples = (
+            min_samples if min_samples is not None else cfg.cusum_min_samples
+        )
         self.sigma_floor_abs = (
-            sigma_floor_abs if sigma_floor_abs is not None else cfg.cusum_sigma_floor_abs
+            sigma_floor_abs
+            if sigma_floor_abs is not None
+            else cfg.cusum_sigma_floor_abs
         )
         self.sigma_floor_rel = (
-            sigma_floor_rel if sigma_floor_rel is not None else cfg.cusum_sigma_floor_rel
+            sigma_floor_rel
+            if sigma_floor_rel is not None
+            else cfg.cusum_sigma_floor_rel
         )
-        self._states: Dict[Tuple[str, str], _WelfordCUSUM] = {}
+        self._states: dict[tuple[str, str], _WelfordCUSUM] = {}
 
-    def observe(self, event: StepEvent) -> Optional[FailureRisk]:
+    def observe(self, event: StepEvent) -> FailureRisk | None:
         if event.latency_ms is None:
             return None
         # Only leaf tool calls carry a meaningful per-tool latency. A planning
@@ -117,7 +122,9 @@ class LatencyAnomalyDetector:
         key = (event.episode_id, event.tool_name or "default")
         state = self._states.get(key)
         if state is None:
-            state = _WelfordCUSUM(self.k, self.h, self.sigma_floor_abs, self.sigma_floor_rel)
+            state = _WelfordCUSUM(
+                self.k, self.h, self.sigma_floor_abs, self.sigma_floor_rel
+            )
             self._states[key] = state
 
         if not state.frozen:

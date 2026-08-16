@@ -1,8 +1,8 @@
 """End-to-end tests for the external-process bridges:
 
-  * sidecar ``POST /hooks/claude-code`` (Claude Code native ``http`` hooks)
-  * ``snagline hook`` (command-hook bridge: stdin payload -> file/HTTP/local)
-  * ``snagline watch --file`` (file bridge)
+* sidecar ``POST /hooks/claude-code`` (Claude Code native ``http`` hooks)
+* ``snagline hook`` (command-hook bridge: stdin payload -> file/HTTP/local)
+* ``snagline watch --file`` (file bridge)
 """
 
 from __future__ import annotations
@@ -14,8 +14,6 @@ import sys
 import threading
 import time
 import urllib.request
-
-import pytest
 
 from snagline.monitor import Monitor
 from snagline.risk import FailureRisk
@@ -60,10 +58,16 @@ def test_sidecar_accepts_native_claude_code_payloads_and_fires_loop():
         # A pre/start + post/end pair, repeated with IDENTICAL tool_input
         # (tool_use_id differs; the signature ignores it on purpose).
         for i in range(4):
-            assert _post(base + "/hooks/claude-code", _tool_payload(i))["status"] == "ingested"
-            assert _post(base + "/hooks/claude-code", _tool_payload(i, "PostToolUse"))[
-                "status"
-            ] == "ingested"
+            assert (
+                _post(base + "/hooks/claude-code", _tool_payload(i))["status"]
+                == "ingested"
+            )
+            assert (
+                _post(base + "/hooks/claude-code", _tool_payload(i, "PostToolUse"))[
+                    "status"
+                ]
+                == "ingested"
+            )
         # Unmapped lifecycle events are acknowledged and ignored.
         assert (
             _post(base + "/hooks/claude-code", {"hook_event_name": "SessionStart"})[
@@ -93,10 +97,10 @@ def test_hook_cli_appends_canonical_event_to_file(tmp_path):
     for i in range(4):
         r = _run(["hook", "--out", str(out)], json.dumps(_tool_payload(i)))
         assert r.returncode == 0  # fail-open: hook ALWAYS exits 0
-    lines = [json.loads(l) for l in out.read_text().splitlines()]
+    lines = [json.loads(line) for line in out.read_text().splitlines()]
     assert len(lines) == 4
-    assert {l["episode_id"] for l in lines} == {"sess-e2e"}
-    assert {l["action_type"] for l in lines} == {"tool_call"}
+    assert {line["episode_id"] for line in lines} == {"sess-e2e"}
+    assert {line["action_type"] for line in lines} == {"tool_call"}
     # The appended file is valid snagline watch input and trips the detector.
     r = _run(["watch", "--file", str(out), "--episode-id", "sess-e2e"], "")
     assert r.returncode == 0
@@ -121,7 +125,9 @@ def test_hook_cli_forwards_to_sidecar(tmp_path):
 def test_hook_cli_never_fails_the_host():
     r = _run(["hook", "--out", "/nonexistent/dir/x.jsonl"], "not json at all")
     assert r.returncode == 0
-    r2 = _run(["hook", "--url", "http://127.0.0.1:1/nope"], json.dumps(_tool_payload(1)))
+    r2 = _run(
+        ["hook", "--url", "http://127.0.0.1:1/nope"], json.dumps(_tool_payload(1))
+    )
     assert r2.returncode == 0
     r3 = _run(["hook"], json.dumps({"hook_event_name": "SessionStart"}))
     assert r3.returncode == 0  # unmapped events are silently dropped
@@ -131,8 +137,17 @@ def test_watch_file_follow_sees_appended_lines(tmp_path):
     path = tmp_path / "live.jsonl"
     path.write_text(json.dumps(_base_event(0)) + "\n")
     proc = subprocess.Popen(
-        [sys.executable, "-m", "snagline.cli", "watch", "--file", str(path), "--follow",
-         "--episode-id", "ep-follow"],
+        [
+            sys.executable,
+            "-m",
+            "snagline.cli",
+            "watch",
+            "--file",
+            str(path),
+            "--follow",
+            "--episode-id",
+            "ep-follow",
+        ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,

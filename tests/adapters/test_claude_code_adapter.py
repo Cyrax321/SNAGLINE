@@ -77,7 +77,9 @@ def test_repeated_same_tool_input_is_loop_detectable():
 
 def test_different_tool_inputs_have_different_signatures():
     a = payload_to_event(_tool_payload("PreToolUse", tool_input={"command": "ls"}))
-    b = payload_to_event(_tool_payload("PreToolUse", tool_input={"command": "rm -rf /"}))
+    b = payload_to_event(
+        _tool_payload("PreToolUse", tool_input={"command": "rm -rf /"})
+    )
     assert a.action_signature != b.action_signature
 
 
@@ -126,4 +128,6 @@ def test_ingest_payload_never_raises():
     assert ingest_payload(m, None) is None  # type: ignore[arg-type]
     # Weird payloads may be dropped, but must never raise.
     ingest_payload(m, {"hook_event_name": 42, "tool_input": object()})
-    ingest_payload(m, {"hook_event_name": "PreToolUse", "session_id": None, "tool_input": {}})
+    ingest_payload(
+        m, {"hook_event_name": "PreToolUse", "session_id": None, "tool_input": {}}
+    )
