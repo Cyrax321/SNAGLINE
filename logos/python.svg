@@ -1,0 +1,769 @@
+<!doctype html>
+<html class="no-js" lang="en" dir="ltr">
+
+<head>
+    <script defer
+            file-types="bz2,chm,dmg,exe,gz,json,msi,msix,pdf,pkg,tgz,xz,zip"
+            data-domain="python.org"
+            src="https://analytics.python.org/js/script.file-downloads.outbound-links.js"></script>
+
+    <meta charset="utf-8">
+
+    <link rel="prefetch" href="//ajax.googleapis.com/ajax/libs/jquery/1.8.2/jquery.min.js">
+    <link rel="prefetch" href="//ajax.googleapis.com/ajax/libs/jqueryui/1.12.1/jquery-ui.min.js">
+
+    <meta name="application-name" content="Python.org">
+    <meta name="apple-mobile-web-app-title" content="Python.org">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="HandheldFriendly" content="True">
+    <meta name="format-detection" content="telephone=no">
+
+    <script async
+            src="https://media.ethicalads.io/media/client/v1.4.0/ethicalads.min.js"
+            integrity="sha256-U3hKDidudIaxBDEzwGJApJgPEf2mWk6cfMWghrAa6i0= sha384-UcmsCqcNRSLW/dV3Lo1oCi2/VaurXbib6p4HyUEOeIa/4OpsrnucrugAefzVZJfI sha512-q4t1L4xEjGV2R4hzqCa41P8jrgFUS8xTb8rdNv4FGvw7FpydVj/kkxBJHOiaoxHa8olCcx1Slk9K+3sNbsM4ug=="
+            crossorigin="anonymous"
+    ></script>
+    <script src="/static/js/libs/modernizr.js"></script>
+
+    <link href="/static/stylesheets/style.c4f369bed0d3.css" rel="stylesheet" type="text/css" media="all" title="default" />
+    <link href="/static/stylesheets/mq.a4feecea96fa.css" rel="stylesheet" type="text/css" media="not print, braille, embossed, speech, tty" />
+    <link href="/static/stylesheets/font-awesome.bf0c425cdb73.css" rel="stylesheet" type="text/css" media="screen" />
+    
+
+    <link rel="stylesheet" href="//ajax.googleapis.com/ajax/libs/jqueryui/1.12.1/themes/smoothness/jquery-ui.css">
+
+    
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <link rel="apple-touch-icon-precomposed" sizes="144x144" href="/static/apple-touch-icon-144x144-precomposed.png">
+    <link rel="apple-touch-icon-precomposed" sizes="114x114" href="/static/apple-touch-icon-114x114-precomposed.png">
+    <link rel="apple-touch-icon-precomposed" sizes="72x72" href="/static/apple-touch-icon-72x72-precomposed.png">
+    <link rel="apple-touch-icon-precomposed" href="/static/apple-touch-icon-precomposed.png">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon-precomposed.png">
+
+    
+    <meta name="msapplication-TileImage" content="/static/metro-icon-144x144.png"><!-- white shape -->
+    <meta name="msapplication-TileColor" content="#3673a5"><!-- python blue -->
+    <meta name="msapplication-navbutton-color" content="#3673a5">
+
+    <title>Welcome to Python.org</title>
+
+    <meta name="description" content="The official home of the Python Programming Language">
+    <meta name="keywords" content="Python programming language object oriented web free open source software license documentation download community">
+
+    
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Python.org">
+    <meta property="og:title" content="Welcome to Python.org">
+    <meta property="og:description" content="The official home of the Python Programming Language">
+    
+    <meta property="og:image" content="https://www.python.org/static/opengraph-icon-200x200.png">
+    <meta property="og:image:secure_url" content="https://www.python.org/static/opengraph-icon-200x200.png">
+    
+    <meta property="og:url" content="https://www.python.org/community/logos/python-logo-notext.svg">
+
+    <link rel="author" href="/humans.txt">
+
+    <link rel="alternate" type="application/rss+xml" title="Python Enhancement Proposals"
+          href="https://peps.python.org/peps.rss">
+    <link rel="alternate" type="application/rss+xml" title="Python Job Opportunities"
+          href="https://www.python.org/jobs/feed/rss/">
+    <link rel="alternate" type="application/rss+xml" title="Python Software Foundation News"
+          href="https://pyfound.blogspot.com/feeds/posts/default?alt=rss">
+    <link rel="alternate" type="application/rss+xml" title="Python Insider"
+          href="https://blog.python.org/feeds/posts/default?alt=rss">
+   <link rel="alternate" type="application/rss+xml" title="Python Releases"
+         href="https://www.python.org/downloads/feed.rss">
+
+    
+
+    
+    <script type="application/ld+json">
+     {
+       "@context": "https://schema.org",
+       "@type": "WebSite",
+       "url": "https://www.python.org/",
+       "potentialAction": {
+         "@type": "SearchAction",
+         "target": "https://www.python.org/search/?q={search_term_string}",
+         "query-input": "required name=search_term_string"
+       }
+     }
+    </script>
+
+    
+</head>
+
+<body class="python default-page fourohfour">
+
+    <div id="touchnav-wrapper">
+
+        <div id="nojs" class="do-not-print">
+            <p><strong>Notice:</strong> This page displays a fallback because interactive scripts did not run. Possible causes include disabled JavaScript or failure to load scripts or stylesheets.</p>
+        </div>
+
+        <!-- Sister Site Links -->
+        <div id="top" class="top-bar do-not-print">
+
+            <nav class="meta-navigation container">
+
+                
+                <div class="skip-link screen-reader-text">
+                    <a href="#content" title="Skip to content">Skip to content</a>
+                </div>
+
+                
+                <a id="close-python-network" class="jump-link" href="#python-network" aria-hidden="true">
+                    <span aria-hidden="true" class="icon-arrow-down"><span>&#9660;</span></span> Close
+                </a>
+
+                
+
+<ul class="menu" role="tree">
+    
+    <li class="python-meta ">
+        <a href="/" title="The Python Programming Language" >Python</a>
+    </li>
+    
+    <li class="psf-meta ">
+        <a href="https://www.python.org/psf/" title="The Python Software Foundation" >PSF</a>
+    </li>
+    
+    <li class="docs-meta ">
+        <a href="https://docs.python.org" title="Python Documentation" >Docs</a>
+    </li>
+    
+    <li class="pypi-meta ">
+        <a href="https://pypi.org/" title="Python Package Index" >PyPI</a>
+    </li>
+    
+    <li class="jobs-meta ">
+        <a href="/jobs/" title="Python Job Board" >Jobs</a>
+    </li>
+    
+    <li class="shop-meta ">
+        <a href="/community/"  >Community</a>
+    </li>
+    
+</ul>
+
+
+                <a id="python-network" class="jump-link" href="#top" aria-hidden="true">
+                    <span aria-hidden="true" class="icon-arrow-up"><span>&#9650;</span></span> The Python Network
+                </a>
+
+            </nav>
+
+        </div>
+
+        <!-- Header elements -->
+        <header class="main-header">
+            <div class="container">
+
+                <div class="site-headline">
+                    <a href="/"><img class="python-logo" src="/static/img/python-logo.png" alt="python&trade;"></a>
+                </div>
+
+                <div class="options-bar-container do-not-print">
+                    <a href="https://donate.python.org/" class="donate-button">Donate</a>
+                    <div class="options-bar">
+                        
+                        <a id="site-map-link" class="jump-to-menu" href="#site-map"><span class="menu-icon">&equiv;</span> Menu</a><form class="search-the-site" action="/search/" method="get">
+                            <fieldset title="Search Python.org">
+
+                                <span aria-hidden="true" class="icon-search"></span>
+
+                                <label class="screen-reader-text" for="id-search-field">Search This Site</label>
+                                <input id="id-search-field" name="q" type="search" class="search-field" placeholder="Search" value="" tabindex="1">
+
+                                <button type="submit" name="submit" id="submit" class="search-button" title="Submit this Search" tabindex="3">
+                                    GO
+                                </button>
+
+                            </fieldset>
+                        </form><span class="breaker"></span><div class="adjust-font-size" aria-hidden="true">
+                            <ul class="navigation menu" aria-label="Adjust Text Size on Page">
+                                <li class="tier-1 last" aria-haspopup="true">
+                                    <a href="#" class="action-trigger"><strong><small>A</small> A</strong></a>
+                                    <ul class="subnav menu" role="menu">
+                                        <li class="tier-2 element-1" role="menuitem"><a class="text-shrink" title="Make Text Smaller" href="javascript:;">Smaller</a></li>
+                                        <li class="tier-2 element-2" role="menuitem"><a class="text-grow" title="Make Text Larger" href="javascript:;">Larger</a></li>
+                                        <li class="tier-2 element-3" role="menuitem"><a class="text-reset" title="Reset any font size changes I have made" href="javascript:;">Reset</a></li>
+                                    </ul>
+                                </li>
+                            </ul>
+                        </div><div class="winkwink-nudgenudge">
+                            <ul class="navigation menu" aria-label="Social Media Navigation">
+                                <li class="tier-1 last" aria-haspopup="true">
+                                    <a href="#" class="action-trigger">Socialize</a>
+                                    <ul class="subnav menu" role="menu">
+                                        <li class="tier-2 element-1" role="menuitem"><a href="https://www.linkedin.com/company/python-software-foundation/"><i aria-hidden="true" class="fa fa-linkedin-square"></i>LinkedIn</a></li>
+                                        <li class="tier-2 element-2" role="menuitem"><a href="https://fosstodon.org/@ThePSF"><span aria-hidden="true" class="icon-mastodon"></span>Mastodon</a></li>
+                                        <li class="tier-2 element-3" role="menuitem"><a href="/community/irc/"><span aria-hidden="true" class="icon-freenode"></span>Chat on IRC</a></li>
+                                        <li class="tier-2 element-4" role="menuitem"><a href="https://twitter.com/ThePSF"><span aria-hidden="true" class="icon-twitter"></span>Twitter</a></li>
+                                    </ul>
+                                </li>
+                            </ul>
+                        </div>
+                        <span data-html-include="/authenticated"></span>
+                    </div><!-- end options-bar -->
+                </div>
+
+                <nav id="mainnav" class="python-navigation main-navigation do-not-print">
+                    
+                        
+<ul class="navigation menu" role="menubar" aria-label="Main Navigation">
+  
+    
+    
+    <li id="about" class="tier-1 element-1  " aria-haspopup="true">
+        <a href="/about/" title="" class="">About</a>
+        
+            
+
+<ul class="subnav menu" role="menu" aria-hidden="true">
+    
+        <li class="tier-2 element-1" role="menuitem"><a href="/about/apps/" title="">Applications</a></li>
+    
+        <li class="tier-2 element-2" role="menuitem"><a href="/about/quotes/" title="">Quotes</a></li>
+    
+        <li class="tier-2 element-3" role="menuitem"><a href="/about/gettingstarted/" title="">Getting Started</a></li>
+    
+        <li class="tier-2 element-4" role="menuitem"><a href="/about/help/" title="">Help</a></li>
+    
+        <li class="tier-2 element-5" role="menuitem"><a href="http://brochure.getpython.info/" title="">Python Brochure</a></li>
+    
+</ul>
+
+        
+    </li>
+    
+    
+    
+    <li id="downloads" class="tier-1 element-2  " aria-haspopup="true">
+        <a href="/downloads/" title="" class="">Downloads</a>
+        
+            
+
+<ul class="subnav menu" role="menu" aria-hidden="true">
+    
+        <li class="tier-2 element-1" role="menuitem"><a href="/downloads/" title="">All releases</a></li>
+    
+        <li class="tier-2 element-2" role="menuitem"><a href="/downloads/source/" title="">Source code</a></li>
+    
+        <li class="tier-2 element-3" role="menuitem"><a href="/downloads/windows/" title="">Windows</a></li>
+    
+        <li class="tier-2 element-4" role="menuitem"><a href="/downloads/macos/" title="">macOS</a></li>
+    
+        <li class="tier-2 element-5" role="menuitem"><a href="/downloads/android/" title="">Android</a></li>
+    
+        <li class="tier-2 element-6" role="menuitem"><a href="/downloads/ios/" title="">iOS</a></li>
+    
+        <li class="tier-2 element-7" role="menuitem"><a href="/download/other/" title="">Other Platforms</a></li>
+    
+        <li class="tier-2 element-8" role="menuitem"><a href="https://docs.python.org/3/license.html" title="">License</a></li>
+    
+        <li class="tier-2 element-9" role="menuitem"><a href="/download/alternatives" title="">Alternative Implementations</a></li>
+    
+</ul>
+
+        
+    </li>
+    
+    
+    
+    <li id="documentation" class="tier-1 element-3  " aria-haspopup="true">
+        <a href="/doc/" title="" class="">Documentation</a>
+        
+            
+
+<ul class="subnav menu" role="menu" aria-hidden="true">
+    
+        <li class="tier-2 element-1" role="menuitem"><a href="/doc/" title="">Docs</a></li>
+    
+        <li class="tier-2 element-2" role="menuitem"><a href="/doc/av" title="">Audio/Visual Talks</a></li>
+    
+        <li class="tier-2 element-3" role="menuitem"><a href="https://wiki.python.org/moin/BeginnersGuide" title="">Beginner&#x27;s Guide</a></li>
+    
+        <li class="tier-2 element-4" role="menuitem"><a href="https://docs.python.org/3/faq/" title="">FAQ</a></li>
+    
+        <li class="tier-2 element-5" role="menuitem"><a href="https://translations.python.org/" title="">Non-English Docs</a></li>
+    
+        <li class="tier-2 element-6" role="menuitem"><a href="https://peps.python.org" title="">PEP Index</a></li>
+    
+        <li class="tier-2 element-7" role="menuitem"><a href="https://wiki.python.org/moin/PythonBooks" title="">Python Books</a></li>
+    
+        <li class="tier-2 element-8" role="menuitem"><a href="/doc/essays/" title="">Python Essays</a></li>
+    
+</ul>
+
+        
+    </li>
+    
+    
+    
+    <li id="community" class="tier-1 element-4  " aria-haspopup="true">
+        <a href="/community/" title="" class="">Community</a>
+        
+            
+
+<ul class="subnav menu" role="menu" aria-hidden="true">
+    
+        <li class="tier-2 element-1" role="menuitem"><a href="/community/diversity/" title="">Diversity</a></li>
+    
+        <li class="tier-2 element-2" role="menuitem"><a href="/community/lists/" title="">Mailing Lists</a></li>
+    
+        <li class="tier-2 element-3" role="menuitem"><a href="/community/irc/" title="">IRC</a></li>
+    
+        <li class="tier-2 element-4" role="menuitem"><a href="/community/forums/" title="">Forums</a></li>
+    
+        <li class="tier-2 element-5" role="menuitem"><a href="/psf/annual-report/2024/" title="">PSF Annual Impact Report</a></li>
+    
+        <li class="tier-2 element-6" role="menuitem"><a href="/community/workshops/" title="">Python Conferences</a></li>
+    
+        <li class="tier-2 element-7" role="menuitem"><a href="/community/sigs/" title="">Special Interest Groups</a></li>
+    
+        <li class="tier-2 element-8" role="menuitem"><a href="/community/logos/" title="">Python Logo</a></li>
+    
+        <li class="tier-2 element-9" role="menuitem"><a href="https://wiki.python.org/moin/" title="">Python Wiki</a></li>
+    
+        <li class="tier-2 element-10" role="menuitem"><a href="/psf/conduct/" title="">Code of Conduct</a></li>
+    
+        <li class="tier-2 element-11" role="menuitem"><a href="/community/awards" title="">Community Awards</a></li>
+    
+        <li class="tier-2 element-12" role="menuitem"><a href="/psf/get-involved/" title="">Get Involved</a></li>
+    
+        <li class="tier-2 element-13" role="menuitem"><a href="/psf/community-stories/" title="">Shared Stories</a></li>
+    
+</ul>
+
+        
+    </li>
+    
+    
+    
+    <li id="success-stories" class="tier-1 element-5  " aria-haspopup="true">
+        <a href="/success-stories/" title="success-stories" class="">Success Stories</a>
+        
+            
+
+<ul class="subnav menu" role="menu" aria-hidden="true">
+    
+        <li class="tier-2 element-1" role="menuitem"><a href="/success-stories/category/arts/" title="">Arts</a></li>
+    
+        <li class="tier-2 element-2" role="menuitem"><a href="/success-stories/category/business/" title="">Business</a></li>
+    
+        <li class="tier-2 element-3" role="menuitem"><a href="/success-stories/category/education/" title="">Education</a></li>
+    
+        <li class="tier-2 element-4" role="menuitem"><a href="/success-stories/category/engineering/" title="">Engineering</a></li>
+    
+        <li class="tier-2 element-5" role="menuitem"><a href="/success-stories/category/government/" title="">Government</a></li>
+    
+        <li class="tier-2 element-6" role="menuitem"><a href="/success-stories/category/scientific/" title="">Scientific</a></li>
+    
+        <li class="tier-2 element-7" role="menuitem"><a href="/success-stories/category/software-development/" title="">Software Development</a></li>
+    
+</ul>
+
+        
+    </li>
+    
+    
+    
+    <li id="news" class="tier-1 element-6  " aria-haspopup="true">
+        <a href="/blogs/" title="News from around the Python world" class="">News</a>
+        
+            
+
+<ul class="subnav menu" role="menu" aria-hidden="true">
+    
+        <li class="tier-2 element-1" role="menuitem"><a href="/blogs/" title="Python Insider Blog Posts">Python News</a></li>
+    
+        <li class="tier-2 element-2" role="menuitem"><a href="/psf/newsletter/" title="Python Software Foundation Newsletter">PSF Newsletter</a></li>
+    
+        <li class="tier-2 element-3" role="menuitem"><a href="http://pyfound.blogspot.com/" title="PSF Blog">PSF News</a></li>
+    
+        <li class="tier-2 element-4" role="menuitem"><a href="http://pycon.blogspot.com/" title="PyCon Blog">PyCon US News</a></li>
+    
+        <li class="tier-2 element-5" role="menuitem"><a href="http://planetpython.org/" title="Planet Python">News from the Community</a></li>
+    
+</ul>
+
+        
+    </li>
+    
+    
+    
+    <li id="events" class="tier-1 element-7  " aria-haspopup="true">
+        <a href="/events/" title="" class="">Events</a>
+        
+            
+
+<ul class="subnav menu" role="menu" aria-hidden="true">
+    
+        <li class="tier-2 element-1" role="menuitem"><a href="/events/python-events/" title="">Python Events</a></li>
+    
+        <li class="tier-2 element-2" role="menuitem"><a href="/events/python-user-group/" title="">User Group Events</a></li>
+    
+        <li class="tier-2 element-3" role="menuitem"><a href="/events/python-events/past/" title="">Python Events Archive</a></li>
+    
+        <li class="tier-2 element-4" role="menuitem"><a href="/events/python-user-group/past/" title="">User Group Events Archive</a></li>
+    
+        <li class="tier-2 element-5" role="menuitem"><a href="https://wiki.python.org/moin/PythonEventsCalendar#Submitting_an_Event" title="">Submit an Event</a></li>
+    
+</ul>
+
+        
+    </li>
+    
+    
+    
+    
+  
+</ul>
+
+                    
+                </nav>
+
+                <div class="header-banner "> <!-- for optional "do-not-print" class -->
+                    
+                    
+                </div>
+
+                
+                
+
+             </div><!-- end .container -->
+        </header>
+
+        <div id="content" class="content-wrapper">
+            <!-- Main Content Column -->
+            <div class="container">
+
+                <section class="main-content " role="main">
+
+                    
+                    
+
+                    
+
+                    
+    
+    <article class="text">
+            
+        <h1 class="giga">Error 404: File not Found</h1>
+        
+        <p>We couldn&rsquo;t find what you were looking for. This error has been reported and we will look into it shortly. For now,</p>
+
+        <ul>
+            <li>Try using the search box.</li>
+            <li>
+                Python.org went through a redesign and you may have followed a broken link.
+                Sorry for that, see if <a href="http://legacy.python.org/community/logos/python-logo-notext.svg">the same page on the legacy website</a> works.
+            </li>
+            <li>
+                Lost in an exotic function call? Read <a href="/doc/">the docs</a>.
+                Looking for a package? Check the <a href="https://pypi.org/">Package Index</a>.
+                Need a specific version of Python? The <a href="/downloads/">downloads section</a> has it.
+            </li>
+        </ul>
+        
+    </article>
+    
+
+
+                </section>
+
+                
+                
+
+                
+                
+
+
+            </div><!-- end .container -->
+        </div><!-- end #content .content-wrapper -->
+
+        <!-- Footer and social media list -->
+        
+        <footer id="site-map" class="main-footer">
+            <div class="main-footer-links">
+                <div class="container">
+
+                    
+                    <a id="back-to-top-1" class="jump-link" href="#python-network"><span aria-hidden="true" class="icon-arrow-up"><span>&#9650;</span></span> Back to Top</a>
+
+                    
+
+<ul class="sitemap navigation menu do-not-print" role="tree" id="container">
+    
+    <li class="tier-1 element-1">
+        <a href="/about/" >About</a>
+        
+            
+
+<ul class="subnav menu">
+    
+        <li class="tier-2 element-1" role="treeitem"><a href="/about/apps/" title="">Applications</a></li>
+    
+        <li class="tier-2 element-2" role="treeitem"><a href="/about/quotes/" title="">Quotes</a></li>
+    
+        <li class="tier-2 element-3" role="treeitem"><a href="/about/gettingstarted/" title="">Getting Started</a></li>
+    
+        <li class="tier-2 element-4" role="treeitem"><a href="/about/help/" title="">Help</a></li>
+    
+        <li class="tier-2 element-5" role="treeitem"><a href="http://brochure.getpython.info/" title="">Python Brochure</a></li>
+    
+</ul>
+
+        
+    </li>
+    
+    <li class="tier-1 element-2">
+        <a href="/downloads/" >Downloads</a>
+        
+            
+
+<ul class="subnav menu">
+    
+        <li class="tier-2 element-1" role="treeitem"><a href="/downloads/" title="">All releases</a></li>
+    
+        <li class="tier-2 element-2" role="treeitem"><a href="/downloads/source/" title="">Source code</a></li>
+    
+        <li class="tier-2 element-3" role="treeitem"><a href="/downloads/windows/" title="">Windows</a></li>
+    
+        <li class="tier-2 element-4" role="treeitem"><a href="/downloads/macos/" title="">macOS</a></li>
+    
+        <li class="tier-2 element-5" role="treeitem"><a href="/downloads/android/" title="">Android</a></li>
+    
+        <li class="tier-2 element-6" role="treeitem"><a href="/downloads/ios/" title="">iOS</a></li>
+    
+        <li class="tier-2 element-7" role="treeitem"><a href="/download/other/" title="">Other Platforms</a></li>
+    
+        <li class="tier-2 element-8" role="treeitem"><a href="https://docs.python.org/3/license.html" title="">License</a></li>
+    
+        <li class="tier-2 element-9" role="treeitem"><a href="/download/alternatives" title="">Alternative Implementations</a></li>
+    
+</ul>
+
+        
+    </li>
+    
+    <li class="tier-1 element-3">
+        <a href="/doc/" >Documentation</a>
+        
+            
+
+<ul class="subnav menu">
+    
+        <li class="tier-2 element-1" role="treeitem"><a href="/doc/" title="">Docs</a></li>
+    
+        <li class="tier-2 element-2" role="treeitem"><a href="/doc/av" title="">Audio/Visual Talks</a></li>
+    
+        <li class="tier-2 element-3" role="treeitem"><a href="https://wiki.python.org/moin/BeginnersGuide" title="">Beginner&#x27;s Guide</a></li>
+    
+        <li class="tier-2 element-4" role="treeitem"><a href="https://docs.python.org/3/faq/" title="">FAQ</a></li>
+    
+        <li class="tier-2 element-5" role="treeitem"><a href="https://translations.python.org/" title="">Non-English Docs</a></li>
+    
+        <li class="tier-2 element-6" role="treeitem"><a href="https://peps.python.org" title="">PEP Index</a></li>
+    
+        <li class="tier-2 element-7" role="treeitem"><a href="https://wiki.python.org/moin/PythonBooks" title="">Python Books</a></li>
+    
+        <li class="tier-2 element-8" role="treeitem"><a href="/doc/essays/" title="">Python Essays</a></li>
+    
+</ul>
+
+        
+    </li>
+    
+    <li class="tier-1 element-4">
+        <a href="/community/" >Community</a>
+        
+            
+
+<ul class="subnav menu">
+    
+        <li class="tier-2 element-1" role="treeitem"><a href="/community/diversity/" title="">Diversity</a></li>
+    
+        <li class="tier-2 element-2" role="treeitem"><a href="/community/lists/" title="">Mailing Lists</a></li>
+    
+        <li class="tier-2 element-3" role="treeitem"><a href="/community/irc/" title="">IRC</a></li>
+    
+        <li class="tier-2 element-4" role="treeitem"><a href="/community/forums/" title="">Forums</a></li>
+    
+        <li class="tier-2 element-5" role="treeitem"><a href="/psf/annual-report/2024/" title="">PSF Annual Impact Report</a></li>
+    
+        <li class="tier-2 element-6" role="treeitem"><a href="/community/workshops/" title="">Python Conferences</a></li>
+    
+        <li class="tier-2 element-7" role="treeitem"><a href="/community/sigs/" title="">Special Interest Groups</a></li>
+    
+        <li class="tier-2 element-8" role="treeitem"><a href="/community/logos/" title="">Python Logo</a></li>
+    
+        <li class="tier-2 element-9" role="treeitem"><a href="https://wiki.python.org/moin/" title="">Python Wiki</a></li>
+    
+        <li class="tier-2 element-10" role="treeitem"><a href="/psf/conduct/" title="">Code of Conduct</a></li>
+    
+        <li class="tier-2 element-11" role="treeitem"><a href="/community/awards" title="">Community Awards</a></li>
+    
+        <li class="tier-2 element-12" role="treeitem"><a href="/psf/get-involved/" title="">Get Involved</a></li>
+    
+        <li class="tier-2 element-13" role="treeitem"><a href="/psf/community-stories/" title="">Shared Stories</a></li>
+    
+</ul>
+
+        
+    </li>
+    
+    <li class="tier-1 element-5">
+        <a href="/success-stories/" title="success-stories">Success Stories</a>
+        
+            
+
+<ul class="subnav menu">
+    
+        <li class="tier-2 element-1" role="treeitem"><a href="/success-stories/category/arts/" title="">Arts</a></li>
+    
+        <li class="tier-2 element-2" role="treeitem"><a href="/success-stories/category/business/" title="">Business</a></li>
+    
+        <li class="tier-2 element-3" role="treeitem"><a href="/success-stories/category/education/" title="">Education</a></li>
+    
+        <li class="tier-2 element-4" role="treeitem"><a href="/success-stories/category/engineering/" title="">Engineering</a></li>
+    
+        <li class="tier-2 element-5" role="treeitem"><a href="/success-stories/category/government/" title="">Government</a></li>
+    
+        <li class="tier-2 element-6" role="treeitem"><a href="/success-stories/category/scientific/" title="">Scientific</a></li>
+    
+        <li class="tier-2 element-7" role="treeitem"><a href="/success-stories/category/software-development/" title="">Software Development</a></li>
+    
+</ul>
+
+        
+    </li>
+    
+    <li class="tier-1 element-6">
+        <a href="/blogs/" title="News from around the Python world">News</a>
+        
+            
+
+<ul class="subnav menu">
+    
+        <li class="tier-2 element-1" role="treeitem"><a href="/blogs/" title="Python Insider Blog Posts">Python News</a></li>
+    
+        <li class="tier-2 element-2" role="treeitem"><a href="/psf/newsletter/" title="Python Software Foundation Newsletter">PSF Newsletter</a></li>
+    
+        <li class="tier-2 element-3" role="treeitem"><a href="http://pyfound.blogspot.com/" title="PSF Blog">PSF News</a></li>
+    
+        <li class="tier-2 element-4" role="treeitem"><a href="http://pycon.blogspot.com/" title="PyCon Blog">PyCon US News</a></li>
+    
+        <li class="tier-2 element-5" role="treeitem"><a href="http://planetpython.org/" title="Planet Python">News from the Community</a></li>
+    
+</ul>
+
+        
+    </li>
+    
+    <li class="tier-1 element-7">
+        <a href="/events/" >Events</a>
+        
+            
+
+<ul class="subnav menu">
+    
+        <li class="tier-2 element-1" role="treeitem"><a href="/events/python-events/" title="">Python Events</a></li>
+    
+        <li class="tier-2 element-2" role="treeitem"><a href="/events/python-user-group/" title="">User Group Events</a></li>
+    
+        <li class="tier-2 element-3" role="treeitem"><a href="/events/python-events/past/" title="">Python Events Archive</a></li>
+    
+        <li class="tier-2 element-4" role="treeitem"><a href="/events/python-user-group/past/" title="">User Group Events Archive</a></li>
+    
+        <li class="tier-2 element-5" role="treeitem"><a href="https://wiki.python.org/moin/PythonEventsCalendar#Submitting_an_Event" title="">Submit an Event</a></li>
+    
+</ul>
+
+        
+    </li>
+    
+    <li class="tier-1 element-8">
+        <a href="/dev/" >Contributing</a>
+        
+            
+
+<ul class="subnav menu">
+    
+        <li class="tier-2 element-1" role="treeitem"><a href="https://devguide.python.org/" title="">Developer&#x27;s Guide</a></li>
+    
+        <li class="tier-2 element-2" role="treeitem"><a href="https://github.com/python/cpython/issues" title="">Issue Tracker</a></li>
+    
+        <li class="tier-2 element-3" role="treeitem"><a href="https://mail.python.org/mailman/listinfo/python-dev" title="">python-dev list</a></li>
+    
+        <li class="tier-2 element-4" role="treeitem"><a href="/dev/core-mentorship/" title="">Core Mentorship</a></li>
+    
+        <li class="tier-2 element-5" role="treeitem"><a href="/dev/security/" title="">Report a Security Issue</a></li>
+    
+</ul>
+
+        
+    </li>
+    
+</ul>
+
+
+                    <a id="back-to-top-2" class="jump-link" href="#python-network"><span aria-hidden="true" class="icon-arrow-up"><span>&#9650;</span></span> Back to Top</a>
+                    
+
+                </div><!-- end .container -->
+            </div> <!-- end .main-footer-links -->
+
+            <div class="site-base">
+                <div class="container">
+                    
+                    <ul class="footer-links navigation menu do-not-print" role="tree">
+                        <li class="tier-1 element-1"><a href="/about/help/">Help &amp; <span class="say-no-more">General</span> Contact</a></li>
+                        <li class="tier-1 element-2"><a href="/community/diversity/">Diversity <span class="say-no-more">Initiatives</span></a></li>
+                        <li class="tier-1 element-3"><a href="https://github.com/python/pythondotorg/issues">Submit Website Bug</a></li>
+                        <li class="tier-1 element-4">
+                            <a href="https://status.python.org/">Status <span class="python-status-indicator-default" id="python-status-indicator"></span></a>
+                        </li>
+                    </ul>
+
+                    <div class="copyright">
+                        <p><small>
+                            <span class="pre">Copyright &copy;2001-2026.</span>
+                            &nbsp;<span class="pre"><a href="/psf-landing/">Python Software Foundation</a></span>
+                            &nbsp;<span class="pre"><a href="/about/legal/">Legal Statements</a></span>
+                            &nbsp;<span class="pre"><a href="https://policies.python.org/python.org/Privacy-Notice/">Privacy Notice</a></span>
+                            <!--&nbsp;<span class="pre"><a href="/psf/community-infrastructure">Powered by PSF Community Infrastructure</a></span>-->
+                        </small></p>
+                    </div>
+
+                </div><!-- end .container -->
+            </div><!-- end .site-base -->
+
+        </footer>
+        
+
+    </div><!-- end #touchnav-wrapper -->
+
+    
+    <script src="//ajax.googleapis.com/ajax/libs/jquery/1.8.2/jquery.min.js"></script>
+    <script>window.jQuery || document.write('<script src="/static/js/libs/jquery-1.8.2.min.js"><\/script>')</script>
+    <script src="//ajax.googleapis.com/ajax/libs/jqueryui/1.12.1/jquery-ui.min.js"></script>
+    <script>window.jQuery || document.write('<script src="/static/js/libs/jquery-ui-1.12.1.min.js"><\/script>')</script>
+
+    <script src="/static/js/libs/masonry.pkgd.min.js"></script>
+    <script src="/static/js/libs/html-includes.js"></script>
+
+    <script type="text/javascript" src="/static/js/main-min.e1f3949ae225.js" charset="utf-8"></script>
+    
+
+    
+
+    
+    
+
+</body>
+</html>

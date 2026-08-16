@@ -1,0 +1,141 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1250 760" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#475569"/>
+    </marker>
+    <style>
+      .group   { fill:#f1f5f9; stroke:#cbd5e1; }
+      .stage   { fill:#ffffff; stroke:#1d4ed8; stroke-width:1.6; }
+      .accent  { fill:#2563eb; }
+      .src     { fill:#ffffff; stroke:#94a3b8; stroke-width:1.3; }
+      .bridge  { fill:#ffffff; stroke:#0f766e; stroke-width:1.4; }
+      .baccent { fill:#0f766e; }
+      .gtitle  { fill:#475569; font-size:15px; font-weight:700; }
+      .title   { fill:#0f172a; font-size:25px; font-weight:700; }
+      .stitle  { fill:#1e3a8a; font-size:15px; font-weight:700; }
+      .ssub    { fill:#334155; font-size:11px; }
+      .item    { fill:#0f172a; font-size:12px; }
+      .brtitle { fill:#134e4a; font-size:13px; font-weight:700; }
+      .brtxt   { fill:#1f2937; font-size:11px; }
+      .srctxt  { fill:#0f172a; font-size:12px; }
+      .arrowln { stroke:#475569; stroke-width:1.5; fill:none; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1250" height="760" fill="#ffffff"/>
+  <text x="625" y="42" text-anchor="middle" class="title">SNAGLINE architecture</text>
+
+  <!-- Event sources group -->
+  <rect x="15" y="95" width="225" height="470" rx="12" class="group"/>
+  <text x="127" y="122" text-anchor="middle" class="gtitle">Event sources</text>
+
+  <rect x="30" y="140" width="195" height="58" rx="8" class="src"/>
+  <text x="127" y="174" text-anchor="middle" class="srctxt">Raw Python agent loop</text>
+
+  <rect x="30" y="212" width="195" height="58" rx="8" class="src"/>
+  <text x="127" y="234" text-anchor="middle" class="srctxt">LangChain agent</text>
+  <text x="127" y="251" text-anchor="middle" class="ssub">(BaseCallbackHandler)</text>
+
+  <rect x="30" y="284" width="195" height="58" rx="8" class="src"/>
+  <text x="127" y="318" text-anchor="middle" class="srctxt">LangGraph graph.stream()</text>
+
+  <rect x="30" y="356" width="195" height="58" rx="8" class="src"/>
+  <text x="127" y="378" text-anchor="middle" class="srctxt">Claude Code / OpenClaw /</text>
+  <text x="127" y="395" text-anchor="middle" class="ssub">Hermes (external process)</text>
+
+  <rect x="30" y="428" width="195" height="58" rx="8" class="src"/>
+  <text x="127" y="450" text-anchor="middle" class="srctxt">Any framework writing</text>
+  <text x="127" y="467" text-anchor="middle" class="ssub">JSONL logs</text>
+
+  <!-- Pipeline stages -->
+  <!-- S1 StepEvent -->
+  <rect x="255" y="300" width="170" height="150" rx="10" class="stage"/>
+  <rect x="255" y="300" width="170" height="10" rx="10" class="accent"/>
+  <text x="340" y="335" text-anchor="middle" class="stitle">StepEvent</text>
+  <text x="340" y="360" text-anchor="middle" class="ssub">(snagline/events.py)</text>
+  <text x="340" y="382" text-anchor="middle" class="ssub">action_signature =</text>
+  <text x="340" y="398" text-anchor="middle" class="ssub">SHA-256 (one-way)</text>
+  <text x="340" y="420" text-anchor="middle" class="ssub">episode / step / error</text>
+
+  <!-- S2 Monitor -->
+  <rect x="455" y="300" width="170" height="150" rx="10" class="stage"/>
+  <rect x="455" y="300" width="170" height="10" rx="10" class="accent"/>
+  <text x="540" y="335" text-anchor="middle" class="stitle">Monitor</text>
+  <text x="540" y="360" text-anchor="middle" class="ssub">(snagline/monitor.py)</text>
+  <text x="540" y="382" text-anchor="middle" class="ssub">ingest() per-instance</text>
+  <text x="540" y="398" text-anchor="middle" class="ssub">lock, fail_open=True</text>
+  <text x="540" y="420" text-anchor="middle" class="ssub">configured by Config</text>
+
+  <!-- S3 Detectors -->
+  <rect x="655" y="300" width="170" height="150" rx="10" class="stage"/>
+  <rect x="655" y="300" width="170" height="10" rx="10" class="accent"/>
+  <text x="740" y="335" text-anchor="middle" class="stitle">Detectors</text>
+  <text x="740" y="362" text-anchor="middle" class="item">LoopDetector</text>
+  <text x="740" y="384" text-anchor="middle" class="item">ErrorCascadeDetector</text>
+  <text x="740" y="406" text-anchor="middle" class="item">LatencyAnomalyDetector</text>
+  <text x="740" y="428" text-anchor="middle" class="ssub">(Welford / CUSUM)</text>
+
+  <!-- S4 FailureRisk -->
+  <rect x="855" y="300" width="170" height="150" rx="10" class="stage"/>
+  <rect x="855" y="300" width="170" height="10" rx="10" class="accent"/>
+  <text x="940" y="335" text-anchor="middle" class="stitle">FailureRisk</text>
+  <text x="940" y="360" text-anchor="middle" class="ssub">(snagline/risk.py)</text>
+  <text x="940" y="382" text-anchor="middle" class="ssub">episode_id, step_id,</text>
+  <text x="940" y="398" text-anchor="middle" class="ssub">score, trigger, detail</text>
+  <text x="940" y="420" text-anchor="middle" class="ssub">no raw content</text>
+
+  <!-- S5 Sinks -->
+  <rect x="1055" y="300" width="170" height="150" rx="10" class="stage"/>
+  <rect x="1055" y="300" width="170" height="10" rx="10" class="accent"/>
+  <text x="1140" y="335" text-anchor="middle" class="stitle">Sinks</text>
+  <text x="1140" y="372" text-anchor="middle" class="item">ConsoleSink</text>
+  <text x="1140" y="394" text-anchor="middle" class="item">(JSON to stderr)</text>
+  <text x="1140" y="416" text-anchor="middle" class="item">WebhookSink</text>
+  <text x="1140" y="438" text-anchor="middle" class="item">(urllib POST)</text>
+
+  <!-- Pipeline arrows -->
+  <line x1="425" y1="375" x2="453" y2="375" class="arrowln" marker-end="url(#arrow)"/>
+  <line x1="625" y1="375" x2="653" y2="375" class="arrowln" marker-end="url(#arrow)"/>
+  <line x1="825" y1="375" x2="853" y2="375" class="arrowln" marker-end="url(#arrow)"/>
+  <line x1="1025" y1="375" x2="1053" y2="375" class="arrowln" marker-end="url(#arrow)"/>
+
+  <!-- Source -> StepEvent arrows -->
+  <line x1="225" y1="169" x2="253" y2="375" class="arrowln" marker-end="url(#arrow)"/>
+  <line x1="225" y1="241" x2="253" y2="375" class="arrowln" marker-end="url(#arrow)"/>
+  <line x1="225" y1="313" x2="253" y2="375" class="arrowln" marker-end="url(#arrow)"/>
+  <line x1="225" y1="385" x2="253" y2="375" class="arrowln" marker-end="url(#arrow)"/>
+  <line x1="225" y1="457" x2="253" y2="375" class="arrowln" marker-end="url(#arrow)"/>
+
+  <!-- External bridging group -->
+  <rect x="255" y="520" width="970" height="190" rx="12" class="group"/>
+  <text x="740" y="548" text-anchor="middle" class="gtitle">External bridging (non-Python agents)</text>
+
+  <rect x="275" y="565" width="300" height="120" rx="10" class="bridge"/>
+  <rect x="275" y="565" width="300" height="9" rx="10" class="baccent"/>
+  <text x="425" y="592" text-anchor="middle" class="brtitle">snagline serve</text>
+  <text x="425" y="612" text-anchor="middle" class="brtxt">ThreadingHTTPServer</text>
+  <text x="425" y="630" text-anchor="middle" class="brtxt">POST /events -&gt; StepEvent</text>
+  <text x="425" y="648" text-anchor="middle" class="brtxt">POST /hooks/claude-code -&gt;</text>
+  <text x="425" y="666" text-anchor="middle" class="brtxt">claude_code.ingest_payload</text>
+
+  <rect x="600" y="565" width="195" height="120" rx="10" class="bridge"/>
+  <rect x="600" y="565" width="195" height="9" rx="10" class="baccent"/>
+  <text x="697" y="600" text-anchor="middle" class="brtitle">snagline hook</text>
+  <text x="697" y="622" text-anchor="middle" class="brtxt">command bridge -&gt;</text>
+  <text x="697" y="642" text-anchor="middle" class="brtxt">StepEvent.ingest()</text>
+  <text x="697" y="662" text-anchor="middle" class="brtxt">(always exits 0)</text>
+
+  <rect x="815" y="565" width="210" height="120" rx="10" class="bridge"/>
+  <rect x="815" y="565" width="210" height="9" rx="10" class="baccent"/>
+  <text x="920" y="600" text-anchor="middle" class="brtitle">snagline watch --file</text>
+  <text x="920" y="622" text-anchor="middle" class="brtxt">JSONL tail -&gt;</text>
+  <text x="920" y="642" text-anchor="middle" class="brtxt">StepEvent.ingest()</text>
+  <text x="920" y="662" text-anchor="middle" class="brtxt">(--follow live)</text>
+
+  <!-- Bridging -> pipeline arrows -->
+  <line x1="425" y1="565" x2="340" y2="452" class="arrowln" marker-end="url(#arrow)"/>
+  <line x1="697" y1="565" x2="540" y2="452" class="arrowln" marker-end="url(#arrow)"/>
+  <line x1="920" y1="565" x2="740" y2="452" class="arrowln" marker-end="url(#arrow)"/>
+
+  <text x="625" y="745" text-anchor="middle" class="ssub">In-process adapters (raw.watch, SnaglineCallbackHandler, watch_graph) call Monitor.ingest() directly; external agents bridge via the sidecar or CLI. All paths converge on a StepEvent and the fail-open Monitor.</text>
+</svg>

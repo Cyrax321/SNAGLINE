@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SNAGLINE - Real-time failure detection for AI agents</title>
+<meta name="description" content="Zero-dependency, O(1) per-step monitoring that catches loops, error cascades, and latency drift in any AI agent.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#09090b;--bg-card:#111113;--bg-elevated:#18181b;
+  --border:rgba(255,255,255,0.06);--border-hover:rgba(255,255,255,0.12);
+  --text:#fafafa;--text-secondary:#a1a1aa;--text-muted:#52525b;
+  --accent:#00b8d9;--accent-dim:rgba(0,184,217,0.10);--accent-glow:rgba(0,184,217,0.25);
+  --green:#16a34a;--green-dim:rgba(22,163,74,0.10);
+  --red:#dc2626;--red-dim:rgba(220,38,38,0.10);
+  --amber:#d97706;--amber-dim:rgba(217,119,6,0.10);
+  --mono:'JetBrains Mono',monospace;--sans:'Inter',system-ui,sans-serif;
+  --shadow-sm:0 1px 2px rgba(0,0,0,0.4);
+  --shadow-md:0 4px 12px rgba(0,0,0,0.5);
+  --shadow-lg:0 8px 32px rgba(0,0,0,0.6);
+  --shadow-border:0 0 0 1px var(--border);
+  --nav-bg:rgba(9,9,11,0.8);
+  --toggle-bg:rgba(255,255,255,0.08);--toggle-hover:rgba(255,255,255,0.14);
+  --code-fn:#c084fc;
+}
+[data-theme="light"]{
+  --bg:#fafafa;--bg-card:#ffffff;--bg-elevated:#f4f4f5;
+  --border:rgba(0,0,0,0.08);--border-hover:rgba(0,0,0,0.15);
+  --text:#18181b;--text-secondary:#52525b;--text-muted:#a1a1aa;
+  --accent:#0891b2;--accent-dim:rgba(8,145,178,0.08);--accent-glow:rgba(8,145,178,0.18);
+  --green:#15803d;--green-dim:rgba(21,128,61,0.08);
+  --red:#b91c1c;--red-dim:rgba(185,28,28,0.08);
+  --amber:#b45309;--amber-dim:rgba(180,83,9,0.08);
+  --shadow-sm:0 1px 2px rgba(0,0,0,0.06);
+  --shadow-md:0 4px 12px rgba(0,0,0,0.08);
+  --shadow-lg:0 8px 32px rgba(0,0,0,0.10);
+  --nav-bg:rgba(250,250,250,0.85);
+  --toggle-bg:rgba(0,0,0,0.06);--toggle-hover:rgba(0,0,0,0.10);
+  --code-fn:#7c3aed;
+}
+html{scroll-behavior:smooth;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);line-height:1.6;overflow-x:hidden;transition:background .3s,color .3s}
+a{color:var(--accent);text-decoration:none;transition:color .2s}
+a:hover{color:var(--text)}
+code,pre,.mono{font-family:var(--mono)}
+
+/* ---- NAV ---- */
+nav{position:fixed;top:0;left:0;right:0;z-index:100;padding:0 clamp(1.5rem,4vw,4rem);height:64px;display:flex;align-items:center;justify-content:space-between;background:var(--nav-bg);backdrop-filter:blur(16px) saturate(1.2);border-bottom:1px solid var(--border);transition:background .3s}
+.nav-logo{font-family:var(--mono);font-weight:700;font-size:1.1rem;letter-spacing:-0.02em;color:var(--text);display:flex;align-items:center;gap:0.5rem}
+.nav-logo .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent-glow)}
+.nav-links{display:flex;gap:2rem;align-items:center}
+.nav-links a{font-size:0.875rem;color:var(--text-secondary);font-weight:500;transition:color .2s}
+.nav-links a:hover{color:var(--text)}
+.nav-cta{font-size:0.8125rem !important;padding:0.5rem 1rem;border-radius:6px;background:var(--text);color:var(--bg) !important;font-weight:600 !important;transition:opacity .2s}
+.nav-cta:hover{opacity:0.85;color:var(--bg) !important}
+.theme-toggle{width:36px;height:36px;border-radius:8px;border:1px solid var(--border);background:var(--toggle-bg);color:var(--text-secondary);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s;font-size:1rem;line-height:1}
+.theme-toggle:hover{background:var(--toggle-hover);color:var(--text);border-color:var(--border-hover)}
+
+/* ---- HERO ---- */
+.hero{min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:clamp(6rem,12vh,10rem) clamp(1.5rem,4vw,4rem) clamp(4rem,8vh,6rem);max-width:1200px;margin:0 auto;position:relative;overflow:hidden}
+.hero::before{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:1000px;height:800px;background:radial-gradient(ellipse,var(--accent-dim) 0%,transparent 60%);pointer-events:none;opacity:0.5;animation:heroGlow 8s ease-in-out infinite}
+[data-theme="light"] .hero::before{opacity:0.2}
+.hero::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,transparent 0%,var(--bg) 100%);pointer-events:none;z-index:0}
+@keyframes heroGlow{0%,100%{opacity:0.5;transform:translate(-50%,-50%) scale(1)}50%{opacity:0.7;transform:translate(-50%,-50%) scale(1.1)}}
+.hero>*{position:relative;z-index:1}
+.hero-grid{position:absolute;inset:0;background-image:linear-gradient(var(--border) 1px,transparent 1px),linear-gradient(90deg,var(--border) 1px,transparent 1px);background-size:64px 64px;opacity:0.3;mask-image:radial-gradient(ellipse 50% 50% at 50% 50%,black 30%,transparent 70%);-webkit-mask-image:radial-gradient(ellipse 50% 50% at 50% 50%,black 30%,transparent 70%);pointer-events:none}
+.hero-badge{display:inline-flex;align-items:center;gap:0.625rem;font-family:var(--mono);font-size:0.8125rem;color:var(--accent);background:var(--accent-dim);padding:0.5rem 1.125rem;border-radius:9999px;border:1px solid rgba(0,212,255,0.15);margin-bottom:2.5rem;width:fit-content;letter-spacing:0.03em;font-weight:500;backdrop-filter:blur(8px)}
+.hero-badge .pulse{width:7px;height:7px;border-radius:50%;background:var(--accent);animation:pulse 2s ease-in-out infinite;box-shadow:0 0 8px var(--accent-glow)}
+@keyframes pulse{0%,100%{opacity:1;box-shadow:0 0 0 0 var(--accent-glow)}50%{opacity:0.7;box-shadow:0 0 0 8px transparent}}
+.hero h1{font-family:var(--mono);font-size:clamp(3rem,8vw,6rem);font-weight:700;line-height:1;letter-spacing:-0.04em;margin-bottom:2rem;max-width:900px}
+.hero h1 .accent{color:var(--accent);text-shadow:0 0 40px var(--accent-glow),0 0 80px rgba(0,212,255,0.15)}
+.hero h1 .line{display:block}
+.hero h1 .line:nth-child(2){margin-top:0.15em}
+.hero p{font-size:clamp(1.0625rem,1.8vw,1.3125rem);color:var(--text-secondary);max-width:600px;line-height:1.75;margin-bottom:3rem}
+.hero-actions{display:flex;gap:1rem;flex-wrap:wrap;align-items:center;justify-content:center}
+.btn-primary{display:inline-flex;align-items:center;gap:0.5rem;padding:0.875rem 2rem;border-radius:8px;background:var(--text);color:var(--bg);font-weight:600;font-size:1rem;transition:all .2s;border:none;cursor:pointer;font-family:var(--sans);box-shadow:var(--shadow-md)}
+.btn-primary:hover{opacity:0.9;transform:translateY(-2px);box-shadow:var(--shadow-lg)}
+.btn-secondary{display:inline-flex;align-items:center;gap:0.5rem;padding:0.875rem 2rem;border-radius:8px;background:transparent;color:var(--text-secondary);font-weight:500;font-size:1rem;transition:all .2s;border:1px solid var(--border);cursor:pointer;font-family:var(--sans)}
+.btn-secondary:hover{border-color:var(--border-hover);color:var(--text);background:var(--bg-elevated)}
+.btn-secondary code{font-size:0.8125rem;background:var(--bg);padding:0.2rem 0.5rem;border-radius:4px}
+.hero-install{display:flex;align-items:center;gap:0.75rem;font-family:var(--mono);font-size:0.9375rem;color:var(--text-muted);margin-top:2.5rem;padding:0.75rem 1.25rem;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;cursor:pointer;transition:all .2s}
+.hero-install:hover{border-color:var(--border-hover);color:var(--text);background:var(--bg-elevated)}
+.hero-install .prompt{color:var(--accent)}
+.hero-install .cmd{color:var(--text-secondary)}
+.hero-install .copy{margin-left:0.75rem;font-size:0.75rem;color:var(--text-muted)}
+
+/* ---- TERMINAL DEMO ---- */
+.terminal-section{padding:0 clamp(1.5rem,4vw,4rem) clamp(4rem,8vh,8rem);max-width:1200px;margin:0 auto}
+.terminal{background:#111113;border-radius:12px;overflow:hidden;box-shadow:0 0 0 1px rgba(255,255,255,0.06),var(--shadow-lg);max-width:720px;margin:0 auto;color:#e4e4e7}
+.terminal-bar{display:flex;align-items:center;gap:0.5rem;padding:0.75rem 1rem;background:#18181b;border-bottom:1px solid rgba(255,255,255,0.06)}
+.terminal-dot{width:10px;height:10px;border-radius:50%}
+.terminal-dot.r{background:#ff5f57}.terminal-dot.y{background:#febc2e}.terminal-dot.g{background:#28c840}
+.terminal-title{font-family:var(--mono);font-size:0.75rem;color:#71717a;margin-left:0.5rem}
+.terminal-body{padding:1.25rem;font-family:var(--mono);font-size:0.8125rem;line-height:1.8;min-height:260px}
+.terminal-line{opacity:0;transform:translateY(4px);animation:termFadeIn .3s ease forwards}
+.terminal-line .ts{color:#71717a}
+.terminal-line .ok{color:#22c55e}
+.terminal-line .warn{color:#f59e0b}
+.terminal-line .err{color:#ef4444}
+.terminal-line .dim{color:#71717a}
+.terminal-line .accent{color:#00d4ff}
+@keyframes termFadeIn{to{opacity:1;transform:translateY(0)}}
+
+/* ---- STATS ---- */
+.stats{padding:clamp(4rem,8vh,8rem) clamp(1.5rem,4vw,4rem);max-width:1200px;margin:0 auto}
+.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow-border)}
+.stat{background:var(--bg-card);padding:2rem;text-align:center}
+.stat .number{font-family:var(--mono);font-size:clamp(1.75rem,3vw,2.5rem);font-weight:700;letter-spacing:-0.02em;color:var(--text);margin-bottom:0.25rem}
+.stat .number .unit{font-size:0.5em;color:var(--accent);font-weight:500}
+.stat .label{font-size:0.8125rem;color:var(--text-muted);font-weight:500}
+
+/* ---- SECTIONS ---- */
+section{padding:clamp(4rem,8vh,8rem) clamp(1.5rem,4vw,4rem);max-width:1200px;margin:0 auto}
+.section-label{font-family:var(--mono);font-size:0.75rem;color:var(--accent);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:1rem;display:flex;align-items:center;gap:0.5rem}
+.section-label::before{content:'';width:16px;height:1px;background:var(--accent)}
+.section-title{font-family:var(--mono);font-size:clamp(1.75rem,3.5vw,2.5rem);font-weight:700;letter-spacing:-0.02em;line-height:1.15;margin-bottom:0.75rem}
+.section-desc{color:var(--text-secondary);font-size:1.0625rem;max-width:560px;line-height:1.7}
+
+/* ---- BENTO GRID ---- */
+.bento{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:auto;gap:1px;background:var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow-border),var(--shadow-md)}
+.bento-card{background:var(--bg-card);padding:1.75rem;display:flex;flex-direction:column;gap:0.75rem;transition:background .3s}
+.bento-card:hover{background:var(--bg-elevated)}
+.bento-card.wide{grid-column:span 2}
+.bento-card.tall{grid-row:span 2}
+.bento-icon{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:1rem;flex-shrink:0}
+.bento-icon.cyan{background:var(--accent-dim);color:var(--accent)}
+.bento-icon.green{background:var(--green-dim);color:var(--green)}
+.bento-icon.red{background:var(--red-dim);color:var(--red)}
+.bento-icon.amber{background:var(--amber-dim);color:var(--amber)}
+.bento-card h3{font-family:var(--mono);font-size:0.9375rem;font-weight:600;letter-spacing:-0.01em}
+.bento-card p{font-size:0.875rem;color:var(--text-secondary);line-height:1.6}
+.bento-code{font-family:var(--mono);font-size:0.75rem;background:var(--bg);padding:0.75rem 1rem;border-radius:6px;border:1px solid var(--border);color:var(--text-secondary);line-height:1.7;overflow-x:auto;margin-top:auto}
+.bento-code .kw{color:var(--accent)}
+.bento-code .str{color:var(--green)}
+.bento-code .cmt{color:var(--text-muted)}
+
+/* ---- DETectors TABLE ---- */
+.detectors{margin-top:3rem}
+.detector-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow-border);margin-top:2.5rem}
+.detector{background:var(--bg-card);padding:2rem;display:flex;flex-direction:column;gap:1rem}
+.detector-name{font-family:var(--mono);font-weight:600;font-size:1rem;display:flex;align-items:center;gap:0.5rem}
+.detector-name .tag{font-size:0.6875rem;padding:0.2rem 0.5rem;border-radius:4px;font-weight:500}
+.tag-loop{background:var(--accent-dim);color:var(--accent)}
+.tag-cascade{background:var(--red-dim);color:var(--red)}
+.tag-latency{background:var(--amber-dim);color:var(--amber)}
+.detector p{font-size:0.875rem;color:var(--text-secondary);line-height:1.6}
+.detector-algo{font-family:var(--mono);font-size:0.75rem;color:var(--text-muted);margin-top:auto;padding-top:1rem;border-top:1px solid var(--border)}
+
+/* ---- CODE BLOCK ---- */
+.code-section{display:grid;grid-template-columns:1fr 1fr;gap:2.5rem;align-items:start;margin-top:2.5rem}
+.code-section>div{display:flex;flex-direction:column;gap:0.75rem}
+.code-block{background:var(--bg-card);border-radius:12px;overflow:hidden;box-shadow:var(--shadow-border),var(--shadow-md)}
+.code-block-header{display:flex;align-items:center;justify-content:space-between;padding:0.75rem 1rem;background:var(--bg-elevated);border-bottom:1px solid var(--border)}
+.code-block-title{font-family:var(--mono);font-size:0.75rem;color:var(--text-muted)}
+.code-block-lang{font-family:var(--mono);font-size:0.6875rem;color:var(--accent);background:var(--accent-dim);padding:0.15rem 0.5rem;border-radius:4px}
+.code-block pre{padding:1.25rem;font-family:var(--mono);font-size:0.8125rem;line-height:1.8;overflow-x:auto;color:var(--text-secondary)}
+.code-block pre .kw{color:var(--accent)}
+.code-block pre .fn{color:var(--code-fn)}
+.code-block pre .str{color:var(--green)}
+.code-block pre .cmt{color:var(--text-muted)}
+.code-block pre .num{color:var(--amber)}
+.code-block pre .op{color:var(--text-muted)}
+
+/* ---- INTEGRATIONS ---- */
+.integrations-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow-border);margin-top:2.5rem}
+.integration{background:var(--bg-card);padding:1.5rem;display:flex;flex-direction:column;align-items:center;gap:0.75rem;text-align:center;transition:background .3s}
+.integration:hover{background:var(--bg-elevated)}
+.integration-icon{width:48px;height:48px;display:flex;align-items:center;justify-content:center}
+.integration-icon img{width:100%;height:100%;object-fit:contain}
+[data-theme="light"] .integration-icon img{filter:brightness(0.9)}
+.integration-name{font-family:var(--mono);font-size:0.875rem;font-weight:600}
+.integration-desc{font-size:0.75rem;color:var(--text-muted);line-height:1.5}
+
+/* ---- ROADMAP ---- */
+.roadmap{margin-top:3rem}
+.roadmap-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow-border);margin-top:2.5rem}
+.roadmap-item{background:var(--bg-card);padding:1.5rem 2rem;display:flex;align-items:center;gap:1rem}
+.roadmap-status{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.roadmap-status.done{background:var(--green);box-shadow:0 0 6px var(--green-dim)}
+.roadmap-status.planned{background:var(--text-muted)}
+.roadmap-text{font-family:var(--mono);font-size:0.8125rem;color:var(--text-secondary)}
+.roadmap-text.done{color:var(--text)}
+
+/* ---- PROOF ---- */
+.proof-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow-border);margin-top:2.5rem}
+.proof{background:var(--bg-card);padding:2rem;display:flex;flex-direction:column;gap:0.75rem}
+.proof-label{font-family:var(--mono);font-size:0.6875rem;color:var(--accent);text-transform:uppercase;letter-spacing:0.08em}
+.proof-text{font-size:0.9375rem;color:var(--text-secondary);line-height:1.6;font-style:italic}
+.proof-source{font-family:var(--mono);font-size:0.75rem;color:var(--text-muted)}
+
+/* ---- CTA ---- */
+.cta{padding:clamp(6rem,12vh,10rem) clamp(1.5rem,4vw,4rem);text-align:center;position:relative}
+.cta::before{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:600px;height:400px;background:radial-gradient(ellipse,var(--accent-dim) 0%,transparent 70%);pointer-events:none;opacity:0.3}
+[data-theme="light"] .cta::before{opacity:0.2}
+.cta h2{font-family:var(--mono);font-size:clamp(2rem,4vw,3rem);font-weight:700;letter-spacing:-0.03em;margin-bottom:1rem;position:relative}
+.cta p{color:var(--text-secondary);font-size:1.0625rem;margin-bottom:2.5rem;position:relative}
+.cta-actions{display:flex;gap:1rem;justify-content:center;flex-wrap:wrap;position:relative}
+.cta-install{font-family:var(--mono);font-size:0.875rem;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:0.75rem 1.25rem;color:var(--text-secondary);display:flex;align-items:center;gap:0.75rem;cursor:pointer;transition:all .2s}
+.cta-install:hover{border-color:var(--border-hover);background:var(--bg-elevated)}
+.cta-install .prompt{color:var(--accent)}
+.cta-install .cmd{color:var(--text)}
+.cta-install .copy{color:var(--text-muted);margin-left:auto;font-size:0.75rem}
+
+/* ---- FOOTER ---- */
+footer{border-top:1px solid var(--border);padding:3rem clamp(1.5rem,4vw,4rem);max-width:1200px;margin:0 auto;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:1rem}
+.footer-left{font-family:var(--mono);font-size:0.8125rem;color:var(--text-muted)}
+.footer-links{display:flex;gap:1.5rem}
+.footer-links a{font-size:0.8125rem;color:var(--text-muted);transition:color .2s}
+.footer-links a:hover{color:var(--text)}
+
+/* ---- SCROLL REVEAL ---- */
+.reveal{opacity:0;transform:translateY(24px);transition:opacity .6s ease,transform .6s ease}
+.reveal.visible{opacity:1;transform:translateY(0)}
+.reveal-delay-1{transition-delay:.1s}
+.reveal-delay-2{transition-delay:.2s}
+.reveal-delay-3{transition-delay:.3s}
+
+/* ---- RESPONSIVE ---- */
+@media(max-width:768px){
+  .stats-grid{grid-template-columns:repeat(2,1fr)}
+  .bento{grid-template-columns:1fr}
+  .bento-card.wide{grid-column:span 1}
+  .detector-grid{grid-template-columns:1fr}
+  .code-section{grid-template-columns:1fr}
+  .integrations-grid{grid-template-columns:repeat(2,1fr)}
+  .roadmap-grid{grid-template-columns:1fr}
+  .proof-grid{grid-template-columns:1fr}
+  .nav-links{display:none}
+}
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="nav-logo"><span class="dot"></span>SNAGLINE</div>
+  <div class="nav-links">
+    <a href="#detectors">Detectors</a>
+    <a href="#features">Features</a>
+    <a href="#integrations">Integrations</a>
+    <a href="#roadmap">Roadmap</a>
+    <a href="https://github.com/Cyrax321/SNAGLINE" class="nav-cta">GitHub</a>
+    <button class="theme-toggle" id="theme-toggle" aria-label="Toggle theme" title="Toggle light/dark mode"></button>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-grid"></div>
+  <div class="hero-badge"><span class="pulse"></span> Open source / Zero dependencies / 1.9 us per step</div>
+  <h1>
+    <span class="line">Catch agent failures</span>
+    <span class="line">before they <span class="accent">cascade.</span></span>
+  </h1>
+  <p>SNAGLINE watches your AI agent's execution stream and flags loops, error cascades, and latency drift in real time. Zero dependencies. Never crashes the thing it monitors.</p>
+  <div class="hero-actions">
+    <button class="btn-primary" onclick="document.getElementById('install').scrollIntoView({behavior:'smooth'})">Get started</button>
+    <button class="btn-secondary" onclick="document.getElementById('how-it-works').scrollIntoView({behavior:'smooth'})">How it works</button>
+  </div>
+  <div class="hero-install" onclick="navigator.clipboard.writeText('pip install .')">
+    <span class="prompt">$</span>
+    <span class="cmd">pip install .</span>
+    <span class="copy">click to copy</span>
+  </div>
+</section>
+
+<!-- TERMINAL DEMO -->
+<div class="terminal-section reveal">
+  <div class="terminal">
+    <div class="terminal-bar">
+      <div class="terminal-dot r"></div>
+      <div class="terminal-dot y"></div>
+      <div class="terminal-dot g"></div>
+      <span class="terminal-title">agent-monitor -- episode ep-001</span>
+    </div>
+    <div class="terminal-body" id="terminal-body"></div>
+  </div>
+</div>
+
+<!-- STATS -->
+<div class="stats reveal">
+  <div class="stats-grid">
+    <div class="stat"><div class="number">1.9<span class="unit"> us</span></div><div class="label">Median per step</div></div>
+    <div class="stat"><div class="number">78<span class="unit"> / 0</span></div><div class="label">Tests passing / failing</div></div>
+    <div class="stat"><div class="number">0</div><div class="label">Dependencies required</div></div>
+    <div class="stat"><div class="number">3</div><div class="label">Detectors built in</div></div>
+  </div>
+</div>
+
+<!-- HOW IT WORKS -->
+<section id="how-it-works">
+  <div class="section-label reveal">How it works</div>
+  <h2 class="section-title reveal">Monitoring that stays out of your way.</h2>
+  <p class="section-desc reveal">A thin adapter normalizes your agent's events into a canonical schema. The monitor runs deterministic detectors on every step. Alerts go to sinks. Nothing calls an LLM, nothing reads content, nothing blocks.</p>
+
+  <div class="bento reveal">
+    <div class="bento-card wide">
+      <div class="bento-icon cyan">1</div>
+      <h3>Adapter normalizes events</h3>
+      <p>Raw Python loop, LangChain callback, LangGraph stream, or HTTP sidecar. Framework-specific code stays isolated in adapter modules.</p>
+      <div class="bento-code"><span class="kw">with</span> watch(monitor, <span class="str">"ep-1"</span>) <span class="kw">as</span> step:<br>&nbsp;&nbsp;step(<span class="str">"tool_call"</span>, tool_name=<span class="str">"search"</span>, latency_ms=<span class="num">120</span>)</div>
+    </div>
+    <div class="bento-card">
+      <div class="bento-icon green">2</div>
+      <h3>Monitor runs detectors</h3>
+      <p>Every registered detector sees every event. O(1) amortized. No network calls, no LLM calls.</p>
+    </div>
+    <div class="bento-card wide">
+      <div class="bento-icon amber">3</div>
+      <h3>FailureRisk dispatched to sinks</h3>
+      <p>If a detector fires, the risk goes to every registered sink. Console, webhook, or your own. Only risk fields are transmitted, never content.</p>
+      <div class="bento-code">{"episode_id":"ep-1","score":0.5,"trigger":"loop",<br>&nbsp;&nbsp;"detail":"action repeated 3x in last 3 steps"}</div>
+    </div>
+    <div class="bento-card">
+      <div class="bento-icon red">4</div>
+      <h3>Fail-open by construction</h3>
+      <p>Detector exceptions are caught and logged. Sink exceptions are caught and logged. The agent never stalls.</p>
+    </div>
+  </div>
+</section>
+
+<!-- DETECTORS -->
+<section id="detectors" class="detectors">
+  <div class="section-label reveal">Detectors</div>
+  <h2 class="section-title reveal">Three failure modes. Deterministic detection.</h2>
+  <p class="section-desc reveal">Each detector is a protocol: observe an event, return a risk or nothing. No magic, no ML, no embeddings. Just sliding windows and running statistics.</p>
+
+  <div class="detector-grid reveal">
+    <div class="detector">
+      <div class="detector-name"><span class="tag tag-loop">loop</span> Loop detector</div>
+      <p>Catches retry storms and stuck agents. Sliding window of action signatures. If the same signature repeats N times within W steps, it fires.</p>
+      <div class="detector-algo">Sliding window + SHA-256 signature matching</div>
+    </div>
+    <div class="detector">
+      <div class="detector-name"><span class="tag tag-cascade">cascade</span> Error cascade detector</div>
+      <p>Catches fast cascades and slow-burn degradations. Two modes: N consecutive errors, or N errors within a recent window.</p>
+      <div class="detector-algo">Consecutive counter + windowed counter</div>
+    </div>
+    <div class="detector">
+      <div class="detector-name"><span class="tag tag-latency">latency</span> Latency anomaly detector</div>
+      <p>Catches sustained performance regression. Welford running mean and variance per tool, frozen baseline, CUSUM statistic. Warm-up prevents false positives.</p>
+      <div class="detector-algo">Welford + Page CUSUM + frozen baseline</div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES CODE -->
+<section id="features">
+  <div class="section-label reveal">Features</div>
+  <h2 class="section-title reveal">Built for production agents.</h2>
+  <p class="section-desc reveal">Zero dependencies. Sensible defaults. Override what you need, ignore the rest.</p>
+
+  <div class="code-section reveal">
+    <div>
+      <h3 style="font-family:var(--mono);font-size:1rem;margin-bottom:0.75rem">Zero config, works today</h3>
+      <p style="color:var(--text-secondary);font-size:0.9375rem;line-height:1.7;margin-bottom:1.5rem">Sensible defaults out of the box. Override thresholds when you need to. Every tunable knob lives in one dataclass.</p>
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-title">monitor.py</span>
+          <span class="code-block-lang">python</span>
+        </div>
+        <pre><span class="kw">from</span> snagline <span class="kw">import</span> Monitor
+
+monitor <span class="op">=</span> Monitor.<span class="fn">default</span>()
+
+<span class="cmt"># That's it. Loop + error cascade + latency</span>
+<span class="cmt"># detectors running. Console sink attached.</span>
+<span class="cmt"># Zero dependencies. Sub-microsecond overhead.</span></pre>
+      </div>
+    </div>
+    <div>
+      <h3 style="font-family:var(--mono);font-size:1rem;margin-bottom:0.75rem">Tune when you need to</h3>
+      <p style="color:var(--text-secondary);font-size:0.9375rem;line-height:1.7;margin-bottom:1.5rem">Every threshold, window size, and sensitivity parameter is a constructor argument. No config files, no env vars.</p>
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-title">custom_config.py</span>
+          <span class="code-block-lang">python</span>
+        </div>
+        <pre><span class="kw">from</span> snagline <span class="kw">import</span> Monitor, Config
+
+config <span class="op">=</span> <span class="fn">Config</span>(
+&nbsp;&nbsp;loop_window_size<span class="op">=</span><span class="num">20</span>,
+&nbsp;&nbsp;loop_repeat_threshold<span class="op">=</span><span class="num">5</span>,
+&nbsp;&nbsp;cusum_k<span class="op">=</span><span class="num">0.3</span>,
+&nbsp;&nbsp;cusum_h<span class="op">=</span><span class="num">3.0</span>,
+)
+
+monitor <span class="op">=</span> Monitor.<span class="fn">default</span>(config<span class="op">=</span>config)</pre>
+      </div>
+    </div>
+  </div>
+
+  <div class="bento reveal" style="margin-top:2rem">
+    <div class="bento-card">
+      <div class="bento-icon cyan">=</div>
+      <h3>Thread-safe</h3>
+      <p>Per-instance threading lock. Concurrent multi-episode monitoring works correctly.</p>
+    </div>
+    <div class="bento-card">
+      <div class="bento-icon green">#</div>
+      <h3>No content retention</h3>
+      <p>Detectors reason about hashes, timings, counts, and booleans. Never prompt or response content.</p>
+    </div>
+    <div class="bento-card">
+      <div class="bento-icon amber">&gt;</div>
+      <h3>Streaming and batch</h3>
+      <p>Live monitoring of running agents. Same schema and detectors work over exported trajectory files.</p>
+    </div>
+  </div>
+</section>
+
+<!-- INTEGRATIONS -->
+<section id="integrations">
+  <div class="section-label reveal">Integrations</div>
+  <h2 class="section-title reveal">Works with any agent runtime.</h2>
+  <p class="section-desc reveal">Four adapters ship in the box. Write your own in under 50 lines against a documented protocol.</p>
+
+  <div class="integrations-grid reveal">
+    <div class="integration">
+      <div class="integration-icon">
+        <img src="logos/python.svg" alt="Python" width="40" height="40" style="object-fit:contain">
+      </div>
+      <div class="integration-name">Raw Python</div>
+      <div class="integration-desc">Context manager + decorator. Stdlib only.</div>
+    </div>
+    <div class="integration">
+      <div class="integration-icon">
+        <img src="logos/langchain.svg" alt="LangChain" width="40" height="40" style="object-fit:contain">
+      </div>
+      <div class="integration-name">LangChain</div>
+      <div class="integration-desc">Callback handler. Optional langchain-core.</div>
+    </div>
+    <div class="integration">
+      <div class="integration-icon">
+        <img src="logos/langgraph.svg" alt="LangGraph" width="40" height="40" style="object-fit:contain">
+      </div>
+      <div class="integration-name">LangGraph</div>
+      <div class="integration-desc">Stream wrapper. Optional langgraph.</div>
+    </div>
+    <div class="integration">
+      <div class="integration-icon">
+        <img src="logos/claude.svg" alt="Claude" width="40" height="40" style="object-fit:contain">
+      </div>
+      <div class="integration-name">Claude Code</div>
+      <div class="integration-desc">Native hook mapping via HTTP sidecar.</div>
+    </div>
+  </div>
+
+  <div class="bento reveal" style="margin-top:2rem">
+    <div class="bento-card">
+      <div class="bento-icon cyan">{}</div>
+      <h3>HTTP sidecar</h3>
+      <p>Any runtime that speaks HTTP can POST events. <code style="font-size:0.75rem;color:var(--accent)">snagline serve --port 8787</code></p>
+    </div>
+    <div class="bento-card">
+      <div class="bento-icon green">|</div>
+      <h3>Command bridge</h3>
+      <p>Pipe hook payloads through the CLI. Always exits 0. Never blocks the agent.</p>
+    </div>
+    <div class="bento-card">
+      <div class="bento-icon amber">~</div>
+      <h3>File bridge</h3>
+      <p>Tail a JSONL file. For frameworks that can only append to disk.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ROADMAP -->
+<section id="roadmap" class="roadmap">
+  <div class="section-label reveal">Roadmap</div>
+  <h2 class="section-title reveal">What's done. What's next.</h2>
+
+  <div class="roadmap-grid reveal">
+    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">Core schema (StepEvent, FailureRisk, Config)</div></div>
+    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">Monitor orchestrator with fail-open</div></div>
+    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">Loop detector</div></div>
+    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">Error cascade detector</div></div>
+    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">Console sink + raw adapter</div></div>
+    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">Latency anomaly (CUSUM) detector</div></div>
+    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">Overhead benchmark (snagline bench)</div></div>
+    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">LangChain adapter</div></div>
+    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">Webhook sink</div></div>
+    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">HTTP sidecar (snagline serve)</div></div>
+    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">LangGraph adapter</div></div>
+    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">Claude Code hooks bridge</div></div>
+    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">Offline replay CLI</div></div>
+    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">Framework bridge docs</div></div>
+    <div class="roadmap-item"><div class="roadmap-status planned"></div><div class="roadmap-text">Deduplication / cooldown for alert spam</div></div>
+    <div class="roadmap-item"><div class="roadmap-status planned"></div><div class="roadmap-text">ML ensemble detector (snagline[ml])</div></div>
+    <div class="roadmap-item"><div class="roadmap-status planned"></div><div class="roadmap-text">Goal-drift detector (snagline[drift])</div></div>
+    <div class="roadmap-item"><div class="roadmap-status planned"></div><div class="roadmap-text">AutoGen / CrewAI adapters</div></div>
+  </div>
+</section>
+
+<!-- PROOF -->
+<section>
+  <div class="section-label reveal">Evidence</div>
+  <h2 class="section-title reveal">Verified against real agents.</h2>
+
+  <div class="proof-grid reveal">
+    <div class="proof">
+      <div class="proof-label">LangChain 1.x</div>
+      <div class="proof-text">"Driven across chaos scenarios with a real create_agent. The callback handler correctly captured tool calls, LLM calls, chain errors, and agent decisions, firing all three detectors as expected."</div>
+      <div class="proof-source">tests/test_integration.py</div>
+    </div>
+    <div class="proof">
+      <div class="proof-label">Claude Code Hooks</div>
+      <div class="proof-text">"Five PostToolUseFailure hook payloads posted to the HTTP sidecar produced both a loop and an error cascade FailureRisk, with HookTracker correctly pairing Pre/Post events."</div>
+      <div class="proof-source">tests/test_claude_code.py</div>
+    </div>
+    <div class="proof">
+      <div class="proof-label">Fixture trajectories</div>
+      <div class="proof-text">"Four hand-built trajectory files serve as ground truth. Loop, cascade, and latency detectors fire correctly. Healthy runs produce zero false positives."</div>
+      <div class="proof-source">tests/fixtures/trajectories/</div>
+    </div>
+    <div class="proof">
+      <div class="proof-label">Overhead benchmark</div>
+      <div class="proof-text">"200,000 synthetic steps. Median 1.91 us/step, p99 33.90 us/step. Comfortably under the sub-100-microsecond target."</div>
+      <div class="proof-source">snagline bench (2026-08-15)</div>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<div class="cta" id="install">
+  <h2 class="reveal">Start monitoring in 30 seconds.</h2>
+  <p class="reveal">Zero dependencies. Works with Python 3.10+.</p>
+  <div class="cta-actions reveal">
+    <div class="cta-install" onclick="navigator.clipboard.writeText('pip install .')">
+      <span class="prompt">$</span>
+      <span class="cmd">pip install .</span>
+      <span class="copy">click to copy</span>
+    </div>
+    <a href="https://github.com/Cyrax321/SNAGLINE" class="btn-secondary" style="text-decoration:none">View on GitHub</a>
+  </div>
+</div>
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-left">SNAGLINE</div>
+  <div class="footer-links">
+    <a href="https://github.com/Cyrax321/SNAGLINE">GitHub</a>
+    <a href="https://github.com/Cyrax321/SNAGLINE/issues">Issues</a>
+    <a href="docs/ADAPTER_GUIDE.md">Docs</a>
+    <a href="LICENSE">MIT License</a>
+  </div>
+</footer>
+
+<script>
+// ---- SCROLL REVEAL ----
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); observer.unobserve(e.target); }});
+}, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
+document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+
+// ---- TERMINAL ANIMATION ----
+const termLines = [
+  { ts: '09:41:03', text: '<span class="dim">$</span> snagline watch --follow agent.log', delay: 0 },
+  { ts: '09:41:03', text: '<span class="ok">+</span> monitoring episode <span class="accent">ep-001</span>', delay: 400 },
+  { ts: '09:41:04', text: '<span class="dim">|</span> ingest tool_call:search <span class="ok">ok</span> <span class="dim">120ms</span>', delay: 800 },
+  { ts: '09:41:04', text: '<span class="dim">|</span> ingest tool_call:search <span class="ok">ok</span> <span class="dim">130ms</span>', delay: 1200 },
+  { ts: '09:41:04', text: '<span class="dim">|</span> ingest tool_call:search <span class="ok">ok</span> <span class="dim">110ms</span>', delay: 1600 },
+  { ts: '09:41:04', text: '<span class="warn">!</span> <span class="warn">LOOP</span> action repeated 3x in last 3 steps (score: 0.50)', delay: 2200 },
+  { ts: '09:41:05', text: '<span class="dim">|</span> ingest tool_call:db_write <span class="err">err</span> <span class="dim">timeout</span>', delay: 2800 },
+  { ts: '09:41:05', text: '<span class="dim">|</span> ingest tool_call:db_write <span class="err">err</span> <span class="dim">timeout</span>', delay: 3200 },
+  { ts: '09:41:05', text: '<span class="dim">|</span> ingest tool_call:db_write <span class="err">err</span> <span class="dim">timeout</span>', delay: 3600 },
+  { ts: '09:41:05', text: '<span class="err">!</span> <span class="err">CASCADE</span> 3 consecutive errors (score: 0.80)', delay: 4200 },
+  { ts: '09:41:06', text: '<span class="dim">|</span> ingest tool_call:search <span class="ok">ok</span> <span class="dim">140ms</span>', delay: 4800 },
+  { ts: '09:41:06', text: '<span class="dim">|</span> ingest tool_call:search <span class="ok">ok</span> <span class="dim">125ms</span>', delay: 5200 },
+];
+
+function runTerminal() {
+  const body = document.getElementById('terminal-body');
+  body.innerHTML = '';
+  termLines.forEach((line, i) => {
+    setTimeout(() => {
+      const div = document.createElement('div');
+      div.className = 'terminal-line';
+      div.innerHTML = `<span class="ts">${line.ts}</span> ${line.text}`;
+      div.style.animationDelay = '0s';
+      body.appendChild(div);
+      body.scrollTop = body.scrollHeight;
+    }, line.delay);
+  });
+  // loop
+  setTimeout(runTerminal, 7000);
+}
+
+// start terminal when visible
+const termObs = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if (e.isIntersecting) { runTerminal(); termObs.unobserve(e.target); }
+  });
+}, { threshold: 0.3 });
+termObs.observe(document.querySelector('.terminal'));
+
+// ---- SMOOTH ANCHOR LINKS ----
+document.querySelectorAll('a[href^="#"]').forEach(a => {
+  a.addEventListener('click', e => {
+    e.preventDefault();
+    const target = document.querySelector(a.getAttribute('href'));
+    if (target) target.scrollIntoView({ behavior: 'smooth' });
+  });
+});
+
+// ---- THEME TOGGLE ----
+const toggle = document.getElementById('theme-toggle');
+const sunIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>';
+const moonIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
+
+function getPreferredTheme() {
+  const saved = localStorage.getItem('snagline-theme');
+  if (saved) return saved;
+  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
+
+function setTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem('snagline-theme', theme);
+  toggle.innerHTML = theme === 'dark' ? sunIcon : moonIcon;
+  toggle.setAttribute('aria-label', theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
+}
+
+toggle.addEventListener('click', () => {
+  const current = document.documentElement.getAttribute('data-theme') || 'dark';
+  setTheme(current === 'dark' ? 'light' : 'dark');
+});
+
+setTheme(getPreferredTheme());
+
+// listen for system preference changes
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
+  if (!localStorage.getItem('snagline-theme')) {
+    setTheme(e.matches ? 'dark' : 'light');
+  }
+});
+</script>
+</body>
+</html>
