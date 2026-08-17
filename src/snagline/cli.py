@@ -167,11 +167,19 @@ def _build_parser() -> argparse.ArgumentParser:
         help="HTTP timeout when --url is used [s].",
     )
 
-    # Registered but not yet implemented: belongs to the ml extra (later phase).
+    # Fits a per-tool healthy-run profile from a trajectory and persists it as
+    # JSON. Dependency-free (stdlib only); model-based baselines can build on
+    # the same persisted profile later.
     sp = sub.add_parser(
-        "baseline", help="Fit a healthy-run baseline. [ml extra, not built yet]"
+        "baseline",
+        help="Fit a healthy-run baseline (per-tool latency/error profile) from a trajectory.",
     )
-    sp.add_argument("__rest", nargs="*", help=argparse.SUPPRESS)
+    sp.add_argument("trajectory", help="Path to a .jsonl trajectory of a healthy run.")
+    sp.add_argument(
+        "--output",
+        default="baseline.json",
+        help="Where to write the fitted baseline JSON [default: baseline.json].",
+    )
 
     return parser
 
@@ -306,6 +314,26 @@ def _event_to_json(event: StepEvent) -> dict:
     }
 
 
+def _cmd_baseline(args: argparse.Namespace) -> int:
+    """Fit a healthy-run baseline from a trajectory and persist it as JSON."""
+    from snagline.baseline import fit_baseline_from_jsonl, save_baseline
+
+    profile = fit_baseline_from_jsonl(args.trajectory)
+    save_baseline(profile, args.output)
+
+    tools = profile.tools
+    print(
+        f"snagline baseline: fitted {len(tools)} tool(s) from {profile.total_steps} step(s)"
+    )
+    for name, tb in sorted(tools.items()):
+        print(
+            f"  {name}: n={tb.count} mean={tb.mean_latency:.1f}ms "
+            f"std={tb.std_latency:.1f}ms errors={tb.error_count}"
+        )
+    print(f"snagline baseline: wrote {args.output}")
+    return 0
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     from snagline.server.http_server import serve
 
@@ -411,12 +439,7 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_serve(args)
 
     if args.command == "baseline":
-        print(
-            f"snagline {args.command} is not implemented in this build phase (v0.1). "
-            "It will arrive in a later, explicitly-ordered step.",
-            file=sys.stderr,
-        )
-        return 2
+        return _cmd_baseline(args)
 
     parser.print_help()
     return 0

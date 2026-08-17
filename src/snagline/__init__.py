@@ -12,6 +12,7 @@ Public API (core, zero third-party dependencies):
 from __future__ import annotations
 
 from snagline.adapters.raw import watch
+from snagline.baseline import BaselineProfile, ToolBaseline, fit_baseline_from_jsonl
 from snagline.config import Config
 from snagline.events import EpisodeMeta, StepEvent, make_signature
 from snagline.monitor import Monitor
@@ -26,4 +27,7 @@ __all__ = [
     "TriggerType",
     "Config",
     "watch",
+    "BaselineProfile",
+    "ToolBaseline",
+    "fit_baseline_from_jsonl",
 ]
