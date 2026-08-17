@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from snagline.baseline import BaselineProfile
+
 
 @dataclass
 class Config:
@@ -40,6 +42,16 @@ class Config:
     # baselines, so a single large spike alarms instead of requiring several.
     cusum_sigma_floor_abs: float = 1.0  # ms; never treat baseline std as smaller
     cusum_sigma_floor_rel: float = 0.05  # ... or smaller than 5% of the mean
+
+    # Goal-drift detector (next phase, step 2). Compares a live run's per-tool
+    # error rate / latency against a persisted healthy BaselineProfile and
+    # flags meaningful deviation. Opt-in: enabled only when a baseline exists.
+    goal_drift_enabled: bool = False
+    goal_drift_error_tolerance: float = 0.1  # allow baseline error_rate + this
+    goal_drift_latency_k: float = 3.0  # sigmas above baseline mean counts as drift
+    goal_drift_min_samples: int = 10  # live steps before scoring an episode
+    goal_drift_score_threshold: float = 0.5  # emit a risk above this score
+    goal_drift_baseline: BaselineProfile | None = None  # healthy reference
 
     # Global
     fail_open: bool = True

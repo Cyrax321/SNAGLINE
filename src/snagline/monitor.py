@@ -141,6 +141,7 @@ class Monitor:
         unless ``sinks`` is given, the console sink.
         """
         from snagline.detectors.error_cascade import ErrorCascadeDetector
+        from snagline.detectors.goal_drift import GoalDriftDetector
         from snagline.detectors.latency_anomaly import LatencyAnomalyDetector
         from snagline.detectors.loop import LoopDetector
         from snagline.sinks.console import ConsoleSink
@@ -151,5 +152,11 @@ class Monitor:
             ErrorCascadeDetector(config=cfg),
             LatencyAnomalyDetector(config=cfg),
         ]
+        # Goal-drift is opt-in: only when explicitly enabled and a baseline is
+        # supplied, so the zero-dependency default is unchanged (step 2).
+        if cfg.goal_drift_enabled and cfg.goal_drift_baseline is not None:
+            detectors.append(
+                GoalDriftDetector(baseline=cfg.goal_drift_baseline, config=cfg)
+            )
         chosen_sinks: list[AlertSink] = sinks if sinks is not None else [ConsoleSink()]
         return cls(detectors, chosen_sinks, fail_open=cfg.fail_open)
