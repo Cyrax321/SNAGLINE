@@ -61,7 +61,42 @@ monitor._detectors.append(MyDetector())   # or: Monitor(default_detectors + [min
 - `detectors/loop.py` - sliding-window repetition count on `action_signature`
 - `detectors/error_cascade.py` - consecutive and windowed error counts
 - `detectors/latency_anomaly.py` - Welford baseline + CUSUM deviation per tool
+- `detectors/goal_drift.py` - compares a live run to a persisted `BaselineProfile`
+- `detectors/ml_ensemble.py` - `MLOrchestrator` combining base detector scores
 
 Each has a matching test in `tests/detectors/` showing the synthetic-sequence
 pattern (injected failure fires; healthy sequence stays silent). Copy that
 test shape for your own detector.
+
+## Optional detectors: baseline, goal-drift, and ensemble
+
+`LoopDetector`, `ErrorCascadeDetector`, and `LatencyAnomalyDetector` ship in
+`Monitor.default()`. Two further detectors are opt-in behind config flags so the
+zero-dependency preset is unchanged.
+
+### `BaselineProfile` and the `baseline` command
+
+`src/snagline/baseline.py` fits a `BaselineProfile` (per-tool latency
+mean/std/min/max and error rate) from a JSONL trajectory. The `snagline
+baseline <trajectory> [--output baseline.json]` CLI command persists one, and
+`load_baseline` / `save_baseline` round-trip it.
+
+### `GoalDriftDetector`
+
+`GoalDriftDetector(baseline=profile, config=cfg)` flags a live run that
+diverges from that healthy reference: rising error rate (beyond
+`goal_drift_error_tolerance`), latency blowing past the healthy mean by
+`goal_drift_latency_k` sigmas, or tools that never appeared in the baseline. A
+zero-variance baseline uses a floored spread (5% of mean, min 1 ms) so tiny
+deviations are not treated as infinite z. Enable it with
+`Config(goal_drift_enabled=True, goal_drift_baseline=profile)`.
+
+### `MLOrchestrator`
+
+`MLOrchestrator(detectors, config, model=None)` combines base detector scores
+into one stronger risk. The default combiner is a transparent noisy-OR
+(`1 - prod(1 - score_i)`), which boosts confidence when multiple independent
+detectors agree. Pass `model=callable(scores) -> float` (e.g. a fitted
+scikit-learn pipeline from the `ml` extra) to replace the combiner. Enable it
+with `Config(ml_ensemble_enabled=True)`; `Monitor.default()` then wraps the
+base detectors in one orchestrator so there is no double counting.

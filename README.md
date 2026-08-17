@@ -99,8 +99,36 @@ The full architecture reference is in [docs/ADAPTER_GUIDE.md](docs/ADAPTER_GUIDE
 | **Loop detector** | Retry storms, stuck agents | Sliding window of action signatures. If the same signature appears N times within W steps, emit a risk. | O(1) amortized |
 | **Error cascade detector** | Fast cascades and slow-burn degradations | Two modes: N consecutive errors (fast), or N errors within a recent window (slow). | O(1) amortized |
 | **Latency anomaly detector** | Sustained performance regression | Welford running mean/variance per tool, frozen baseline, CUSUM statistic. Short warm-up prevents false positives on normal jitter. | O(1) amortized |
+| **Goal-drift detector** (opt-in) | A run diverging from its known-healthy behavior | Compares a live run's per-tool error rate and latency against a persisted `BaselineProfile` built by `snagline baseline`. Flags rising error rate, latency blowing past the healthy mean, or tools that never appeared in the baseline. | O(1) amortized |
+| **ML ensemble** (opt-in) | A stronger, combined signal | Wraps the base detectors and combines their scores with a transparent noisy-OR. A real model can be injected via `MLOrchestrator(model=...)` (the `ml` extra provides scikit-learn). | O(1) amortized |
 
 Detection is deterministic and `O(1)` amortized per step. It runs with no network calls and no LLM calls. The CUSUM detector uses only the Python standard library (`statistics` module) -- no numpy required.
+
+### Baseline and advanced detection
+
+The `goal_drift` and `ml_ensemble` detectors are opt-in (default off) so the zero-dependency preset is unchanged. They unlock once you capture a healthy run:
+
+```bash
+# 1. Capture a known-good trajectory (one JSON StepEvent per line)...
+python -m your_agent --trace run.jsonl
+# 2. Build a healthy baseline profile from it.
+snagline baseline run.jsonl --output baseline.json
+```
+
+```python
+from snagline import Monitor, Config, load_baseline
+from snagline.detectors.goal_drift import GoalDriftDetector
+
+baseline = load_baseline("baseline.json")
+config = Config(
+    goal_drift_enabled=True,
+    goal_drift_baseline=baseline,
+    ml_ensemble_enabled=True,   # combine all base detectors into one signal
+)
+monitor = Monitor.default(config=config)
+```
+
+With `ml_ensemble_enabled`, `Monitor.default()` wraps the base detectors in a single `MLOrchestrator` instead of exposing them individually, so there is no double counting. Both detectors are documented in [docs/DETECTOR_GUIDE.md](docs/DETECTOR_GUIDE.md).
 
 ## Features
 
@@ -215,7 +243,7 @@ snagline replay tests/fixtures/trajectories/healthy_run.jsonl --summary
 
 ## Framework Integration
 
-SNAGLINE plugs into agent frameworks without becoming one. Four adapters ship in `src/snagline/adapters/`, all optional installs so the core stays zero-dependency:
+SNAGLINE plugs into agent frameworks without becoming one. Six adapters ship in `src/snagline/adapters/`, all optional installs so the core stays zero-dependency:
 
 | Adapter | Module | Install | Notes |
 |:--|:--|:--|:--|
@@ -223,6 +251,8 @@ SNAGLINE plugs into agent frameworks without becoming one. Four adapters ship in
 | LangChain | `langchain_adapter.py` | `pip install snagline-agent[langchain]` | `SnaglineCallbackHandler` subclassing `BaseCallbackHandler`. |
 | LangGraph | `langgraph_adapter.py` | `pip install snagline-agent[langgraph]` | `watch_graph` pass-through iterator wrapping `graph.stream(...)`. |
 | Claude Code | `claude_code.py` | (built-in) | Maps native hook payloads via `ingest_payload`. Works over HTTP sidecar or file bridge. |
+| Autogen | `autogen.py` | `pip install snagline-agent[autogen]` | `SnaglineAutogenHandler` + `run_and_monitor` wrapping `agent.run_stream`. Duck-typed, no hard Autogen version pin. |
+| CrewAI | `crewai.py` | `pip install snagline-agent[crewai]` | `snagline_step_callback` for `Agent(step_callback=...)`, plus `observe_crewai_step`. Duck-typed, no hard CrewAI version pin. |
 
 Each adapter translates framework-specific events into `StepEvent`s and calls `monitor.ingest()`. None of them contain detection logic.
 

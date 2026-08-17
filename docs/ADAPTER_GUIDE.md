@@ -60,11 +60,16 @@ it. Everything detection needs fits in the hash + timings + booleans.
 | `adapters/raw.py` | plain Python loop | context manager yielding a `step()` callable |
 | `adapters/langchain_adapter.py` | LangChain / LangGraph `create_agent` | `BaseCallbackHandler` subclass |
 | `adapters/langgraph_adapter.py` | LangGraph `graph.stream()` | pass-through iterator wrapper |
+| `adapters/autogen.py` | Autogen `agent.run_stream(task)` | `SnaglineAutogenHandler` observer + `run_and_monitor` wrapper |
+| `adapters/crewai.py` | CrewAI `Agent(step_callback=...)` | `snagline_step_callback` returning the hook callable |
 | `server/http_server.py` | any non-Python runtime | stdlib HTTP sidecar, `POST /events` |
 
-Adapters for AutoGen, CrewAI, raw OpenAI/Anthropic SDKs, and CONTINUUM are
-planned (project.md §13 step 10 / §6) - the raw adapter is usually a fine
-stand-in for any of them, since they all bottom out in a tool-calling loop.
+Both the Autogen and CrewAI adapters are duck-typed: they read event objects via
+`model_dump()` with attribute/dict fallbacks, so they import without the
+framework installed and never hard-couple to a specific release. Adapters for
+raw OpenAI/Anthropic SDKs and CONTINUUM remain planned (project.md §13 step 10 /
+§6) - the raw adapter is usually a fine stand-in for any of them, since they all
+bottom out in a tool-calling loop.
 
 ## Testing your adapter
 

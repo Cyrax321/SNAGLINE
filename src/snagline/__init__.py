@@ -12,7 +12,13 @@ Public API (core, zero third-party dependencies):
 from __future__ import annotations
 
 from snagline.adapters.raw import watch
-from snagline.baseline import BaselineProfile, ToolBaseline, fit_baseline_from_jsonl
+from snagline.baseline import (
+    BaselineProfile,
+    ToolBaseline,
+    fit_baseline_from_jsonl,
+    load_baseline,
+    save_baseline,
+)
 from snagline.config import Config
 from snagline.detectors.goal_drift import GoalDriftDetector
 from snagline.detectors.ml_ensemble import MLOrchestrator
@@ -32,6 +38,8 @@ __all__ = [
     "BaselineProfile",
     "ToolBaseline",
     "fit_baseline_from_jsonl",
+    "save_baseline",
+    "load_baseline",
     "GoalDriftDetector",
     "MLOrchestrator",
 ]
