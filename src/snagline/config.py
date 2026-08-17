@@ -53,5 +53,10 @@ class Config:
     goal_drift_score_threshold: float = 0.5  # emit a risk above this score
     goal_drift_baseline: BaselineProfile | None = None  # healthy reference
 
+    # ML ensemble detector (next phase, step 3). When enabled, Monitor.default
+    # wraps the base detectors in a single MLOrchestrator so signals combine.
+    ml_ensemble_enabled: bool = False
+    ml_ensemble_score_threshold: float = 0.5  # emit a combined risk above this
+
     # Global
     fail_open: bool = True
