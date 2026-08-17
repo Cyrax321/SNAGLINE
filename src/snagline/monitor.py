@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from typing import Any
 
 from snagline.config import Config
 from snagline.detectors.base import Detector
@@ -144,10 +145,11 @@ class Monitor:
         from snagline.detectors.goal_drift import GoalDriftDetector
         from snagline.detectors.latency_anomaly import LatencyAnomalyDetector
         from snagline.detectors.loop import LoopDetector
+        from snagline.detectors.ml_ensemble import MLOrchestrator
         from snagline.sinks.console import ConsoleSink
 
         cfg = config or Config()
-        detectors: list[Detector] = [
+        base: list[Any] = [
             LoopDetector(config=cfg),
             ErrorCascadeDetector(config=cfg),
             LatencyAnomalyDetector(config=cfg),
@@ -155,8 +157,11 @@ class Monitor:
         # Goal-drift is opt-in: only when explicitly enabled and a baseline is
         # supplied, so the zero-dependency default is unchanged (step 2).
         if cfg.goal_drift_enabled and cfg.goal_drift_baseline is not None:
-            detectors.append(
-                GoalDriftDetector(baseline=cfg.goal_drift_baseline, config=cfg)
-            )
+            base.append(GoalDriftDetector(baseline=cfg.goal_drift_baseline, config=cfg))
+        if cfg.ml_ensemble_enabled:
+            # Combine the base detectors into one orchestrated signal (step 3).
+            detectors: list[Detector] = [MLOrchestrator(base, config=cfg)]
+        else:
+            detectors = list(base)
         chosen_sinks: list[AlertSink] = sinks if sinks is not None else [ConsoleSink()]
         return cls(detectors, chosen_sinks, fail_open=cfg.fail_open)

@@ -15,6 +15,7 @@ from snagline.adapters.raw import watch
 from snagline.baseline import BaselineProfile, ToolBaseline, fit_baseline_from_jsonl
 from snagline.config import Config
 from snagline.detectors.goal_drift import GoalDriftDetector
+from snagline.detectors.ml_ensemble import MLOrchestrator
 from snagline.events import EpisodeMeta, StepEvent, make_signature
 from snagline.monitor import Monitor
 from snagline.risk import FailureRisk, TriggerType
@@ -32,4 +33,5 @@ __all__ = [
     "ToolBaseline",
     "fit_baseline_from_jsonl",
     "GoalDriftDetector",
+    "MLOrchestrator",
 ]
