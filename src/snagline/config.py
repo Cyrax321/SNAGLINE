@@ -7,9 +7,36 @@ detector constructors (project.md §5.4).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+import logging
+import os
+from collections.abc import Mapping
+from dataclasses import dataclass, fields
+from typing import Any, get_type_hints
 
 from snagline.baseline import BaselineProfile
+
+logger = logging.getLogger("snagline")
+
+
+def _coerce(hint: type, value: str) -> Any:
+    if hint is bool:
+        return value.strip().lower() in ("1", "true", "yes", "on", "t")
+    if hint is int:
+        return int(value)
+    if hint is float:
+        return float(value)
+    return value
+
+
+def _load_toml(text: str) -> dict[str, Any]:
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # pragma: no cover - exercised only on <3.11
+        raise RuntimeError(
+            "TOML config requires Python 3.11+ (tomllib); use JSON or upgrade."
+        ) from None
+    return tomllib.loads(text)
 
 
 @dataclass
@@ -60,3 +87,49 @@ class Config:
 
     # Global
     fail_open: bool = True
+
+    # --- 12-factor configuration (project.md §5.4, ATTACH_ANY_SYSTEM P0) -----
+    @classmethod
+    def from_env(
+        cls, environ: Mapping[str, str] | None = None, prefix: str = "SNAGLINE_"
+    ) -> Config:
+        """Build a ``Config`` from environment variables (12-factor).
+
+        Reads ``<prefix><FIELD>`` (case-insensitive) and overrides the matching
+        scalar field. Unknown prefixes, unknown keys, and values that fail to
+        coerce are ignored (logged at warning) rather than fatal, so a host can
+        pass through unrelated environment without breaking startup.
+        """
+        environ = os.environ if environ is None else environ
+        hints = get_type_hints(cls)
+        overrides: dict[str, Any] = {}
+        for key, value in environ.items():
+            if not key.startswith(prefix):
+                continue
+            name = key[len(prefix) :].lower()
+            if name not in hints:
+                continue
+            hint = hints[name]
+            if hint in (bool, int, float, str):
+                try:
+                    overrides[name] = _coerce(hint, value)
+                except ValueError:
+                    logger.warning("snagline: ignoring bad env %s=%r", key, value)
+        return cls(**overrides)
+
+    @classmethod
+    def load_file(cls, path: str) -> Config:
+        """Load a ``Config`` from a JSON or TOML file.
+
+        ``.json`` is parsed with the stdlib ``json`` module; ``.toml`` requires
+        Python 3.11+ (``tomllib``). Unknown keys are ignored so a config file
+        can carry extra metadata without breaking construction.
+        """
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        if path.endswith(".toml"):
+            data: dict[str, Any] = _load_toml(text)
+        else:
+            data = json.loads(text)
+        valid = {f.name for f in fields(cls)}  # noqa: F821
+        return cls(**{k: v for k, v in data.items() if k in valid})
