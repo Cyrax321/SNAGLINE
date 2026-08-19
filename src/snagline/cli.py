@@ -91,6 +91,19 @@ def _build_config(args: argparse.Namespace) -> Config:
     return Config.resolve(path=path)
 
 
+def _maybe_dedup(sinks: list[AlertSink], cooldown_seconds: float) -> list[AlertSink]:
+    """Wrap each sink in a cooldown ``DedupSink`` when ``cooldown_seconds`` > 0.
+
+    Suppresses alert storms (issue #4) so a repeating failure pages once per
+    cooldown window instead of on every step.
+    """
+    if not cooldown_seconds or cooldown_seconds <= 0:
+        return sinks
+    from snagline.sinks.dedup import DedupSink
+
+    return [DedupSink(s, cooldown_seconds=cooldown_seconds) for s in sinks]
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="snagline",
@@ -152,6 +165,13 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Webhook endpoint (required with --sink webhook).",
     )
+    p_watch.add_argument(
+        "--cooldown-seconds",
+        type=float,
+        default=0.0,
+        help="Suppress repeated alerts of the same key for this many seconds "
+        "(issue #4). 0 disables (default).",
+    )
 
     p_serve = sub.add_parser(
         "serve",
@@ -161,6 +181,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--host", default="127.0.0.1", help="Bind address [default: 127.0.0.1]."
     )
     p_serve.add_argument("--port", type=int, default=8787, help="Port [default: 8787].")
+    p_serve.add_argument(
+        "--cooldown-seconds",
+        type=float,
+        default=0.0,
+        help="Suppress repeated alerts of the same key for this many seconds "
+        "(issue #4). 0 disables (default).",
+    )
 
     p_hook = sub.add_parser(
         "hook",
@@ -225,7 +252,14 @@ def _cmd_watch(args: argparse.Namespace) -> int:
         from snagline.sinks.webhook import WebhookSink
 
         sinks.append(WebhookSink(args.webhook_url))
-    monitor = Monitor.default(config=_build_config(args), sinks=sinks or None)
+    else:
+        from snagline.sinks.console import ConsoleSink
+
+        sinks.append(ConsoleSink())
+    monitor = Monitor.default(
+        config=_build_config(args),
+        sinks=_maybe_dedup(sinks, args.cooldown_seconds),
+    )
     episode = args.episode_id or (args.file or "stdin")
     steps = 0
     try:
@@ -352,6 +386,7 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
 
 def _cmd_serve(args: argparse.Namespace) -> int:
     from snagline.server.http_server import serve
+    from snagline.sinks.console import ConsoleSink
 
     print(
         f"snagline serve: listening on http://{args.host}:{args.port} (POST /events, GET /health)",
@@ -359,7 +394,12 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     )
     with suppress(KeyboardInterrupt):
         serve(
-            Monitor.default(config=_build_config(args)),
+            Monitor.default(
+                config=_build_config(args),
+                sinks=_maybe_dedup(
+                    [ConsoleSink()], getattr(args, "cooldown_seconds", 0.0)
+                ),
+            ),
             host=args.host,
             port=args.port,
         )

@@ -6,6 +6,7 @@ import io
 import json
 
 from snagline.cli import main
+from snagline.sinks.dedup import DedupSink
 
 
 def test_main_replay_quiet_and_summary(capsys, tmp_path):
@@ -81,3 +82,18 @@ def test_main_serve_starts_server(monkeypatch):
     monkeypatch.setattr("snagline.server.http_server.serve", _fake_serve)
     assert main(["serve"]) == 0
     assert started.get("ok") == ("127.0.0.1", 8787)
+
+
+def test_maybe_dedup_wraps_sinks_only_when_cooldown_set():
+    from snagline.cli import _maybe_dedup
+    from snagline.sinks.console import ConsoleSink
+
+    plain = [ConsoleSink()]
+    # No cooldown -> sinks returned unchanged.
+    assert _maybe_dedup(plain, 0.0) is plain
+    assert _maybe_dedup(plain, 0) is plain
+    # Cooldown > 0 -> each sink wrapped in a DedupSink.
+    wrapped = _maybe_dedup(plain, 120.0)
+    assert len(wrapped) == 1
+    assert isinstance(wrapped[0], DedupSink)
+    assert wrapped[0]._cooldown == 120.0
