@@ -133,3 +133,31 @@ class Config:
             data = json.loads(text)
         valid = {f.name for f in fields(cls)}  # noqa: F821
         return cls(**{k: v for k, v in data.items() if k in valid})
+
+    @classmethod
+    def resolve(
+        cls,
+        path: str | None = None,
+        environ: Mapping[str, str] | None = None,
+        prefix: str = "SNAGLINE_",
+    ) -> Config:
+        """Build the effective ``Config`` by layering sources (12-factor).
+
+        Precedence (lowest to highest): built-in defaults -> optional config
+        file (``path``) -> environment variables (``prefix``). Environment
+        overrides win over the file, which wins over defaults. Unknown file
+        keys and unset environment keys do not change anything.
+
+        This is the single entrypoint the CLI and host integrations should use
+        so behavior is consistent across ``snagline serve``, ``watch``,
+        ``replay``, and embedded use.
+        """
+        cfg = cls()
+        if path:
+            cfg = cls.load_file(path)
+        env = cls.from_env(environ=environ, prefix=prefix)
+        defaults = cls()
+        for fld in fields(cls):
+            if getattr(env, fld.name) != getattr(defaults, fld.name):
+                setattr(cfg, fld.name, getattr(env, fld.name))
+        return cfg

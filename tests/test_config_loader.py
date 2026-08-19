@@ -61,3 +61,23 @@ def test_load_file_toml(tmp_path):
     cfg = Config.load_file(str(path))
     assert cfg.cusum_h == 7.0
     assert cfg.loop_window_size == 20
+
+
+def test_resolve_layers_file_then_env(tmp_path):
+    path = tmp_path / "cfg.json"
+    path.write_text(json.dumps({"cusum_k": 1.2, "loop_repeat_threshold": 9}))
+    env = {"SNAGLINE_LOOP_REPEAT_THRESHOLD": "15"}
+    cfg = Config.resolve(path=str(path), environ=env)
+    # From file:
+    assert cfg.cusum_k == 1.2
+    # From env, overriding the file:
+    assert cfg.loop_repeat_threshold == 15
+    # Untouched default:
+    assert cfg.fail_open is True
+
+
+def test_resolve_env_only():
+    env = {"SNAGLINE_FAIL_OPEN": "false"}
+    cfg = Config.resolve(environ=env)
+    assert cfg.fail_open is False
+    assert cfg.cusum_k == 0.5  # default unchanged
