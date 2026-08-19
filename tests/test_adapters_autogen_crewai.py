@@ -135,3 +135,84 @@ def test_run_and_monitor_streams_autogen_events():
     assert mon.ended == ["ep-1"]
     assert len(mon.events) == 2
     assert result["type"] == "ToolCallRequestEvent"
+
+
+def test_run_and_monitor_raises_for_agent_with_no_stream_or_run():
+    class _Bare:
+        pass
+
+    mon = _Collector()
+    try:
+        asyncio.run(run_and_monitor(_Bare(), "task", monitor=mon, episode_id="ep-1"))
+        raise AssertionError("expected TypeError")
+    except TypeError as exc:
+        assert "run_stream" in str(exc)
+
+
+def test_run_and_monitor_raises_when_stream_is_none():
+    class _BrokenAgent:
+        async def run_stream(self, task):  # noqa: ARG002 - task unused in stub
+            return None
+
+    mon = _Collector()
+    try:
+        asyncio.run(
+            run_and_monitor(_BrokenAgent(), "task", monitor=mon, episode_id="ep-1")
+        )
+        raise AssertionError("expected TypeError")
+    except TypeError as exc:
+        assert "returned None" in str(exc)
+
+
+def test_run_and_monitor_falls_back_to_run():
+    class _LegacyAgent:
+        async def run(self, task):
+            return {"type": "TaskResult", "content": "done"}
+
+    mon = _Collector()
+    result = asyncio.run(
+        run_and_monitor(_LegacyAgent(), "task", monitor=mon, episode_id="ep-1")
+    )
+    assert result["type"] == "TaskResult"
+    assert mon.ended == ["ep-1"]
+    assert len(mon.events) == 1
+
+
+def test_run_and_monitor_ends_episode_when_stream_raises():
+    class _ExplodingStream:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise RuntimeError("boom mid-stream")
+
+    class _FakeAgent:
+        async def run_stream(self, task):  # noqa: ARG002 - task unused in stub
+            return _ExplodingStream()
+
+    mon = _Collector()
+    try:
+        asyncio.run(
+            run_and_monitor(_FakeAgent(), "task", monitor=mon, episode_id="ep-1")
+        )
+        raise AssertionError("expected RuntimeError")
+    except RuntimeError:
+        pass
+    assert mon.ended == ["ep-1"]
+
+
+def test_crewai_observe_reads_action_level_latency():
+    mon = _Collector()
+    ev = observe_crewai_step(  # noqa: F821
+        mon, "ep-2", {"action": {"tool": "search", "latency_ms": 42.0}, "text": "x"}
+    )
+    assert ev.latency_ms == 42.0
+
+
+def test_crewai_callback_close_ends_episode():
+    mon = _Collector()
+    cb = snagline_step_callback(mon, "ep-7")  # noqa: F821
+    cb({"text": "hello"})
+    cb.close()
+    assert mon.ended == ["ep-7"]
+    assert len(mon.events) == 1
