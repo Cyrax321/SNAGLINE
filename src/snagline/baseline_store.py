@@ -128,3 +128,45 @@ def capture_from_jsonl(
         version=version,
         max_versions=max_versions,
     )
+
+
+class BaselineCollector:
+    """Live auto-capture building block for P1 item 6.
+
+    A host feeds it every ``StepEvent`` during a *known-healthy* run; whenever
+    it decides the run is a good reference (a cadence it owns -- e.g. nightly,
+    or after N steps), it calls ``commit()`` to persist a versioned baseline.
+
+    Fail-open: a ``commit`` with no store configured is a no-op rather than an
+    error, so the collector is safe to drop into any pipeline.
+    """
+
+    def __init__(
+        self,
+        store: BaselineStore | None = None,
+        tenant: str = "default",
+        deployment: str = "default",
+        max_versions: int | None = None,
+    ) -> None:
+        self._store = store
+        self._tenant = tenant
+        self._deployment = deployment
+        self._max_versions = max_versions
+        self._profile = BaselineProfile()
+
+    def observe(self, event) -> None:
+        self._profile.add_event(event)
+
+    def snapshot(self) -> BaselineProfile:
+        return self._profile
+
+    def commit(self, version: str | None = None) -> str | None:
+        if self._store is None:
+            return None
+        return self._store.save(
+            self._profile,
+            tenant=self._tenant,
+            deployment=self._deployment,
+            version=version,
+            max_versions=self._max_versions,
+        )

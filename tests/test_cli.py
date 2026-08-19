@@ -70,6 +70,58 @@ def test_main_watch_slack_missing_url_exits_2():
     assert main(["watch", "--sink", "slack"]) == 2
 
 
+def _write_healthy_trajectory(path):
+    import json as _json
+
+    rows = [
+        {
+            "step_id": str(i),
+            "episode_id": "ep",
+            "timestamp": 1.0 + i,
+            "action_type": "tool_call",
+            "action_signature": "SIG",
+            "tool_name": "search",
+            "latency_ms": 100.0 + i,
+        }
+        for i in range(5)
+    ]
+    path.write_text("\n".join(_json.dumps(r) for r in rows) + "\n")
+
+
+def test_main_baseline_store_and_list(tmp_path):
+    traj = tmp_path / "h.jsonl"
+    _write_healthy_trajectory(traj)
+    store_dir = tmp_path / "store"
+    assert (
+        main(
+            [
+                "baseline",
+                str(traj),
+                "--store-dir",
+                str(store_dir),
+                "--tenant",
+                "acme",
+            ]
+        )
+        == 0
+    )
+    # Version was stored and is listed.
+    assert (
+        main(
+            [
+                "baseline",
+                str(traj),
+                "--store-dir",
+                str(store_dir),
+                "--tenant",
+                "acme",
+                "--list-versions",
+            ]
+        )
+        == 0
+    )
+
+
 def test_main_replay_quiet_and_summary(capsys, tmp_path):
     traj = tmp_path / "t.jsonl"
     traj.write_text(
