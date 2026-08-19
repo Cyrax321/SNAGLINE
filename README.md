@@ -495,14 +495,14 @@ SNAGLINE sits at the overlap of real-time monitoring, anomaly detection, and rel
 | 13 | Framework bridge docs | Complete |
 | 14 | Offline replay CLI (`snagline replay`) | Complete |
 | 15 | Deduplication / cooldown for alert spam | Planned ([#4](https://github.com/Cyrax321/SNAGLINE/issues/4)) |
-| 16 | ML ensemble detector (`snagline[ml]`) | Planned (v2) |
-| 17 | Goal-drift detector (`snagline[drift]`) | Planned (v2, needs embeddings) |
-| 18 | AutoGen / CrewAI adapters | Planned (on demand) |
+| 16 | ML ensemble detector (`snagline[ml]`) | Complete (deterministic combiner; `snagline[ml]` ESN pending) |
+| 17 | Goal-drift detector (`snagline[drift]`) | Complete (deterministic; `snagline[drift]` embeddings pending) |
+| 18 | AutoGen / CrewAI adapters | Complete |
 | 19 | Slack / PagerDuty sinks | Planned (on demand) |
 
 ## Status and Limitations
 
-- **Tested**: 78 tests passing, 0 skipped (see [Verification Status](#empirical-verification)).
+- **Tested**: 123 tests passing, 1 skipped (see [Verification Status](#empirical-verification)).
 - **Not on PyPI.** Install from a clone (see Quick Start).
 - **Overhead is measured, not asserted.** Run `snagline bench` to reproduce on your hardware.
 - **Framework adapters are optional extras.** The LangChain and LangGraph adapters are optional installs (`pip install snagline-agent[langchain]`, etc.). The core is always zero-dependency.
