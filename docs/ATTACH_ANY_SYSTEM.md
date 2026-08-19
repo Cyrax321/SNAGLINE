@@ -140,5 +140,20 @@ item 5 (alerting dedup/cooldown + Slack/PagerDuty sinks).
   - #35 `feat/auto-langchain` - LangChain auto-instrumentation.
   - #36 `feat/config-cli-wiring` - `Config.resolve` wired into the CLI/Monitor.
   - #37 `feat/pypi-metadata` - PyPI-ready metadata; `python -m build` verified.
-- **Remaining for true "attach anywhere":** actual PyPI upload (needs token),
-  in-process TLS (or documented reverse-proxy), then P1 items 4-6.
+- **P1 production readiness - alerting maturity + state backend.** Merged:
+  - #39 `feat/alerting-dedup-severity` - `FailureRisk.severity` + `DedupSink`
+    cooldown (issue #4).
+  - #40 `feat/cli-cooldown` - `--cooldown-seconds` on `watch`/`serve`.
+  - #41 `feat/slack-sink` - `SlackSink` (stdlib, min_severity filter).
+  - #42 `feat/pagerduty-sink` - `PagerDutySink` (Events API v2).
+  - #43 `feat/cli-sinks` - `--sink` exposes slack/pagerduty on watch/serve.
+  - #44 `feat/state-backend-lock-sharding` - `StateBackend` (memory + optional
+    Redis) and per-episode ingest lock sharding (removes the global lock).
+- **Remaining for true "attach anywhere":**
+  - P1 item 6: baseline lifecycle (auto-capture cadence, versioned store,
+    per-tenant baselines).
+  - P1 item 5 tail: batched/rate-limited async sink dispatch.
+  - Actual PyPI upload (needs a token); in-process TLS (or documented
+    reverse-proxy).
+  - Then P2 (ml/drift extras, calibration, eval harness) and P3 (self-metrics,
+    health endpoint, integration matrix).
