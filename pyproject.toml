@@ -9,13 +9,20 @@ description = "Lightweight, dependency-free real-time failure detection for AI a
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
+authors = [{ name = "SNAGLINE contributors" }]
 keywords = ["agents", "llm", "observability", "monitoring", "fail-open"]
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Monitoring",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
 ]
 dependencies = []  # core: zero required dependencies, non-negotiable
 
@@ -39,6 +46,9 @@ snagline = "snagline.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/Cyrax321/SNAGLINE"
+Repository = "https://github.com/Cyrax321/SNAGLINE"
+Documentation = "https://github.com/Cyrax321/SNAGLINE#readme"
+Issues = "https://github.com/Cyrax321/SNAGLINE/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
