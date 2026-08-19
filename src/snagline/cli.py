@@ -104,6 +104,47 @@ def _maybe_dedup(sinks: list[AlertSink], cooldown_seconds: float) -> list[AlertS
     return [DedupSink(s, cooldown_seconds=cooldown_seconds) for s in sinks]
 
 
+def _build_sinks(args: argparse.Namespace) -> list[AlertSink]:
+    """Resolve the escalation sinks from --sink / --slack-url / --pagerduty-key.
+
+    Unknown/invalid combinations fail closed with a clear stderr message and a
+    non-zero exit code (this is configuration error, not a monitoring fault).
+    """
+    sinks: list[AlertSink] = []
+    if args.sink == "webhook":
+        if not args.webhook_url:
+            print("--webhook-url is required with --sink webhook", file=sys.stderr)
+            raise SystemExit(2)
+        from snagline.sinks.webhook import WebhookSink
+
+        sinks.append(WebhookSink(args.webhook_url))
+    elif args.sink == "slack":
+        if not args.slack_url:
+            print("--slack-url is required with --sink slack", file=sys.stderr)
+            raise SystemExit(2)
+        from snagline.sinks.slack import SlackSink
+
+        sinks.append(SlackSink(args.slack_url, min_severity=args.min_severity))
+    elif args.sink == "pagerduty":
+        if not args.pagerduty_key:
+            print("--pagerduty-key is required with --sink pagerduty", file=sys.stderr)
+            raise SystemExit(2)
+        from snagline.sinks.pagerduty import PagerDutySink
+
+        sinks.append(
+            PagerDutySink(
+                args.pagerduty_key,
+                source=args.pagerduty_source,
+                min_severity=args.min_severity,
+            )
+        )
+    else:
+        from snagline.sinks.console import ConsoleSink
+
+        sinks.append(ConsoleSink())
+    return _maybe_dedup(sinks, args.cooldown_seconds)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="snagline",
@@ -156,7 +197,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_watch.add_argument(
         "--sink",
-        choices=["console", "webhook"],
+        choices=["console", "webhook", "slack", "pagerduty"],
         default="console",
         help="Escalation sink [default: console].",
     )
@@ -164,6 +205,27 @@ def _build_parser() -> argparse.ArgumentParser:
         "--webhook-url",
         default=None,
         help="Webhook endpoint (required with --sink webhook).",
+    )
+    p_watch.add_argument(
+        "--slack-url",
+        default=None,
+        help="Slack incoming webhook URL (required with --sink slack).",
+    )
+    p_watch.add_argument(
+        "--pagerduty-key",
+        default=None,
+        help="PagerDuty Events API routing key (required with --sink pagerduty).",
+    )
+    p_watch.add_argument(
+        "--pagerduty-source",
+        default="snagline",
+        help="PagerDuty event source label [default: snagline].",
+    )
+    p_watch.add_argument(
+        "--min-severity",
+        default=None,
+        help="Only escalate risks at or above this severity "
+        "(info|warning|critical). Optional.",
     )
     p_watch.add_argument(
         "--cooldown-seconds",
@@ -181,6 +243,38 @@ def _build_parser() -> argparse.ArgumentParser:
         "--host", default="127.0.0.1", help="Bind address [default: 127.0.0.1]."
     )
     p_serve.add_argument("--port", type=int, default=8787, help="Port [default: 8787].")
+    p_serve.add_argument(
+        "--sink",
+        choices=["console", "webhook", "slack", "pagerduty"],
+        default="console",
+        help="Escalation sink [default: console].",
+    )
+    p_serve.add_argument(
+        "--webhook-url",
+        default=None,
+        help="Webhook endpoint (required with --sink webhook).",
+    )
+    p_serve.add_argument(
+        "--slack-url",
+        default=None,
+        help="Slack incoming webhook URL (required with --sink slack).",
+    )
+    p_serve.add_argument(
+        "--pagerduty-key",
+        default=None,
+        help="PagerDuty Events API routing key (required with --sink pagerduty).",
+    )
+    p_serve.add_argument(
+        "--pagerduty-source",
+        default="snagline",
+        help="PagerDuty event source label [default: snagline].",
+    )
+    p_serve.add_argument(
+        "--min-severity",
+        default=None,
+        help="Only escalate risks at or above this severity "
+        "(info|warning|critical). Optional.",
+    )
     p_serve.add_argument(
         "--cooldown-seconds",
         type=float,
@@ -244,18 +338,10 @@ def _iter_lines(path: str | None, follow: bool) -> Iterator[str]:
 
 
 def _cmd_watch(args: argparse.Namespace) -> int:
-    sinks: list = []
-    if args.sink == "webhook":
-        if not args.webhook_url:
-            print("--webhook-url is required with --sink webhook", file=sys.stderr)
-            return 2
-        from snagline.sinks.webhook import WebhookSink
-
-        sinks.append(WebhookSink(args.webhook_url))
-    else:
-        from snagline.sinks.console import ConsoleSink
-
-        sinks.append(ConsoleSink())
+    try:
+        sinks = _build_sinks(args)
+    except SystemExit as exc:
+        return int(exc.code or 2)
     monitor = Monitor.default(
         config=_build_config(args),
         sinks=_maybe_dedup(sinks, args.cooldown_seconds),
@@ -386,20 +472,18 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
 
 def _cmd_serve(args: argparse.Namespace) -> int:
     from snagline.server.http_server import serve
-    from snagline.sinks.console import ConsoleSink
 
+    try:
+        sinks = _build_sinks(args)
+    except SystemExit as exc:
+        return int(exc.code or 2)
     print(
         f"snagline serve: listening on http://{args.host}:{args.port} (POST /events, GET /health)",
         file=sys.stderr,
     )
     with suppress(KeyboardInterrupt):
         serve(
-            Monitor.default(
-                config=_build_config(args),
-                sinks=_maybe_dedup(
-                    [ConsoleSink()], getattr(args, "cooldown_seconds", 0.0)
-                ),
-            ),
+            Monitor.default(config=_build_config(args), sinks=sinks),
             host=args.host,
             port=args.port,
         )

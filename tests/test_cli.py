@@ -4,9 +4,70 @@ from __future__ import annotations
 
 import io
 import json
+from argparse import Namespace
 
 from snagline.cli import main
 from snagline.sinks.dedup import DedupSink
+from snagline.sinks.pagerduty import PagerDutySink
+from snagline.sinks.slack import SlackSink
+
+
+def _args(**kw):
+    base = dict(
+        sink="console",
+        webhook_url=None,
+        slack_url=None,
+        pagerduty_key=None,
+        pagerduty_source="snagline",
+        min_severity=None,
+        cooldown_seconds=0.0,
+    )
+    base.update(kw)
+    return Namespace(**base)
+
+
+def test_build_sinks_console_default():
+    from snagline.cli import _build_sinks
+    from snagline.sinks.console import ConsoleSink
+
+    sinks = _build_sinks(_args())
+    assert len(sinks) == 1
+    assert isinstance(sinks[0], ConsoleSink)
+
+
+def test_build_sinks_slack_and_pagerduty():
+    from snagline.cli import _build_sinks
+
+    assert isinstance(_build_sinks(_args(sink="slack", slack_url="u")).pop(), SlackSink)
+    assert isinstance(
+        _build_sinks(_args(sink="pagerduty", pagerduty_key="k")).pop(),
+        PagerDutySink,
+    )
+
+
+def test_build_sinks_requires_url():
+    import pytest
+
+    from snagline.cli import _build_sinks
+
+    with pytest.raises(SystemExit) as exc:
+        _build_sinks(_args(sink="slack"))
+    assert exc.value.code == 2
+    with pytest.raises(SystemExit) as exc:
+        _build_sinks(_args(sink="pagerduty"))
+    assert exc.value.code == 2
+
+
+def test_build_sinks_cooldown_wraps():
+    from snagline.cli import _build_sinks
+
+    sinks = _build_sinks(_args(sink="console", cooldown_seconds=60.0))
+    assert len(sinks) == 1
+    assert isinstance(sinks[0], DedupSink)
+
+
+def test_main_watch_slack_missing_url_exits_2():
+    assert main(["watch", "--sink", "slack"]) == 2
 
 
 def test_main_replay_quiet_and_summary(capsys, tmp_path):
