@@ -1,0 +1,74 @@
+"""Tests for the BatchingSink (P1 item 5: batched/rate-limited dispatch)."""
+
+from __future__ import annotations
+
+import time
+
+from snagline.risk import SEVERITY_INFO, FailureRisk
+from snagline.sinks.batching import BatchingSink
+
+
+def _risk(i: int = 0) -> FailureRisk:
+    return FailureRisk(
+        episode_id="ep",
+        step_id=str(i),
+        score=0.5,
+        trigger="loop",
+        detail="d",
+        timestamp=1.0,
+        severity=SEVERITY_INFO,
+    )
+
+
+class _RecordingSink:
+    def __init__(self):
+        self.emitted: list[FailureRisk] = []
+
+    def emit(self, risk: FailureRisk) -> None:
+        self.emitted.append(risk)
+
+
+def test_batch_collects_and_flushes():
+    inner = _RecordingSink()
+    sink = BatchingSink(inner, max_batch=1000, flush_interval=5.0)
+    try:
+        for i in range(3):
+            sink.emit(_risk(i))
+        sink.flush_now()
+        assert len(inner.emitted) == 3
+    finally:
+        sink.close()
+
+
+def test_emit_is_non_blocking_and_background_flushes():
+    inner = _RecordingSink()
+    sink = BatchingSink(inner, max_batch=2, flush_interval=0.05)
+    try:
+        for i in range(5):
+            sink.emit(_risk(i))
+        # Wait for the background thread to flush at least once.
+        for _ in range(50):
+            if len(inner.emitted) >= 1:
+                break
+            time.sleep(0.02)
+    finally:
+        sink.close()
+    assert len(inner.emitted) >= 1
+
+
+def test_rate_limit_paces_delivery():
+    inner = _RecordingSink()
+    # 10 per second -> 3 risks take >= 0.2s to deliver.
+    sink = BatchingSink(inner, max_batch=1000, flush_interval=5.0, max_per_second=10.0)
+    try:
+        import time
+
+        start = time.monotonic()
+        for i in range(3):
+            sink.emit(_risk(i))
+        sink.flush_now()
+        elapsed = time.monotonic() - start
+        assert elapsed >= 0.18
+        assert len(inner.emitted) == 3
+    finally:
+        sink.close()
