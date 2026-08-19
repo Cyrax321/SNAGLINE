@@ -14,9 +14,9 @@ Fail-open: a delivery error is swallowed (never blocks ingest or the queue).
 from __future__ import annotations
 
 import collections
+import contextlib
 import threading
 import time
-from typing import Any
 
 from snagline.risk import FailureRisk
 from snagline.sinks.base import AlertSink
@@ -68,11 +68,9 @@ class BatchingSink:
                 if wait > 0:
                     time.sleep(wait)
                 last = time.monotonic()
-            try:
-                self._sink.emit(risk)
-            except Exception:
+            with contextlib.suppress(Exception):
                 # Fail-open: a delivery failure must not poison the queue.
-                pass
+                self._sink.emit(risk)
 
     def flush_now(self) -> None:
         """Force an immediate flush (used at shutdown and in tests)."""

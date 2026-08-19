@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from snagline.risk import FailureRisk, SEVERITY_INFO
+from snagline.risk import SEVERITY_INFO, FailureRisk
 from snagline.sinks.batching import BatchingSink
 
 
