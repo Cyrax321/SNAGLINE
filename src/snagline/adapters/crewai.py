@@ -67,6 +67,74 @@ def _extract_text(step: dict[str, Any]) -> str:
     return ""
 
 
+def _map_step(
+    step: Any,
+    *,
+    episode_id: str,
+    step_id: str,
+    agent_name: str | None,
+    clock: Callable[[], float],
+) -> StepEvent:
+    d = _to_dict(step)
+    tool_name = _extract_tool_name(d)
+    action_type = "tool_call" if tool_name else "agent_step"
+    text = _extract_text(d)
+    error = bool(d.get("error") or d.get("is_error"))
+    # Some CrewAI versions attach a duration on the step or action.
+    latency = d.get("latency_ms") or d.get("duration_ms")
+    raw_action = d.get("action")
+    action: dict[str, Any] = raw_action if isinstance(raw_action, dict) else {}
+    if latency is None:
+        latency = action.get("latency_ms")
+    sig = make_signature(action_type, tool_name, text or str(d))
+    return StepEvent(
+        step_id=step_id,
+        episode_id=episode_id,
+        timestamp=clock(),
+        action_type=action_type,
+        action_signature=sig,
+        tool_name=tool_name,
+        latency_ms=latency,
+        error=error,
+        metadata={"agent_name": agent_name, "adapter": "crewai"},
+    )
+
+
+class _CrewAIStepCallback:
+    """Callable CrewAI ``step_callback`` with an optional ``close()`` teardown.
+
+    CrewAI only calls ``__call__``; ``close()`` mirrors
+    :meth:`SnaglineAutogenHandler.close` and clears per-episode detector state.
+    """
+
+    def __init__(
+        self,
+        monitor: Any,
+        episode_id: str,
+        agent_name: str | None = None,
+        clock: Callable[[], float] | None = None,
+    ) -> None:
+        self._monitor = monitor
+        self._episode_id = episode_id
+        self._agent_name = agent_name
+        self._clock = clock or time.time
+        self._counter = itertools.count()
+
+    def __call__(self, step: Any) -> None:
+        self._monitor.ingest(
+            _map_step(
+                step,
+                episode_id=self._episode_id,
+                step_id=str(next(self._counter)),
+                agent_name=self._agent_name,
+                clock=self._clock,
+            )
+        )
+
+    def close(self) -> None:
+        self._monitor.end_episode(self._episode_id)
+
+
 def snagline_step_callback(
     monitor: Any,
     episode_id: str,
@@ -77,38 +145,10 @@ def snagline_step_callback(
 
     The returned callable accepts a CrewAI step object (or dict) and ingests a
     corresponding ``StepEvent``. Returns the callback for assignment to
-    ``Agent(step_callback=...)``.
+    ``Agent(step_callback=...)``. After the episode finishes, call
+    ``callback.close()`` to clear per-episode detector state.
     """
-    counter = itertools.count()
-    current_clock = clock or time.time
-
-    def callback(step: Any) -> None:
-        d = _to_dict(step)
-        tool_name = _extract_tool_name(d)
-        action_type = "tool_call" if tool_name else "agent_step"
-        text = _extract_text(d)
-        error = bool(d.get("error") or d.get("is_error"))
-        # Some CrewAI versions attach a duration on the step or action.
-        latency = d.get("latency_ms") or d.get("duration_ms")
-        raw_action = d.get("action")
-        action: dict[str, Any] = raw_action if isinstance(raw_action, dict) else {}
-        if latency is None:
-            latency = action.get("latency_ms")
-        sig = make_signature(action_type, tool_name, text or str(d))
-        event = StepEvent(
-            step_id=str(next(counter)),
-            episode_id=episode_id,
-            timestamp=current_clock(),
-            action_type=action_type,
-            action_signature=sig,
-            tool_name=tool_name,
-            latency_ms=latency,
-            error=error,
-            metadata={"agent_name": agent_name, "adapter": "crewai"},
-        )
-        monitor.ingest(event)
-
-    return callback
+    return _CrewAIStepCallback(monitor, episode_id, agent_name=agent_name, clock=clock)
 
 
 def observe_crewai_step(
@@ -125,23 +165,12 @@ def observe_crewai_step(
     Useful when you manage the agent loop yourself and want the same mapping the
     callback uses, without registering ``step_callback``.
     """
-    d = _to_dict(step)
-    tool_name = _extract_tool_name(d)
-    action_type = "tool_call" if tool_name else "agent_step"
-    text = _extract_text(d)
-    error = bool(d.get("error") or d.get("is_error"))
-    latency = d.get("latency_ms") or d.get("duration_ms")
-    sig = make_signature(action_type, tool_name, text or str(d))
-    event = StepEvent(
-        step_id=step_id or "manual",
+    event = _map_step(
+        step,
         episode_id=episode_id,
-        timestamp=(clock or time.time)(),
-        action_type=action_type,
-        action_signature=sig,
-        tool_name=tool_name,
-        latency_ms=latency,
-        error=error,
-        metadata={"agent_name": agent_name, "adapter": "crewai"},
+        step_id=step_id or "manual",
+        agent_name=agent_name,
+        clock=clock or time.time,
     )
     monitor.ingest(event)
     return event
