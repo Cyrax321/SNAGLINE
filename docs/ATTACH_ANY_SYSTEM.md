@@ -102,11 +102,16 @@ enterprise-grade alerting. Concretely:
 
 4. **Pluggable state backend** (in-memory default, Redis/DB optional) so
    detector state and baselines survive restarts and span workers; shard the
-   lock by `episode_id` to remove the global ingest bottleneck.
+   lock by `episode_id` to remove the global ingest bottleneck. **Done:**
+   `StateBackend` (memory + optional Redis) + per-episode lock sharding (#44).
 5. **Alerting maturity:** dedup/cooldown (issue #4), severity, Slack and
-   PagerDuty sinks, batched and rate-limited async dispatch.
+   PagerDuty sinks, batched and rate-limited async dispatch. **Done:**
+   `DedupSink` + severity (#39, #40), `SlackSink`/`PagerDutySink` + CLI
+   exposure (#41-#43), `BatchingSink` (#48).
 6. **Baseline lifecycle:** auto-capture cadence, versioned store, per-tenant
-   baselines, scheduled retrain.
+   baselines, scheduled retrain. **Done (storage + collector + CLI):** versioned
+   per-tenant `BaselineStore`, `BaselineCollector`, and `snagline baseline
+   --store-dir` (#45, #46). Scheduled retrain remains a host-owned cadence.
 
 ### P2 (detection quality, the differentiator)
 
@@ -118,8 +123,10 @@ enterprise-grade alerting. Concretely:
 ### P3 (trust and observability)
 
 10. Monitor self-metrics (Prometheus), health endpoint, structured logs.
+    **Done (partial):** `Monitor.metrics()` counters + `GET /metrics` sidecar
+    endpoint (#47). Prometheus export and structured logging remain.
 11. Integration matrix document plus a prominent "10-line custom adapter"
-    path.
+    path. **Done:** `docs/INTEGRATION_MATRIX.md` (#49).
 
 ## Suggested starting point
 
@@ -149,11 +156,16 @@ item 5 (alerting dedup/cooldown + Slack/PagerDuty sinks).
   - #43 `feat/cli-sinks` - `--sink` exposes slack/pagerduty on watch/serve.
   - #44 `feat/state-backend-lock-sharding` - `StateBackend` (memory + optional
     Redis) and per-episode ingest lock sharding (removes the global lock).
-- **Remaining for true "attach anywhere":**
-  - P1 item 6: baseline lifecycle (auto-capture cadence, versioned store,
-    per-tenant baselines).
-  - P1 item 5 tail: batched/rate-limited async sink dispatch.
+  - #45 `feat/baseline-store` - versioned, per-tenant `BaselineStore`.
+  - #46 `feat/baseline-cli-store` - `BaselineCollector` + store-backed
+    `snagline baseline` CLI.
+  - #47 `feat/monitor-metrics` - `Monitor.metrics()` + `GET /metrics`.
+  - #48 `feat/batching-sink` - `BatchingSink` async/rate-limited dispatch.
+  - #49 `docs/integration-matrix` - `docs/INTEGRATION_MATRIX.md` (P3 item 11).
+- **Status: P0, P1, and most of P3 are complete.** Remaining:
+  - P1 item 6 tail: scheduled/automated retrain cadence (host-owned today).
+  - P3 item 10 tail: Prometheus export + structured logging for the monitor.
   - Actual PyPI upload (needs a token); in-process TLS (or documented
     reverse-proxy).
-  - Then P2 (ml/drift extras, calibration, eval harness) and P3 (self-metrics,
-    health endpoint, integration matrix).
+  - Then P2 (ml/drift extras, calibration, eval harness) - the research
+    differentiators that approach the paper's accuracy.
