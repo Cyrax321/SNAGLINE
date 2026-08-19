@@ -179,20 +179,22 @@ snagline/
 │       ├── monitor.py               # Monitor orchestrator, fail-open wrapper
 │       ├── risk.py                  # FailureRisk dataclass
 │       ├── config.py                # Config dataclass, all tunable thresholds
-│       ├── cli.py                   # `snagline watch|replay|baseline|bench`
-│       ├── detectors/
-│       │   ├── __init__.py
-│       │   ├── base.py              # Detector protocol
-│       │   ├── loop.py
-│       │   ├── error_cascade.py
-│       │   └── latency_anomaly.py   # Welford + CUSUM, stdlib `statistics` only
-│       ├── ml/                      # optional extra: snagline-agent[ml]
-│       │   ├── __init__.py
-│       │   ├── esn_ensemble.py      # echo-state-network detector
-│       │   └── train.py             # fit on healthy-run baseline
-│       ├── drift/                   # optional extra: snagline-agent[drift]
-│       │   ├── __init__.py
-│       │   └── goal_drift.py
+ │       ├── cli.py                   # `snagline watch|replay|baseline|bench`
+ │       ├── baseline.py              # fit/save/load healthy BaselineProfile (stdlib)
+ │       ├── detectors/
+ │       │   ├── __init__.py
+ │       │   ├── base.py              # Detector protocol
+ │       │   ├── loop.py
+ │       │   ├── error_cascade.py
+ │       │   ├── latency_anomaly.py   # Welford + CUSUM, stdlib `statistics` only
+ │       │   ├── goal_drift.py        # OPT-IN: live vs healthy BaselineProfile (built)
+ │       │   └── ml_ensemble.py       # OPT-IN: MLOrchestrator noisy-OR (built; model= hook)
+ │       ├── ml/                      # optional extra: snagline-agent[ml] (research path, NOT YET BUILT)
+ │       │   ├── __init__.py
+ │       │   └── esn_ensemble.py      # echo-state-network detector
+ │       ├── drift/                   # optional extra: snagline-agent[drift] (research path, NOT YET BUILT)
+ │       │   ├── __init__.py
+ │       │   └── goal_drift.py        # semantic-drift (sentence-transformers) detector
 │       ├── sinks/
 │       │   ├── __init__.py
 │       │   ├── base.py              # AlertSink protocol
@@ -205,8 +207,8 @@ snagline/
 │       │   ├── raw.py               # context manager + decorator, zero dep
 │       │   ├── langchain_adapter.py  # optional extra: snagline-agent[langchain]
 │       │   ├── langgraph_adapter.py  # optional extra: snagline-agent[langgraph]
-│       │   ├── autogen_adapter.py    # optional extra: snagline-agent[autogen]
-│       │   ├── crewai_adapter.py     # optional extra: snagline-agent[crewai]
+ │       │   ├── autogen_adapter.py    # built as adapters/autogen.py (duck-typed)
+ │       │   ├── crewai_adapter.py     # built as adapters/crewai.py (duck-typed)
 │       │   ├── openai_adapter.py     # optional extra: snagline-agent[openai]
 │       │   ├── anthropic_adapter.py  # optional extra: snagline-agent[anthropic]
 │       │   ├── claude_code_adapter.py # optional; verify current hooks API first — see §5.7
@@ -522,11 +524,20 @@ latency, node name → tool_name, node output containing an error key →
 error flag). Confirm current streaming API shape against the installed
 LangGraph version before implementing — this is a fast-moving library.
 
-### 6.4 `autogen_adapter.py`, `crewai_adapter.py`
+### 6.4 `autogen.py`, `crewai.py` (built)
 
-Hook into each framework's message/tool/task callback system respectively.
-Lower priority than LangChain/LangGraph for v1 — build after the core proves
-out.
+Shipped as `adapters/autogen.py` and `adapters/crewai.py` (the spec's
+`autogen_adapter.py` / `crewai_adapter.py` naming was shortened). Both are
+duck-typed: they read framework event objects via `model_dump()` with attribute/
+dict fallbacks, so they import without the framework installed and never
+hard-couple to a release.
+
+- Autogen: `SnaglineAutogenHandler` (observer fed each event) plus
+  `run_and_monitor()` wrapping `agent.run_stream`.
+- CrewAI: `snagline_step_callback()` returns the `Agent(step_callback=...)`
+  hook; `observe_crewai_step()` is the manual equivalent.
+
+Install with `pip install snagline-agent[autogen]` / `[crewai]`.
 
 ### 6.5 `openai_adapter.py`, `anthropic_adapter.py`
 
@@ -604,7 +615,7 @@ user's infra choice, not this library's concern.
 ```
 snagline watch --adapter raw --sink console          # live mode, dev/debug
 snagline replay trajectory.jsonl                      # offline batch analysis
-snagline baseline fit --trajectories healthy/ --out baseline.json
+snagline baseline <trajectory>.jsonl [--output baseline.json]   # fit a healthy profile
 snagline bench                                        # runs overhead_benchmark.py, prints µs/step
 ```
 
@@ -704,26 +715,44 @@ project easily").
    core has real usage or real benchmark numbers to compare against. This
    is the research-grade piece; don't let it block the useful, simple
    v0.1.
-10. `autogen_adapter.py`, `crewai_adapter.py`, `claude_code_adapter.py`,
-    sidecar server mode, `drift` extra — build in response to actual
-    demand, not preemptively.
+ 10. `autogen_adapter.py`, `crewai_adapter.py`, `claude_code_adapter.py`,
+     sidecar server mode, `drift` extra — build in response to actual
+     demand, not preemptively.
+
+### 13.1 Status of the sequencing (as of 2026-08-19)
+
+- Steps 1-8 (v0.1 core: events/risk/Monitor, loop + error-cascade +
+  latency detectors, console sink, `raw` adapter, `replay`, overhead
+  benchmark, LangChain, LangGraph, the two detector/adapter guides) are
+  **done**.
+- Step 9 (`ml` extra, echo-state-network ensemble) and the `drift` extra
+  (semantic goal-drift) are **not yet built** — the deterministic
+  `goal_drift` and `ml_ensemble` detectors in `detectors/` were shipped
+  first as the simpler, dependency-free path (see §15).
+- Step 10: Autogen and CrewAI adapters are **done** (duck-typed, see §6.4).
+  `claude_code_adapter.py`, `continuum_adapter.py`/`continuum_sink.py`,
+  `openai_adapter.py`, `anthropic_adapter.py`, and the sidecar server mode
+  are **still pending**.
 
 ---
 
 ## 14. Definition of done for v0.1 (the ship-it milestone)
 
-- [ ] Core installs with zero third-party dependencies
-- [ ] `test_monitor_fail_open.py` passes: detector/sink exceptions never
+Status: **satisfied as of 2026-08-19** (see §15). Checkboxes reflect the
+actual state.
+
+- [x] Core installs with zero third-party dependencies
+- [x] `test_monitor_fail_open.py` passes: detector/sink exceptions never
       propagate when `fail_open=True`
-- [ ] Loop, error-cascade, and latency-anomaly detectors pass unit tests
+- [x] Loop, error-cascade, and latency-anomaly detectors pass unit tests
       against both injected-failure and healthy synthetic trajectories
       (no false positives on the healthy case)
-- [ ] `snagline replay` works against the fixture trajectories
-- [ ] `benchmarks/overhead_benchmark.py` runs and reports a real,
+- [x] `snagline replay` works against the fixture trajectories
+- [x] `benchmarks/overhead_benchmark.py` runs and reports a real,
       reproducible microseconds/step number in the README
-- [ ] `raw.py` adapter documented with a working example in
+- [x] `raw.py` adapter documented with a working example in
       `examples/raw_loop_example.py`
-- [ ] README states plainly: what this detects, what it doesn't (goal
+- [x] README states plainly: what this detects, what it doesn't (goal
       drift, automatic repair), and that it's a companion to, not a part
       of, CONTINUUM
 
@@ -731,3 +760,46 @@ No claim anywhere in the docs that this matches or beats the source
 paper's detection numbers until `benchmarks/detection_accuracy.py` has
 actually been run against a comparable dataset and the result is honestly
 reported either way.
+
+---
+
+## 15. Status (as of 2026-08-19)
+
+Implementation status against the spec above. All merged to `master` with
+green CI (ruff + mypy + pytest, py3.10-3.13).
+
+### Shipped
+
+- **Core v0.1** (steps 1-2, 4): `events`, `risk`, `Monitor` (fail-open),
+  loop, error-cascade, latency/CUSUM detectors, console + webhook sinks,
+  `raw` adapter, `snagline replay`, overhead benchmark. Zero required deps.
+- **`snagline baseline` command** (§9): `src/snagline/baseline.py` fits a
+  `BaselineProfile` (per-tool latency mean/std/min/max + error rate) from a
+  JSONL trajectory; `save_baseline`/`load_baseline` round-trip it. Exposed at
+  top level.
+- **`GoalDriftDetector`** (opt-in, `detectors/goal_drift.py`): compares a live
+  run to a persisted `BaselineProfile`; flags rising error rate, latency
+  blowing past the healthy mean by `goal_drift_latency_k` sigmas, or unseen
+  tools. Zero-variance baselines use a floored spread so tiny deviations are
+  not treated as infinite z.
+- **`MLOrchestrator`** (opt-in, `detectors/ml_ensemble.py`): wraps the base
+  detectors and combines their scores with a transparent noisy-OR; a real
+  model can be injected via `model=` (the `ml` extra provides scikit-learn).
+- **Autogen adapter** (`adapters/autogen.py`): `SnaglineAutogenHandler` +
+  `run_and_monitor` wrapping `agent.run_stream`. Duck-typed.
+- **CrewAI adapter** (`adapters/crewai.py`): `snagline_step_callback` for
+  `Agent(step_callback=...)` plus `observe_crewai_step`. Duck-typed.
+- **Docs**: README detector/integration tables + "Baseline and advanced
+  detection" section; `docs/DETECTOR_GUIDE.md` and `docs/ADAPTER_GUIDE.md`
+  updated; `examples/baseline_to_monitor.py` runnable end-to-end walkthrough.
+
+### Still pending (lower priority, per §13 step 9-10)
+
+- `ml` extra echo-state-network ensemble (`ml/esn_ensemble.py`); the
+  `ml_ensemble` shipped detector is the deterministic stand-in.
+- `drift` extra semantic goal-drift (`drift/goal_drift.py`,
+  sentence-transformers).
+- `claude_code_adapter.py`, `continuum_adapter.py`/`continuum_sink.py`,
+  `openai_adapter.py`, `anthropic_adapter.py`, and the sidecar server mode
+  (`server/http_server.py`).
+- `benchmarks/detection_accuracy.py` (paper-number honesty gate in §14).
