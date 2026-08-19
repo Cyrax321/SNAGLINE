@@ -1,643 +1,1342 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SNAGLINE - Real-time failure detection for AI agents</title>
-<meta name="description" content="Zero-dependency, O(1) per-step monitoring that catches loops, error cascades, and latency drift in any AI agent.">
+<title>SNAGLINE — Catch agent failures before they cascade</title>
+<meta name="description" content="Zero-dependency, O(1) per-step monitoring that catches loops, error cascades, latency drift, and goal drift in any AI agent. ~2 microseconds per step.">
+<meta name="theme-color" content="#07070a">
+<meta property="og:title" content="SNAGLINE — Catch agent failures before they cascade">
+<meta property="og:description" content="Real-time failure detection for AI agents. Zero dependencies. 2.08 microseconds per step. Never crashes the thing it monitors.">
+<meta property="og:type" content="website">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
+/* ═══════════════ RESET + TOKENS ═══════════════ */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#09090b;--bg-card:#111113;--bg-elevated:#18181b;
-  --border:rgba(255,255,255,0.06);--border-hover:rgba(255,255,255,0.12);
-  --text:#fafafa;--text-secondary:#a1a1aa;--text-muted:#52525b;
-  --accent:#00b8d9;--accent-dim:rgba(0,184,217,0.10);--accent-glow:rgba(0,184,217,0.25);
-  --green:#16a34a;--green-dim:rgba(22,163,74,0.10);
-  --red:#dc2626;--red-dim:rgba(220,38,38,0.10);
-  --amber:#d97706;--amber-dim:rgba(217,119,6,0.10);
-  --mono:'JetBrains Mono',monospace;--sans:'Inter',system-ui,sans-serif;
-  --shadow-sm:0 1px 2px rgba(0,0,0,0.4);
-  --shadow-md:0 4px 12px rgba(0,0,0,0.5);
-  --shadow-lg:0 8px 32px rgba(0,0,0,0.6);
-  --shadow-border:0 0 0 1px var(--border);
-  --nav-bg:rgba(9,9,11,0.8);
-  --toggle-bg:rgba(255,255,255,0.08);--toggle-hover:rgba(255,255,255,0.14);
-  --code-fn:#c084fc;
+  --bg:#07070a;--surface:#0d0d12;--elevated:#14141a;
+  --line:rgba(255,255,255,0.07);--line-2:rgba(255,255,255,0.14);
+  --ink:#f5f5f3;--ink-2:#9b9ba4;--ink-3:#55555f;
+  --accent:#00d4ff;--accent-dim:rgba(0,212,255,0.09);--accent-glow:rgba(0,212,255,0.28);
+  --green:#34d399;--green-dim:rgba(52,211,153,0.10);
+  --red:#f43f5e;--red-dim:rgba(244,63,94,0.10);
+  --amber:#fbbf24;--amber-dim:rgba(251,191,36,0.10);
+  --violet:#a78bfa;--violet-dim:rgba(167,139,250,0.10);
+  --display:'Space Grotesk',system-ui,sans-serif;
+  --sans:'Inter',system-ui,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,monospace;
+  --grain:0.045;--nav-bg:rgba(7,7,10,0.72);
+  --pad:clamp(1.25rem,4.5vw,5rem);
+  --ease:cubic-bezier(.16,1,.3,1);
 }
 [data-theme="light"]{
-  --bg:#fafafa;--bg-card:#ffffff;--bg-elevated:#f4f4f5;
-  --border:rgba(0,0,0,0.08);--border-hover:rgba(0,0,0,0.15);
-  --text:#18181b;--text-secondary:#52525b;--text-muted:#a1a1aa;
-  --accent:#0891b2;--accent-dim:rgba(8,145,178,0.08);--accent-glow:rgba(8,145,178,0.18);
-  --green:#15803d;--green-dim:rgba(21,128,61,0.08);
-  --red:#b91c1c;--red-dim:rgba(185,28,28,0.08);
-  --amber:#b45309;--amber-dim:rgba(180,83,9,0.08);
-  --shadow-sm:0 1px 2px rgba(0,0,0,0.06);
-  --shadow-md:0 4px 12px rgba(0,0,0,0.08);
-  --shadow-lg:0 8px 32px rgba(0,0,0,0.10);
-  --nav-bg:rgba(250,250,250,0.85);
-  --toggle-bg:rgba(0,0,0,0.06);--toggle-hover:rgba(0,0,0,0.10);
-  --code-fn:#7c3aed;
+  --bg:#f1f0ec;--surface:#ffffff;--elevated:#e9e8e3;
+  --line:rgba(0,0,0,0.10);--line-2:rgba(0,0,0,0.20);
+  --ink:#0a0a0c;--ink-2:#5c5c66;--ink-3:#9a9aa4;
+  --accent:#0e7490;--accent-dim:rgba(14,116,144,0.08);--accent-glow:rgba(14,116,144,0.20);
+  --green:#047857;--green-dim:rgba(4,120,87,0.09);
+  --red:#be123c;--red-dim:rgba(190,18,60,0.09);
+  --amber:#b45309;--amber-dim:rgba(180,83,9,0.09);
+  --violet:#6d28d9;--violet-dim:rgba(109,40,217,0.09);
+  --grain:0.022;--nav-bg:rgba(241,240,236,0.78);
 }
-html{scroll-behavior:smooth;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
-body{font-family:var(--sans);background:var(--bg);color:var(--text);line-height:1.6;overflow-x:hidden;transition:background .3s,color .3s}
-a{color:var(--accent);text-decoration:none;transition:color .2s}
-a:hover{color:var(--text)}
+html{overflow-x:clip;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+body{font-family:var(--sans);background:var(--bg);color:var(--ink);line-height:1.6;
+  transition:background .5s var(--ease),color .5s var(--ease)}
+a{color:inherit;text-decoration:none}
 code,pre,.mono{font-family:var(--mono)}
+img,svg,canvas{max-width:100%}
+pre,.snip{max-width:100%}
+::selection{background:var(--accent);color:var(--bg)}
+h1,h2,h3{font-family:var(--display);font-weight:700;letter-spacing:-0.035em;line-height:1}
 
-/* ---- NAV ---- */
-nav{position:fixed;top:0;left:0;right:0;z-index:100;padding:0 clamp(1.5rem,4vw,4rem);height:64px;display:flex;align-items:center;justify-content:space-between;background:var(--nav-bg);backdrop-filter:blur(16px) saturate(1.2);border-bottom:1px solid var(--border);transition:background .3s}
-.nav-logo{font-family:var(--mono);font-weight:700;font-size:1.1rem;letter-spacing:-0.02em;color:var(--text);display:flex;align-items:center;gap:0.5rem}
-.nav-logo .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent-glow)}
-.nav-links{display:flex;gap:2rem;align-items:center}
-.nav-links a{font-size:0.875rem;color:var(--text-secondary);font-weight:500;transition:color .2s}
-.nav-links a:hover{color:var(--text)}
-.nav-cta{font-size:0.8125rem !important;padding:0.5rem 1rem;border-radius:6px;background:var(--text);color:var(--bg) !important;font-weight:600 !important;transition:opacity .2s}
-.nav-cta:hover{opacity:0.85;color:var(--bg) !important}
-.theme-toggle{width:36px;height:36px;border-radius:8px;border:1px solid var(--border);background:var(--toggle-bg);color:var(--text-secondary);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s;font-size:1rem;line-height:1}
-.theme-toggle:hover{background:var(--toggle-hover);color:var(--text);border-color:var(--border-hover)}
+/* ═══════════════ GRAIN + PROGRESS ═══════════════ */
+/* Grain is a viewport-sized, static layer. It used to be inset:-120% (≈11x the
+   pixel area) with a stepped transform animation, which repainted a huge layer
+   several times a second and was the single worst scroll-jank source. */
+.grain{position:fixed;inset:0;z-index:9997;pointer-events:none;opacity:var(--grain);
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  transition:opacity .5s}
+.progress{position:fixed;top:0;left:0;height:2px;width:100%;z-index:9996;transform:scaleX(0);
+  transform-origin:0 50%;background:linear-gradient(90deg,var(--accent),var(--violet));pointer-events:none}
 
-/* ---- HERO ---- */
-.hero{min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:clamp(6rem,12vh,10rem) clamp(1.5rem,4vw,4rem) clamp(4rem,8vh,6rem);max-width:1200px;margin:0 auto;position:relative;overflow:hidden}
-.hero::before{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:1000px;height:800px;background:radial-gradient(ellipse,var(--accent-dim) 0%,transparent 60%);pointer-events:none;opacity:0.5;animation:heroGlow 8s ease-in-out infinite}
-[data-theme="light"] .hero::before{opacity:0.2}
-.hero::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,transparent 0%,var(--bg) 100%);pointer-events:none;z-index:0}
-@keyframes heroGlow{0%,100%{opacity:0.5;transform:translate(-50%,-50%) scale(1)}50%{opacity:0.7;transform:translate(-50%,-50%) scale(1.1)}}
-.hero>*{position:relative;z-index:1}
-.hero-grid{position:absolute;inset:0;background-image:linear-gradient(var(--border) 1px,transparent 1px),linear-gradient(90deg,var(--border) 1px,transparent 1px);background-size:64px 64px;opacity:0.3;mask-image:radial-gradient(ellipse 50% 50% at 50% 50%,black 30%,transparent 70%);-webkit-mask-image:radial-gradient(ellipse 50% 50% at 50% 50%,black 30%,transparent 70%);pointer-events:none}
-.hero-badge{display:inline-flex;align-items:center;gap:0.625rem;font-family:var(--mono);font-size:0.8125rem;color:var(--accent);background:var(--accent-dim);padding:0.5rem 1.125rem;border-radius:9999px;border:1px solid rgba(0,212,255,0.15);margin-bottom:2.5rem;width:fit-content;letter-spacing:0.03em;font-weight:500;backdrop-filter:blur(8px)}
-.hero-badge .pulse{width:7px;height:7px;border-radius:50%;background:var(--accent);animation:pulse 2s ease-in-out infinite;box-shadow:0 0 8px var(--accent-glow)}
-@keyframes pulse{0%,100%{opacity:1;box-shadow:0 0 0 0 var(--accent-glow)}50%{opacity:0.7;box-shadow:0 0 0 8px transparent}}
-.hero h1{font-family:var(--mono);font-size:clamp(3rem,8vw,6rem);font-weight:700;line-height:1;letter-spacing:-0.04em;margin-bottom:2rem;max-width:900px}
-.hero h1 .accent{color:var(--accent);text-shadow:0 0 40px var(--accent-glow),0 0 80px rgba(0,212,255,0.15)}
-.hero h1 .line{display:block}
-.hero h1 .line:nth-child(2){margin-top:0.15em}
-.hero p{font-size:clamp(1.0625rem,1.8vw,1.3125rem);color:var(--text-secondary);max-width:600px;line-height:1.75;margin-bottom:3rem}
-.hero-actions{display:flex;gap:1rem;flex-wrap:wrap;align-items:center;justify-content:center}
-.btn-primary{display:inline-flex;align-items:center;gap:0.5rem;padding:0.875rem 2rem;border-radius:8px;background:var(--text);color:var(--bg);font-weight:600;font-size:1rem;transition:all .2s;border:none;cursor:pointer;font-family:var(--sans);box-shadow:var(--shadow-md)}
-.btn-primary:hover{opacity:0.9;transform:translateY(-2px);box-shadow:var(--shadow-lg)}
-.btn-secondary{display:inline-flex;align-items:center;gap:0.5rem;padding:0.875rem 2rem;border-radius:8px;background:transparent;color:var(--text-secondary);font-weight:500;font-size:1rem;transition:all .2s;border:1px solid var(--border);cursor:pointer;font-family:var(--sans)}
-.btn-secondary:hover{border-color:var(--border-hover);color:var(--text);background:var(--bg-elevated)}
-.btn-secondary code{font-size:0.8125rem;background:var(--bg);padding:0.2rem 0.5rem;border-radius:4px}
-.hero-install{display:flex;align-items:center;gap:0.75rem;font-family:var(--mono);font-size:0.9375rem;color:var(--text-muted);margin-top:2.5rem;padding:0.75rem 1.25rem;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;cursor:pointer;transition:all .2s}
-.hero-install:hover{border-color:var(--border-hover);color:var(--text);background:var(--bg-elevated)}
-.hero-install .prompt{color:var(--accent)}
-.hero-install .cmd{color:var(--text-secondary)}
-.hero-install .copy{margin-left:0.75rem;font-size:0.75rem;color:var(--text-muted)}
+/* ═══════════════ CUSTOM CURSOR ═══════════════ */
+body.cursor-on,body.cursor-on a,body.cursor-on button,body.cursor-on .copyable{cursor:none}
+.cur{position:fixed;top:0;left:0;z-index:9999;pointer-events:none;border-radius:50%;
+  opacity:0;transition:opacity .3s}
+.cursor-on .cur{opacity:1}
+.cur-dot{width:5px;height:5px;background:var(--accent);margin:-2.5px 0 0 -2.5px;
+  box-shadow:0 0 10px var(--accent-glow)}
+.cur-ring{width:34px;height:34px;margin:-17px 0 0 -17px;border:1px solid #fff;
+  mix-blend-mode:difference;transition:width .3s var(--ease),height .3s var(--ease),margin .3s var(--ease),opacity .3s}
+.cur-ring.big{width:66px;height:66px;margin:-33px 0 0 -33px;background:rgba(255,255,255,.08)}
 
-/* ---- TERMINAL DEMO ---- */
-.terminal-section{padding:0 clamp(1.5rem,4vw,4rem) clamp(4rem,8vh,8rem);max-width:1200px;margin:0 auto}
-.terminal{background:#111113;border-radius:12px;overflow:hidden;box-shadow:0 0 0 1px rgba(255,255,255,0.06),var(--shadow-lg);max-width:720px;margin:0 auto;color:#e4e4e7}
-.terminal-bar{display:flex;align-items:center;gap:0.5rem;padding:0.75rem 1rem;background:#18181b;border-bottom:1px solid rgba(255,255,255,0.06)}
-.terminal-dot{width:10px;height:10px;border-radius:50%}
-.terminal-dot.r{background:#ff5f57}.terminal-dot.y{background:#febc2e}.terminal-dot.g{background:#28c840}
-.terminal-title{font-family:var(--mono);font-size:0.75rem;color:#71717a;margin-left:0.5rem}
-.terminal-body{padding:1.25rem;font-family:var(--mono);font-size:0.8125rem;line-height:1.8;min-height:260px}
-.terminal-line{opacity:0;transform:translateY(4px);animation:termFadeIn .3s ease forwards}
-.terminal-line .ts{color:#71717a}
-.terminal-line .ok{color:#22c55e}
-.terminal-line .warn{color:#f59e0b}
-.terminal-line .err{color:#ef4444}
-.terminal-line .dim{color:#71717a}
-.terminal-line .accent{color:#00d4ff}
-@keyframes termFadeIn{to{opacity:1;transform:translateY(0)}}
+/* ═══════════════ PRELOADER ═══════════════ */
+.pre{position:fixed;inset:0;z-index:9995;background:var(--bg);display:flex;
+  align-items:flex-end;justify-content:space-between;padding:var(--pad);
+  font-family:var(--mono);transition:transform 1s var(--ease)}
+.pre.done{transform:translateY(-101%)}
+.pre-word{font-family:var(--display);font-size:clamp(2rem,7vw,5rem);letter-spacing:-0.05em;
+  font-weight:700;line-height:.9;overflow:hidden}
+.pre-word span{display:block;transform:translateY(105%);transition:transform .9s var(--ease) .1s}
+.pre.in .pre-word span{transform:translateY(0)}
+.pre-num{font-size:clamp(2rem,7vw,5rem);font-weight:500;letter-spacing:-0.04em;color:var(--ink-3);
+  font-variant-numeric:tabular-nums;line-height:.9}
+.pre-bar{position:absolute;left:var(--pad);right:var(--pad);bottom:calc(var(--pad) + clamp(4.5rem,9vw,7rem));
+  height:1px;background:var(--line)}
+.pre-bar i{display:block;height:100%;width:0;background:var(--accent)}
 
-/* ---- STATS ---- */
-.stats{padding:clamp(4rem,8vh,8rem) clamp(1.5rem,4vw,4rem);max-width:1200px;margin:0 auto}
-.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow-border)}
-.stat{background:var(--bg-card);padding:2rem;text-align:center}
-.stat .number{font-family:var(--mono);font-size:clamp(1.75rem,3vw,2.5rem);font-weight:700;letter-spacing:-0.02em;color:var(--text);margin-bottom:0.25rem}
-.stat .number .unit{font-size:0.5em;color:var(--accent);font-weight:500}
-.stat .label{font-size:0.8125rem;color:var(--text-muted);font-weight:500}
+/* ═══════════════ NAV ═══════════════ */
+nav{position:fixed;top:0;left:0;right:0;z-index:900;height:68px;padding:0 var(--pad);
+  display:flex;align-items:center;justify-content:space-between;
+  transition:transform .5s var(--ease),background .4s,border-color .4s;
+  border-bottom:1px solid transparent}
+nav.solid{background:var(--nav-bg);backdrop-filter:blur(9px);border-bottom-color:var(--line)}
+nav.hide{transform:translateY(-100%)}
+.brand{display:flex;align-items:center;gap:.55rem;font-family:var(--mono);font-weight:700;
+  font-size:1rem;letter-spacing:-0.02em}
+.brand i{width:7px;height:7px;border-radius:50%;background:var(--accent);
+  box-shadow:0 0 10px var(--accent-glow);animation:beat 2.4s ease-in-out infinite}
+@keyframes beat{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.55;transform:scale(.82)}}
+.nav-r{display:flex;align-items:center;gap:clamp(1rem,2.2vw,2.1rem)}
+.nav-r a.nl{font-family:var(--mono);font-size:.75rem;letter-spacing:.04em;text-transform:uppercase;
+  color:var(--ink-2);position:relative;padding:.2rem 0}
+.nav-r a.nl::after{content:'';position:absolute;left:0;bottom:0;width:100%;height:1px;
+  background:currentColor;transform:scaleX(0);transform-origin:0 50%;transition:transform .45s var(--ease)}
+.nav-r a.nl:hover{color:var(--ink)}
+.nav-r a.nl:hover::after{transform:scaleX(1)}
+.nav-r a.nl i{color:var(--ink-3);margin-right:.35rem}
+.ghub{font-family:var(--mono);font-size:.75rem;font-weight:500;letter-spacing:.02em;
+  padding:.5rem 1rem;border-radius:100px;background:var(--ink);color:var(--bg);
+  display:flex;align-items:center;gap:.4rem;transition:transform .3s var(--ease),opacity .3s}
+.ghub:hover{transform:translateY(-2px);opacity:.9}
+.tt{width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:transparent;
+  color:var(--ink-2);display:grid;place-items:center;transition:all .3s var(--ease)}
+.tt:hover{border-color:var(--line-2);color:var(--ink);transform:rotate(35deg)}
 
-/* ---- SECTIONS ---- */
-section{padding:clamp(4rem,8vh,8rem) clamp(1.5rem,4vw,4rem);max-width:1200px;margin:0 auto}
-.section-label{font-family:var(--mono);font-size:0.75rem;color:var(--accent);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:1rem;display:flex;align-items:center;gap:0.5rem}
-.section-label::before{content:'';width:16px;height:1px;background:var(--accent)}
-.section-title{font-family:var(--mono);font-size:clamp(1.75rem,3.5vw,2.5rem);font-weight:700;letter-spacing:-0.02em;line-height:1.15;margin-bottom:0.75rem}
-.section-desc{color:var(--text-secondary);font-size:1.0625rem;max-width:560px;line-height:1.7}
+/* ═══════════════ HERO ═══════════════ */
+.hero{position:relative;min-height:100svh;display:flex;flex-direction:column;
+  justify-content:center;padding:7rem var(--pad) 5.5rem;overflow:hidden}
+.hero-bg{position:absolute;inset:0;pointer-events:none;z-index:0}
+.hero-bg .orb{position:absolute;top:38%;left:50%;width:min(1250px,150vw);height:min(880px,110vh);
+  transform:translate(-50%,-50%);border-radius:50%;
+  background:radial-gradient(ellipse at center,var(--accent-dim) 0%,transparent 62%);
+  animation:orb 11s ease-in-out infinite}
+@keyframes orb{0%,100%{opacity:.75;transform:translate(-50%,-50%) scale(1)}
+  50%{opacity:1;transform:translate(-50%,-50%) scale(1.13)}}
+.hero-bg .mesh{position:absolute;inset:0;opacity:.5;
+  background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);
+  background-size:clamp(48px,7vw,90px) clamp(48px,7vw,90px);
+  mask-image:radial-gradient(ellipse 62% 58% at 50% 45%,#000 20%,transparent 72%);
+  -webkit-mask-image:radial-gradient(ellipse 62% 58% at 50% 45%,#000 20%,transparent 72%)}
+.hero-in{position:relative;z-index:1;width:100%;max-width:1500px;margin:0 auto;will-change:transform,opacity}
+.eyebrow{display:flex;flex-wrap:wrap;align-items:center;gap:.6rem;max-width:100%;
+  font-family:var(--mono);font-size:clamp(.63rem,1.7vw,.72rem);
+  letter-spacing:.11em;text-transform:uppercase;color:var(--ink-2);margin-bottom:clamp(1.5rem,4vh,3rem)}
+.eyebrow b{width:6px;height:6px;border-radius:50%;background:var(--accent);
+  box-shadow:0 0 8px var(--accent-glow);animation:beat 2s ease-in-out infinite}
+.eyebrow s{text-decoration:none;color:var(--ink-3)}
+h1.kinetic{font-size:clamp(2.3rem,9.6vw,9rem);line-height:.86;letter-spacing:-0.055em;
+  text-transform:uppercase;margin-bottom:clamp(1.75rem,4vh,2.75rem)}
+h1.kinetic .ln{display:block}
+h1.kinetic .ln.pad{padding-left:clamp(0px,8vw,10rem)}
+h1.kinetic em{font-style:normal;color:var(--accent);text-shadow:0 0 60px var(--accent-glow)}
+h1.kinetic .thin{font-weight:400;font-family:var(--display);letter-spacing:-0.04em;
+  text-transform:none;font-size:.42em;color:var(--ink-2);display:inline-block;
+  vertical-align:baseline;padding-left:.15em}
+.hero-foot{display:flex;flex-wrap:wrap;gap:clamp(1.5rem,4vw,4rem);align-items:flex-end;
+  justify-content:space-between;border-top:1px solid var(--line);padding-top:1.75rem}
+.hero-foot p{font-size:clamp(.95rem,1.35vw,1.12rem);color:var(--ink-2);max-width:min(44ch,100%);line-height:1.65}
+.hero-cta{display:flex;flex-wrap:wrap;gap:.7rem;align-items:center}
+.btn{display:inline-flex;align-items:center;gap:.55rem;padding:.9rem 1.6rem;border-radius:100px;
+  font-family:var(--mono);font-size:.8rem;font-weight:500;letter-spacing:.02em;border:1px solid transparent;
+  transition:transform .35s var(--ease),background .3s,color .3s,border-color .3s;white-space:nowrap}
+.btn-fill{background:var(--ink);color:var(--bg)}
+.btn-fill:hover{transform:translateY(-3px)}
+.btn-ghost{border-color:var(--line-2);color:var(--ink-2)}
+.btn-ghost:hover{border-color:var(--ink);color:var(--ink);transform:translateY(-3px)}
+.copyable{display:inline-flex;align-items:center;gap:.7rem;padding:.9rem 1.35rem;border-radius:100px;
+  border:1px solid var(--line);background:var(--surface);font-family:var(--mono);font-size:.8rem;
+  color:var(--ink-2);transition:border-color .3s,transform .35s var(--ease)}
+.copyable:hover{border-color:var(--line-2);transform:translateY(-3px)}
+.copyable .p{color:var(--accent)}
+.copyable .c{color:var(--ink)}
+.copyable .hint{font-size:.66rem;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+.scroll-cue{position:absolute;left:50%;bottom:1.5rem;transform:translateX(-50%);z-index:2;
+  font-family:var(--mono);font-size:.62rem;letter-spacing:.22em;text-transform:uppercase;
+  color:var(--ink-3);display:flex;flex-direction:column;align-items:center;gap:.6rem}
+.scroll-cue i{display:block;width:1px;height:38px;background:linear-gradient(var(--ink-3),transparent);
+  animation:cue 2.1s ease-in-out infinite}
+@keyframes cue{0%,100%{transform:scaleY(.35);opacity:.4}50%{transform:scaleY(1);opacity:1}}
 
-/* ---- BENTO GRID ---- */
-.bento{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:auto;gap:1px;background:var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow-border),var(--shadow-md)}
-.bento-card{background:var(--bg-card);padding:1.75rem;display:flex;flex-direction:column;gap:0.75rem;transition:background .3s}
-.bento-card:hover{background:var(--bg-elevated)}
-.bento-card.wide{grid-column:span 2}
-.bento-card.tall{grid-row:span 2}
-.bento-icon{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:1rem;flex-shrink:0}
-.bento-icon.cyan{background:var(--accent-dim);color:var(--accent)}
-.bento-icon.green{background:var(--green-dim);color:var(--green)}
-.bento-icon.red{background:var(--red-dim);color:var(--red)}
-.bento-icon.amber{background:var(--amber-dim);color:var(--amber)}
-.bento-card h3{font-family:var(--mono);font-size:0.9375rem;font-weight:600;letter-spacing:-0.01em}
-.bento-card p{font-size:0.875rem;color:var(--text-secondary);line-height:1.6}
-.bento-code{font-family:var(--mono);font-size:0.75rem;background:var(--bg);padding:0.75rem 1rem;border-radius:6px;border:1px solid var(--border);color:var(--text-secondary);line-height:1.7;overflow-x:auto;margin-top:auto}
-.bento-code .kw{color:var(--accent)}
-.bento-code .str{color:var(--green)}
-.bento-code .cmt{color:var(--text-muted)}
+/* ═══════════════ MARQUEE ═══════════════ */
+.marquee{border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+  overflow:hidden;padding:1.1rem 0;background:var(--surface);display:flex}
+.marquee-in{display:flex;flex-shrink:0;gap:2.5rem;padding-right:2.5rem;
+  animation:mq 34s linear infinite;will-change:transform}
+.marquee:hover .marquee-in{animation-play-state:paused}
+@keyframes mq{to{transform:translateX(-100%)}}
+.marquee span{font-family:var(--mono);font-size:.78rem;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--ink-2);white-space:nowrap;display:flex;align-items:center;gap:2.5rem}
+.marquee span::after{content:'';width:5px;height:5px;border-radius:50%;background:var(--accent);opacity:.55}
 
-/* ---- DETectors TABLE ---- */
-.detectors{margin-top:3rem}
-.detector-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow-border);margin-top:2.5rem}
-.detector{background:var(--bg-card);padding:2rem;display:flex;flex-direction:column;gap:1rem}
-.detector-name{font-family:var(--mono);font-weight:600;font-size:1rem;display:flex;align-items:center;gap:0.5rem}
-.detector-name .tag{font-size:0.6875rem;padding:0.2rem 0.5rem;border-radius:4px;font-weight:500}
-.tag-loop{background:var(--accent-dim);color:var(--accent)}
-.tag-cascade{background:var(--red-dim);color:var(--red)}
-.tag-latency{background:var(--amber-dim);color:var(--amber)}
-.detector p{font-size:0.875rem;color:var(--text-secondary);line-height:1.6}
-.detector-algo{font-family:var(--mono);font-size:0.75rem;color:var(--text-muted);margin-top:auto;padding-top:1rem;border-top:1px solid var(--border)}
+/* ═══════════════ SECTION FRAME ═══════════════ */
+section{padding:clamp(5rem,13vh,10rem) var(--pad);max-width:1500px;margin:0 auto;position:relative}
+.shead{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.05fr);gap:clamp(1.5rem,5vw,5rem);
+  align-items:end;margin-bottom:clamp(2.5rem,7vh,5rem)}
+.slabel{font-family:var(--mono);font-size:.7rem;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--accent);display:flex;align-items:center;gap:.7rem;margin-bottom:1.25rem}
+.slabel::before{content:'';width:clamp(18px,3vw,44px);height:1px;background:currentColor}
+h2.stitle{font-size:clamp(1.95rem,4.6vw,4rem);line-height:.98;text-transform:uppercase}
+h2.stitle em{font-style:normal;color:var(--ink-3)}
+.sdesc{font-size:clamp(.94rem,1.2vw,1.06rem);color:var(--ink-2);line-height:1.7;max-width:52ch}
 
-/* ---- CODE BLOCK ---- */
-.code-section{display:grid;grid-template-columns:1fr 1fr;gap:2.5rem;align-items:start;margin-top:2.5rem}
-.code-section>div{display:flex;flex-direction:column;gap:0.75rem}
-.code-block{background:var(--bg-card);border-radius:12px;overflow:hidden;box-shadow:var(--shadow-border),var(--shadow-md)}
-.code-block-header{display:flex;align-items:center;justify-content:space-between;padding:0.75rem 1rem;background:var(--bg-elevated);border-bottom:1px solid var(--border)}
-.code-block-title{font-family:var(--mono);font-size:0.75rem;color:var(--text-muted)}
-.code-block-lang{font-family:var(--mono);font-size:0.6875rem;color:var(--accent);background:var(--accent-dim);padding:0.15rem 0.5rem;border-radius:4px}
-.code-block pre{padding:1.25rem;font-family:var(--mono);font-size:0.8125rem;line-height:1.8;overflow-x:auto;color:var(--text-secondary)}
-.code-block pre .kw{color:var(--accent)}
-.code-block pre .fn{color:var(--code-fn)}
-.code-block pre .str{color:var(--green)}
-.code-block pre .cmt{color:var(--text-muted)}
-.code-block pre .num{color:var(--amber)}
-.code-block pre .op{color:var(--text-muted)}
+/* split-text reveal */
+.sw{display:inline-block;overflow:hidden;vertical-align:top;padding-bottom:.14em;margin-bottom:-.14em}
+.swi{display:inline-block;transform:translateY(112%);transition:transform .95s var(--ease)}
+.is-in .swi{transform:translateY(0)}
+.rv{transition:opacity .9s var(--ease),transform .9s var(--ease)}
+.js .rv{opacity:0;transform:translateY(30px)}
+.js .rv.is-in{opacity:1;transform:none}
+.rv.d1{transition-delay:.09s}.rv.d2{transition-delay:.18s}.rv.d3{transition-delay:.27s}.rv.d4{transition-delay:.36s}
 
-/* ---- INTEGRATIONS ---- */
-.integrations-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow-border);margin-top:2.5rem}
-.integration{background:var(--bg-card);padding:1.5rem;display:flex;flex-direction:column;align-items:center;gap:0.75rem;text-align:center;transition:background .3s}
-.integration:hover{background:var(--bg-elevated)}
-.integration-icon{width:48px;height:48px;display:flex;align-items:center;justify-content:center}
-.integration-icon img{width:100%;height:100%;object-fit:contain}
-[data-theme="light"] .integration-icon img{filter:brightness(0.9)}
-.integration-name{font-family:var(--mono);font-size:0.875rem;font-weight:600}
-.integration-desc{font-size:0.75rem;color:var(--text-muted);line-height:1.5}
+/* ═══════════════ LIVE (terminal + canvas) ═══════════════ */
+.live{display:grid;grid-template-columns:1.06fr .94fr;gap:1px;background:var(--line);
+  border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:0 30px 90px -30px rgba(0,0,0,.6)}
+.panel{background:var(--surface);display:flex;flex-direction:column;min-width:0}
+.panel-bar{display:flex;align-items:center;gap:.5rem;padding:.8rem 1.1rem;border-bottom:1px solid var(--line);
+  background:var(--elevated);flex-shrink:0}
+.panel-bar .d{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.panel-bar .d.r{background:#ff5f57}.panel-bar .d.y{background:#febc2e}.panel-bar .d.g{background:#28c840}
+.panel-bar h4{font-family:var(--mono);font-size:.7rem;font-weight:500;letter-spacing:.05em;
+  color:var(--ink-3);margin-left:.5rem;text-transform:uppercase}
+.panel-bar .badge{margin-left:auto;font-family:var(--mono);font-size:.62rem;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--green);display:flex;align-items:center;gap:.35rem}
+.panel-bar .badge i{width:5px;height:5px;border-radius:50%;background:var(--green);animation:beat 1.6s infinite}
+.term{padding:1.15rem;font-family:var(--mono);font-size:clamp(.66rem,.83vw,.78rem);line-height:1.85;
+  min-height:330px;overflow:hidden}
+.tl{opacity:0;transform:translateY(3px);animation:tin .35s var(--ease) forwards;white-space:nowrap}
+@keyframes tin{to{opacity:1;transform:none}}
+.tl .ts{color:var(--ink-3)}.tl .ok{color:var(--green)}.tl .wa{color:var(--amber)}
+.tl .er{color:var(--red)}.tl .dm{color:var(--ink-3)}.tl .ac{color:var(--accent)}
+.tl .vi{color:var(--violet)}
+.cv-wrap{padding:1.15rem;flex:1;display:flex;flex-direction:column;gap:.9rem;min-height:330px}
+.cv-legend{display:flex;flex-wrap:wrap;gap:1.1rem;font-family:var(--mono);font-size:.63rem;
+  letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}
+.cv-legend b{display:inline-flex;align-items:center;gap:.4rem;font-weight:400}
+.cv-legend b::before{content:'';width:14px;height:2px;border-radius:2px;background:currentColor}
+.cv-legend .s{color:var(--accent)}.cv-legend .m{color:var(--ink-2)}.cv-legend .a{color:var(--red)}
+canvas#sig{width:100%;flex:1;min-height:190px;display:block}
+.cv-read{display:flex;justify-content:space-between;gap:1rem;font-family:var(--mono);font-size:.66rem;
+  letter-spacing:.05em;color:var(--ink-3);border-top:1px solid var(--line);padding-top:.8rem}
+.cv-read b{color:var(--ink);font-weight:500}
+.cv-read .fire{color:var(--red)}
 
-/* ---- ROADMAP ---- */
-.roadmap{margin-top:3rem}
-.roadmap-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow-border);margin-top:2.5rem}
-.roadmap-item{background:var(--bg-card);padding:1.5rem 2rem;display:flex;align-items:center;gap:1rem}
-.roadmap-status{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.roadmap-status.done{background:var(--green);box-shadow:0 0 6px var(--green-dim)}
-.roadmap-status.planned{background:var(--text-muted)}
-.roadmap-text{font-family:var(--mono);font-size:0.8125rem;color:var(--text-secondary)}
-.roadmap-text.done{color:var(--text)}
+/* ═══════════════ STATS ═══════════════ */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);
+  border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.st{background:var(--bg);padding:clamp(1.5rem,4vw,2.75rem) clamp(1rem,2vw,1.75rem)}
+.st .n{font-family:var(--display);font-size:clamp(2rem,5.4vw,4.4rem);font-weight:700;
+  letter-spacing:-0.05em;line-height:.92;font-variant-numeric:tabular-nums}
+.st .n u{text-decoration:none;font-size:.32em;color:var(--accent);letter-spacing:0;
+  font-family:var(--mono);font-weight:500;padding-left:.25em;vertical-align:baseline}
+.st .l{font-family:var(--mono);font-size:.66rem;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-3);margin-top:.75rem}
 
-/* ---- PROOF ---- */
-.proof-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow-border);margin-top:2.5rem}
-.proof{background:var(--bg-card);padding:2rem;display:flex;flex-direction:column;gap:0.75rem}
-.proof-label{font-family:var(--mono);font-size:0.6875rem;color:var(--accent);text-transform:uppercase;letter-spacing:0.08em}
-.proof-text{font-size:0.9375rem;color:var(--text-secondary);line-height:1.6;font-style:italic}
-.proof-source{font-family:var(--mono);font-size:0.75rem;color:var(--text-muted)}
+/* ═══════════════ STEPS (how it works) ═══════════════ */
+.steps{border-top:1px solid var(--line)}
+.step{display:grid;grid-template-columns:clamp(3rem,7vw,7rem) minmax(0,1fr) minmax(0,1.25fr);
+  gap:clamp(1rem,3.5vw,3rem);padding:clamp(1.75rem,4.5vw,3rem) 0;border-bottom:1px solid var(--line);
+  align-items:start;transition:background .45s}
+.step:hover{background:var(--surface)}
+.step .idx{font-family:var(--mono);font-size:.75rem;letter-spacing:.08em;color:var(--ink-3);padding-top:.3rem}
+.step h3{font-size:clamp(1.15rem,2.2vw,1.85rem);letter-spacing:-0.03em;line-height:1.05}
+.step .body{display:flex;flex-direction:column;gap:1rem}
+.step p{font-size:.94rem;color:var(--ink-2);line-height:1.7;max-width:56ch}
+.chip{display:inline-flex;align-items:center;gap:.45rem;font-family:var(--mono);font-size:.64rem;
+  letter-spacing:.08em;text-transform:uppercase;padding:.3rem .6rem;border-radius:100px;
+  border:1px solid var(--line);color:var(--ink-3);width:fit-content}
+.snip{font-family:var(--mono);font-size:clamp(.66rem,.85vw,.76rem);line-height:1.85;
+  background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:.9rem 1.1rem;
+  overflow-x:auto;color:var(--ink-2)}
+.step:hover .snip{border-color:var(--line-2)}
+.kw{color:var(--accent)}.str{color:var(--green)}.cmt{color:var(--ink-3)}
+.num{color:var(--amber)}.fn{color:var(--violet)}.op{color:var(--ink-3)}
 
-/* ---- CTA ---- */
-.cta{padding:clamp(6rem,12vh,10rem) clamp(1.5rem,4vw,4rem);text-align:center;position:relative}
-.cta::before{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:600px;height:400px;background:radial-gradient(ellipse,var(--accent-dim) 0%,transparent 70%);pointer-events:none;opacity:0.3}
-[data-theme="light"] .cta::before{opacity:0.2}
-.cta h2{font-family:var(--mono);font-size:clamp(2rem,4vw,3rem);font-weight:700;letter-spacing:-0.03em;margin-bottom:1rem;position:relative}
-.cta p{color:var(--text-secondary);font-size:1.0625rem;margin-bottom:2.5rem;position:relative}
-.cta-actions{display:flex;gap:1rem;justify-content:center;flex-wrap:wrap;position:relative}
-.cta-install{font-family:var(--mono);font-size:0.875rem;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:0.75rem 1.25rem;color:var(--text-secondary);display:flex;align-items:center;gap:0.75rem;cursor:pointer;transition:all .2s}
-.cta-install:hover{border-color:var(--border-hover);background:var(--bg-elevated)}
-.cta-install .prompt{color:var(--accent)}
-.cta-install .cmd{color:var(--text)}
-.cta-install .copy{color:var(--text-muted);margin-left:auto;font-size:0.75rem}
+/* ═══════════════ DETECTOR TRACK (pinned horizontal) ═══════════════ */
+.track-wrap{position:relative}
+.track-sticky{position:sticky;top:0;height:100svh;overflow:hidden;display:flex;flex-direction:column;
+  justify-content:center}
+.track-head{padding:0 var(--pad);max-width:1500px;margin:0 auto 2rem;width:100%}
+.track-rail{display:flex;gap:clamp(1rem,2.2vw,2.25rem);padding:0 var(--pad);will-change:transform}
+.dcard{flex:0 0 min(80vw,470px);background:var(--surface);border:1px solid var(--line);
+  border-radius:14px;padding:clamp(1.4rem,2.6vw,2.1rem);display:flex;flex-direction:column;
+  gap:1rem;min-height:min(56vh,430px);transition:border-color .4s,transform .5s var(--ease)}
+.dcard:hover{border-color:var(--line-2);transform:translateY(-6px)}
+.dcard .top{display:flex;align-items:center;justify-content:space-between;gap:1rem}
+.dcard .no{font-family:var(--mono);font-size:.68rem;letter-spacing:.1em;color:var(--ink-3)}
+.tag{font-family:var(--mono);font-size:.63rem;letter-spacing:.07em;padding:.28rem .6rem;
+  border-radius:100px;font-weight:500}
+.tag.loop{background:var(--accent-dim);color:var(--accent)}
+.tag.casc{background:var(--red-dim);color:var(--red)}
+.tag.lat{background:var(--amber-dim);color:var(--amber)}
+.tag.drift{background:var(--violet-dim);color:var(--violet)}
+.tag.ml{background:var(--green-dim);color:var(--green)}
+.dcard h3{font-size:clamp(1.2rem,2vw,1.6rem);letter-spacing:-0.03em;line-height:1.05}
+.dcard p{font-size:.9rem;color:var(--ink-2);line-height:1.7}
+.dcard .algo{margin-top:auto;padding-top:1.1rem;border-top:1px solid var(--line);
+  font-family:var(--mono);font-size:.68rem;letter-spacing:.02em;color:var(--ink-3);line-height:1.6}
+.track-note{padding:1.5rem var(--pad) 0;max-width:1500px;margin:0 auto;width:100%;
+  font-family:var(--mono);font-size:.65rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);
+  display:flex;align-items:center;gap:.7rem}
+.track-note b{flex:1;height:1px;background:var(--line);max-width:180px}
 
-/* ---- FOOTER ---- */
-footer{border-top:1px solid var(--border);padding:3rem clamp(1.5rem,4vw,4rem);max-width:1200px;margin:0 auto;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:1rem}
-.footer-left{font-family:var(--mono);font-size:0.8125rem;color:var(--text-muted)}
-.footer-links{display:flex;gap:1.5rem}
-.footer-links a{font-size:0.8125rem;color:var(--text-muted);transition:color .2s}
-.footer-links a:hover{color:var(--text)}
+/* ═══════════════ CODE PAIR ═══════════════ */
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:clamp(1rem,2.5vw,2rem)}
+.code{background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden;
+  transition:border-color .4s,transform .5s var(--ease);display:flex;flex-direction:column}
+.code:hover{border-color:var(--line-2);transform:translateY(-5px)}
+.code-h{display:flex;align-items:center;justify-content:space-between;padding:.75rem 1.1rem;
+  background:var(--elevated);border-bottom:1px solid var(--line)}
+.code-h .f{font-family:var(--mono);font-size:.7rem;color:var(--ink-3)}
+.code-h .g{font-family:var(--mono);font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent);background:var(--accent-dim);padding:.2rem .55rem;border-radius:100px}
+.code .cap{padding:1.1rem 1.1rem 0}
+.code .cap h3{font-size:1.02rem;letter-spacing:-0.02em;margin-bottom:.5rem}
+.code .cap p{font-size:.87rem;color:var(--ink-2);line-height:1.65}
+.code pre{padding:1.1rem;font-family:var(--mono);font-size:clamp(.66rem,.85vw,.76rem);
+  line-height:1.9;overflow-x:auto;color:var(--ink-2);margin-top:auto}
 
-/* ---- SCROLL REVEAL ---- */
-.reveal{opacity:0;transform:translateY(24px);transition:opacity .6s ease,transform .6s ease}
-.reveal.visible{opacity:1;transform:translateY(0)}
-.reveal-delay-1{transition-delay:.1s}
-.reveal-delay-2{transition-delay:.2s}
-.reveal-delay-3{transition-delay:.3s}
+/* ═══════════════ FEATURE / SINK GRID ═══════════════ */
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);
+  border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.cell{background:var(--surface);padding:clamp(1.35rem,2.6vw,2rem);display:flex;flex-direction:column;
+  gap:.7rem;transition:background .4s}
+.cell:hover{background:var(--elevated)}
+.cell .ic{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;font-family:var(--mono);
+  font-size:.85rem;font-weight:700;flex-shrink:0;margin-bottom:.3rem}
+.ic.cy{background:var(--accent-dim);color:var(--accent)}.ic.gr{background:var(--green-dim);color:var(--green)}
+.ic.am{background:var(--amber-dim);color:var(--amber)}.ic.rd{background:var(--red-dim);color:var(--red)}
+.ic.vi{background:var(--violet-dim);color:var(--violet)}
+.cell h3{font-family:var(--mono);font-size:.9rem;font-weight:600;letter-spacing:-0.01em}
+.cell p{font-size:.87rem;color:var(--ink-2);line-height:1.65}
+.cell code{font-family:var(--mono);font-size:.72rem;color:var(--accent)}
 
-/* ---- RESPONSIVE ---- */
-@media(max-width:768px){
-  .stats-grid{grid-template-columns:repeat(2,1fr)}
-  .bento{grid-template-columns:1fr}
-  .bento-card.wide{grid-column:span 1}
-  .detector-grid{grid-template-columns:1fr}
-  .code-section{grid-template-columns:1fr}
-  .integrations-grid{grid-template-columns:repeat(2,1fr)}
-  .roadmap-grid{grid-template-columns:1fr}
-  .proof-grid{grid-template-columns:1fr}
-  .nav-links{display:none}
+/* ═══════════════ ROWS (integrations) ═══════════════ */
+.rows{border-top:1px solid var(--line)}
+.rgroup{font-family:var(--mono);font-size:.66rem;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--ink-3);padding:1.6rem 0 .7rem}
+.row{display:grid;grid-template-columns:clamp(2.5rem,5vw,4.5rem) minmax(0,1.1fr) minmax(0,1.5fr) clamp(7rem,12vw,11.5rem);
+  gap:clamp(.75rem,2.5vw,2rem);align-items:center;padding:clamp(1rem,2.2vw,1.4rem) 0;
+  border-bottom:1px solid var(--line);position:relative;transition:padding .4s var(--ease)}
+.row::before{content:'';position:absolute;inset:0 calc(var(--pad) * -0.4);background:var(--surface);
+  opacity:0;transition:opacity .4s;z-index:-1;border-radius:8px}
+.row:hover::before{opacity:1}
+.row:hover{padding-left:.6rem}
+.row .no{font-family:var(--mono);font-size:.7rem;color:var(--ink-3)}
+.row .nm{display:flex;align-items:center;gap:.7rem;font-family:var(--display);font-weight:500;
+  font-size:clamp(1rem,1.7vw,1.35rem);letter-spacing:-0.025em}
+.row .nm i{width:5px;height:5px;border-radius:50%;background:var(--ink-3);flex-shrink:0;
+  transition:background .35s,box-shadow .35s}
+.row:hover .nm i{background:var(--accent);box-shadow:0 0 8px var(--accent-glow)}
+.row .ds{font-size:.87rem;color:var(--ink-2);line-height:1.6}
+.row .mt{font-family:var(--mono);font-size:.66rem;letter-spacing:.05em;color:var(--ink-3);
+  white-space:nowrap;text-align:right}
+.row .mt.ship{color:var(--green)}
+
+/* ═══════════════ EVIDENCE ═══════════════ */
+.ev{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--line);
+  border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.evc{background:var(--surface);padding:clamp(1.5rem,3vw,2.35rem);display:flex;flex-direction:column;gap:1rem;
+  transition:background .4s}
+.evc:hover{background:var(--elevated)}
+.evc .lb{font-family:var(--mono);font-size:.66rem;letter-spacing:.11em;text-transform:uppercase;color:var(--accent)}
+.evc q{font-size:clamp(.95rem,1.25vw,1.08rem);color:var(--ink);line-height:1.65;quotes:none;
+  font-family:var(--display);font-weight:400;letter-spacing:-0.015em}
+.evc .src{font-family:var(--mono);font-size:.68rem;color:var(--ink-3);margin-top:auto;
+  padding-top:.9rem;border-top:1px solid var(--line)}
+
+/* ═══════════════ ROADMAP ═══════════════ */
+.rm{display:grid;grid-template-columns:repeat(2,1fr);column-gap:clamp(1.5rem,4vw,4rem)}
+.rmi{display:flex;align-items:center;gap:.9rem;padding:.85rem 0;border-bottom:1px solid var(--line);
+  font-family:var(--mono);font-size:.8rem;color:var(--ink-2);transition:color .3s}
+.rmi:hover{color:var(--ink)}
+.rmi .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;background:var(--green);
+  box-shadow:0 0 8px var(--green-dim)}
+.rmi .dot.part{background:var(--amber);box-shadow:0 0 8px var(--amber-dim)}
+.rmi .ph{color:var(--ink-3);font-size:.7rem;min-width:1.8rem}
+.rmi .tx{flex:1}
+.rmi .tx b{color:var(--ink);font-weight:500}
+.rmi .st2{font-size:.65rem;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+
+/* ═══════════════ CTA + FOOTER ═══════════════ */
+.cta{position:relative;text-align:center;padding:clamp(6rem,16vh,12rem) var(--pad);overflow:hidden}
+.cta .orb2{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:min(820px,130vw);
+  height:min(520px,70vh);border-radius:50%;pointer-events:none;
+  background:radial-gradient(ellipse at center,var(--accent-dim) 0%,transparent 68%)}
+.cta h2{position:relative;font-size:clamp(2.1rem,7.5vw,6.2rem);line-height:.92;text-transform:uppercase;
+  letter-spacing:-0.05em;margin-bottom:1.35rem}
+.cta p{position:relative;color:var(--ink-2);font-size:1.02rem;margin-bottom:2.5rem}
+.cta-row{position:relative;display:flex;gap:.7rem;justify-content:center;flex-wrap:wrap}
+footer{border-top:1px solid var(--line);padding:2.75rem var(--pad);max-width:1500px;margin:0 auto;
+  display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:1.5rem}
+.f-l{font-family:var(--mono);font-size:.72rem;color:var(--ink-3);letter-spacing:.04em}
+.f-r{display:flex;gap:clamp(1rem,2.5vw,2rem);flex-wrap:wrap}
+.f-r a{font-family:var(--mono);font-size:.72rem;color:var(--ink-3);letter-spacing:.04em;
+  position:relative;transition:color .3s}
+.f-r a:hover{color:var(--ink)}
+
+/* ═══════════════ RESPONSIVE ═══════════════ */
+@media(max-width:1000px){
+  .live{grid-template-columns:1fr}
+  .shead{grid-template-columns:1fr;align-items:start}
+  .pair{grid-template-columns:1fr}
+  .grid3{grid-template-columns:1fr}
+  .ev{grid-template-columns:1fr}
+  .rm{grid-template-columns:1fr}
+  .step{grid-template-columns:2.5rem 1fr}
+  .step .body{grid-column:1 / -1}
+  .row{grid-template-columns:2.5rem 1fr auto;row-gap:.4rem}
+  .row .ds{grid-column:2 / -1}
+  .nav-r a.nl{display:none}
+}
+@media(max-width:760px){
+  .stats{grid-template-columns:repeat(2,1fr)}
+  .track-sticky{position:static;height:auto;padding:0}
+  .track-rail{flex-direction:column;gap:1rem;transform:none !important;padding:0 var(--pad)}
+  .dcard{flex:1 1 auto;min-height:0}
+  .track-note{display:none}
+  .hero-foot{flex-direction:column;align-items:stretch}
+  h1.kinetic .ln.pad{padding-left:0}
+}
+
+/* ═══════════════ REDUCED MOTION ═══════════════ */
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001s !important;animation-iteration-count:1 !important;
+    transition-duration:.001s !important;scroll-behavior:auto !important}
+  .swi{transform:none !important}
+  .rv{opacity:1 !important;transform:none !important}
+  .grain{animation:none}
+  .marquee-in{animation:none}
+  .pre{display:none}
 }
 </style>
+<script>document.documentElement.classList.add('js');</script>
 </head>
 <body>
 
-<!-- NAV -->
-<nav>
-  <div class="nav-logo"><span class="dot"></span>SNAGLINE</div>
-  <div class="nav-links">
-    <a href="#detectors">Detectors</a>
-    <a href="#features">Features</a>
-    <a href="#integrations">Integrations</a>
-    <a href="#roadmap">Roadmap</a>
-    <a href="https://github.com/Cyrax321/SNAGLINE" class="nav-cta">GitHub</a>
-    <button class="theme-toggle" id="theme-toggle" aria-label="Toggle theme" title="Toggle light/dark mode"></button>
+<!-- ░░ OVERLAYS ░░ -->
+<div class="grain" aria-hidden="true"></div>
+<div class="progress" id="prog" aria-hidden="true"></div>
+<div class="cur cur-ring" id="ring" aria-hidden="true"></div>
+<div class="cur cur-dot" id="dot" aria-hidden="true"></div>
+
+<!-- ░░ PRELOADER ░░ -->
+<div class="pre" id="pre" aria-hidden="true">
+  <div class="pre-word"><span>SNAGLINE</span></div>
+  <div class="pre-bar"><i id="preBar"></i></div>
+  <div class="pre-num" id="preNum">00</div>
+</div>
+
+<!-- ░░ NAV ░░ -->
+<nav id="nav">
+  <a href="#top" class="brand"><i></i>SNAGLINE</a>
+  <div class="nav-r">
+    <a href="#how-it-works" class="nl"><i>01</i>How</a>
+    <a href="#detectors" class="nl"><i>02</i>Detectors</a>
+    <a href="#integrations" class="nl"><i>04</i>Integrations</a>
+    <a href="#evidence" class="nl"><i>06</i>Evidence</a>
+    <a href="https://github.com/Cyrax321/SNAGLINE" class="ghub" data-mag>GitHub ↗</a>
+    <button class="tt" id="tt" aria-label="Toggle colour theme" title="Toggle colour theme"></button>
   </div>
 </nav>
 
-<!-- HERO -->
-<section class="hero">
-  <div class="hero-grid"></div>
-  <div class="hero-badge"><span class="pulse"></span> Open source / Zero dependencies / 1.9 us per step</div>
-  <h1>
-    <span class="line">Catch agent failures</span>
-    <span class="line">before they <span class="accent">cascade.</span></span>
-  </h1>
-  <p>SNAGLINE watches your AI agent's execution stream and flags loops, error cascades, and latency drift in real time. Zero dependencies. Never crashes the thing it monitors.</p>
-  <div class="hero-actions">
-    <button class="btn-primary" onclick="document.getElementById('install').scrollIntoView({behavior:'smooth'})">Get started</button>
-    <button class="btn-secondary" onclick="document.getElementById('how-it-works').scrollIntoView({behavior:'smooth'})">How it works</button>
-  </div>
-  <div class="hero-install" onclick="navigator.clipboard.writeText('pip install .')">
-    <span class="prompt">$</span>
-    <span class="cmd">pip install .</span>
-    <span class="copy">click to copy</span>
-  </div>
-</section>
-
-<!-- TERMINAL DEMO -->
-<div class="terminal-section reveal">
-  <div class="terminal">
-    <div class="terminal-bar">
-      <div class="terminal-dot r"></div>
-      <div class="terminal-dot y"></div>
-      <div class="terminal-dot g"></div>
-      <span class="terminal-title">agent-monitor -- episode ep-001</span>
+<!-- ░░ HERO ░░ -->
+<header class="hero" id="top">
+  <div class="hero-bg" aria-hidden="true"><div class="mesh"></div><div class="orb"></div></div>
+  <div class="hero-in" id="heroIn">
+    <div class="eyebrow rv"><b></b> Open source <s>/</s> Zero dependencies <s>/</s> 2.08&#181;s per step</div>
+    <h1 class="kinetic" data-split>
+      <span class="ln">Catch agent</span>
+      <span class="ln pad">failures before</span>
+      <span class="ln">they <em>cascade.</em></span>
+    </h1>
+    <div class="hero-foot">
+      <p class="rv d1">SNAGLINE watches your agent's execution stream and flags loops, error cascades,
+        latency drift and goal drift in real time. Zero required dependencies. It can never crash or
+        stall the agent it monitors.</p>
+      <div class="hero-cta rv d2">
+        <a href="#install" class="btn btn-fill" data-mag>Get started →</a>
+        <button class="copyable" data-copy="pip install ." data-mag>
+          <span class="p">$</span><span class="c">pip install .</span><span class="hint">copy</span>
+        </button>
+      </div>
     </div>
-    <div class="terminal-body" id="terminal-body"></div>
   </div>
-</div>
+  <div class="scroll-cue" aria-hidden="true">scroll<i></i></div>
+</header>
 
-<!-- STATS -->
-<div class="stats reveal">
-  <div class="stats-grid">
-    <div class="stat"><div class="number">1.9<span class="unit"> us</span></div><div class="label">Median per step</div></div>
-    <div class="stat"><div class="number">78<span class="unit"> / 0</span></div><div class="label">Tests passing / failing</div></div>
-    <div class="stat"><div class="number">0</div><div class="label">Dependencies required</div></div>
-    <div class="stat"><div class="number">3</div><div class="label">Detectors built in</div></div>
+<!-- ░░ MARQUEE ░░ -->
+<div class="marquee" aria-hidden="true">
+  <div class="marquee-in">
+    <span>Loop detection</span><span>Error cascades</span><span>Latency CUSUM</span>
+    <span>Goal drift</span><span>ML ensemble</span><span>Fail-open by construction</span>
+    <span>O(1) per step</span><span>No content retention</span>
+  </div>
+  <div class="marquee-in">
+    <span>Loop detection</span><span>Error cascades</span><span>Latency CUSUM</span>
+    <span>Goal drift</span><span>ML ensemble</span><span>Fail-open by construction</span>
+    <span>O(1) per step</span><span>No content retention</span>
   </div>
 </div>
 
-<!-- HOW IT WORKS -->
-<section id="how-it-works">
-  <div class="section-label reveal">How it works</div>
-  <h2 class="section-title reveal">Monitoring that stays out of your way.</h2>
-  <p class="section-desc reveal">A thin adapter normalizes your agent's events into a canonical schema. The monitor runs deterministic detectors on every step. Alerts go to sinks. Nothing calls an LLM, nothing reads content, nothing blocks.</p>
-
-  <div class="bento reveal">
-    <div class="bento-card wide">
-      <div class="bento-icon cyan">1</div>
-      <h3>Adapter normalizes events</h3>
-      <p>Raw Python loop, LangChain callback, LangGraph stream, or HTTP sidecar. Framework-specific code stays isolated in adapter modules.</p>
-      <div class="bento-code"><span class="kw">with</span> watch(monitor, <span class="str">"ep-1"</span>) <span class="kw">as</span> step:<br>&nbsp;&nbsp;step(<span class="str">"tool_call"</span>, tool_name=<span class="str">"search"</span>, latency_ms=<span class="num">120</span>)</div>
+<!-- ░░ LIVE ░░ -->
+<section style="padding-top:clamp(3.5rem,9vh,6rem)">
+  <div class="live rv">
+    <div class="panel">
+      <div class="panel-bar">
+        <span class="d r"></span><span class="d y"></span><span class="d g"></span>
+        <h4>snagline watch &middot; ep-001</h4>
+        <span class="badge"><i></i>live</span>
+      </div>
+      <div class="term" id="term"></div>
     </div>
-    <div class="bento-card">
-      <div class="bento-icon green">2</div>
-      <h3>Monitor runs detectors</h3>
-      <p>Every registered detector sees every event. O(1) amortized. No network calls, no LLM calls.</p>
-    </div>
-    <div class="bento-card wide">
-      <div class="bento-icon amber">3</div>
-      <h3>FailureRisk dispatched to sinks</h3>
-      <p>If a detector fires, the risk goes to every registered sink. Console, webhook, or your own. Only risk fields are transmitted, never content.</p>
-      <div class="bento-code">{"episode_id":"ep-1","score":0.5,"trigger":"loop",<br>&nbsp;&nbsp;"detail":"action repeated 3x in last 3 steps"}</div>
-    </div>
-    <div class="bento-card">
-      <div class="bento-icon red">4</div>
-      <h3>Fail-open by construction</h3>
-      <p>Detector exceptions are caught and logged. Sink exceptions are caught and logged. The agent never stalls.</p>
-    </div>
-  </div>
-</section>
-
-<!-- DETECTORS -->
-<section id="detectors" class="detectors">
-  <div class="section-label reveal">Detectors</div>
-  <h2 class="section-title reveal">Three failure modes. Deterministic detection.</h2>
-  <p class="section-desc reveal">Each detector is a protocol: observe an event, return a risk or nothing. No magic, no ML, no embeddings. Just sliding windows and running statistics.</p>
-
-  <div class="detector-grid reveal">
-    <div class="detector">
-      <div class="detector-name"><span class="tag tag-loop">loop</span> Loop detector</div>
-      <p>Catches retry storms and stuck agents. Sliding window of action signatures. If the same signature repeats N times within W steps, it fires.</p>
-      <div class="detector-algo">Sliding window + SHA-256 signature matching</div>
-    </div>
-    <div class="detector">
-      <div class="detector-name"><span class="tag tag-cascade">cascade</span> Error cascade detector</div>
-      <p>Catches fast cascades and slow-burn degradations. Two modes: N consecutive errors, or N errors within a recent window.</p>
-      <div class="detector-algo">Consecutive counter + windowed counter</div>
-    </div>
-    <div class="detector">
-      <div class="detector-name"><span class="tag tag-latency">latency</span> Latency anomaly detector</div>
-      <p>Catches sustained performance regression. Welford running mean and variance per tool, frozen baseline, CUSUM statistic. Warm-up prevents false positives.</p>
-      <div class="detector-algo">Welford + Page CUSUM + frozen baseline</div>
-    </div>
-  </div>
-</section>
-
-<!-- FEATURES CODE -->
-<section id="features">
-  <div class="section-label reveal">Features</div>
-  <h2 class="section-title reveal">Built for production agents.</h2>
-  <p class="section-desc reveal">Zero dependencies. Sensible defaults. Override what you need, ignore the rest.</p>
-
-  <div class="code-section reveal">
-    <div>
-      <h3 style="font-family:var(--mono);font-size:1rem;margin-bottom:0.75rem">Zero config, works today</h3>
-      <p style="color:var(--text-secondary);font-size:0.9375rem;line-height:1.7;margin-bottom:1.5rem">Sensible defaults out of the box. Override thresholds when you need to. Every tunable knob lives in one dataclass.</p>
-      <div class="code-block">
-        <div class="code-block-header">
-          <span class="code-block-title">monitor.py</span>
-          <span class="code-block-lang">python</span>
+    <div class="panel">
+      <div class="panel-bar">
+        <h4 style="margin-left:0">latency stream &middot; tool:search</h4>
+        <span class="badge" id="cusumBadge"><i></i>nominal</span>
+      </div>
+      <div class="cv-wrap">
+        <div class="cv-legend">
+          <b class="s">observed</b><b class="m">frozen baseline</b><b class="a">cusum alarm</b>
         </div>
-        <pre><span class="kw">from</span> snagline <span class="kw">import</span> Monitor
+        <canvas id="sig" aria-label="Simulated latency stream with CUSUM alarm"></canvas>
+        <div class="cv-read">
+          <span>mean <b id="rMean">—</b></span>
+          <span>last <b id="rLast">—</b></span>
+          <span>cusum <b id="rCusum">—</b></span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ░░ STATS ░░ -->
+<div class="stats" id="stats">
+  <div class="st"><div class="n" data-to="2.08" data-dec="2">0.00<u>&#181;s</u></div><div class="l">Median per step</div></div>
+  <div class="st"><div class="n" data-to="0">0</div><div class="l">Required dependencies</div></div>
+  <div class="st"><div class="n" data-to="5">0</div><div class="l">Detectors built in</div></div>
+  <div class="st"><div class="n" data-to="201">0</div><div class="l">Tests in the suite</div></div>
+</div>
+
+<!-- ░░ 01 · HOW IT WORKS ░░ -->
+<section id="how-it-works">
+  <div class="shead">
+    <div>
+      <div class="slabel rv">01 &mdash; How it works</div>
+      <h2 class="stitle" data-split>Monitoring that stays out of your way</h2>
+    </div>
+    <p class="sdesc rv d1">A thin adapter normalises your agent's events into one canonical schema.
+      The monitor runs deterministic detectors on every step. Alerts go to sinks. Nothing calls an LLM,
+      nothing reads your content, nothing blocks.</p>
+  </div>
+
+  <div class="steps">
+    <div class="step rv">
+      <div class="idx">STEP 01</div>
+      <h3>Adapter normalises events</h3>
+      <div class="body">
+        <p>Raw Python loop, LangChain callback, LangGraph stream, AutoGen, CrewAI, or an HTTP sidecar.
+          Framework-specific code stays quarantined inside adapter modules, so the core never learns
+          about your stack.</p>
+        <div class="snip"><span class="kw">with</span> watch(monitor, <span class="str">"ep-1"</span>) <span class="kw">as</span> step:
+    step(<span class="str">"tool_call"</span>, tool_name<span class="op">=</span><span class="str">"search"</span>, latency_ms<span class="op">=</span><span class="num">120</span>)</div>
+      </div>
+    </div>
+    <div class="step rv">
+      <div class="idx">STEP 02</div>
+      <h3>Monitor runs detectors</h3>
+      <div class="body">
+        <p>Every registered detector sees every event. O(1) amortised per step, no network calls, no LLM
+          calls, no embeddings. Detectors reason over hashes, counts and timings only.</p>
+        <div class="chip">2.08&#181;s median &middot; 2.31&#181;s p99</div>
+      </div>
+    </div>
+    <div class="step rv">
+      <div class="idx">STEP 03</div>
+      <h3>FailureRisk dispatched to sinks</h3>
+      <div class="body">
+        <p>When a detector fires, the risk fans out to every registered sink &mdash; console, webhook, Slack,
+          PagerDuty, or your own. Only risk fields travel; never prompts, never responses.</p>
+        <div class="snip">{<span class="str">"episode_id"</span>:<span class="str">"ep-1"</span>, <span class="str">"score"</span>:<span class="num">0.5</span>, <span class="str">"trigger"</span>:<span class="str">"loop"</span>,
+ <span class="str">"detail"</span>:<span class="str">"action repeated 3x in last 3 steps"</span>}</div>
+      </div>
+    </div>
+    <div class="step rv">
+      <div class="idx">STEP 04</div>
+      <h3>Fail-open by construction</h3>
+      <div class="body">
+        <p>Detector exceptions are caught and logged. Sink exceptions are caught and logged. There is no
+          code path where SNAGLINE can raise into your agent or hold its thread. The guarantee is
+          structural, not aspirational.</p>
+        <div class="chip">Hard fail-open guarantee</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ░░ 02 · DETECTORS (pinned horizontal) ░░ -->
+<div class="track-wrap" id="trackWrap">
+  <div class="track-sticky">
+    <div class="track-head">
+      <div class="slabel rv">02 &mdash; Detectors</div>
+      <h2 class="stitle" data-split>Five failure modes</h2>
+    </div>
+    <div class="track-rail" id="rail">
+      <div class="dcard" id="detectors">
+        <div class="top"><span class="no">01 / 05</span><span class="tag loop">loop</span></div>
+        <h3>Loop detector</h3>
+        <p>Catches retry storms and stuck agents. Keeps a sliding window of action signatures; if the
+          same signature repeats N times inside W steps, it fires.</p>
+        <div class="algo">Sliding window<br>+ SHA-256 action signatures</div>
+      </div>
+      <div class="dcard">
+        <div class="top"><span class="no">02 / 05</span><span class="tag casc">cascade</span></div>
+        <h3>Error cascade detector</h3>
+        <p>Catches both fast cascades and slow-burn degradation. Two independent modes: N consecutive
+          errors, or N errors inside a recent window.</p>
+        <div class="algo">Consecutive counter<br>+ windowed counter</div>
+      </div>
+      <div class="dcard">
+        <div class="top"><span class="no">03 / 05</span><span class="tag lat">latency</span></div>
+        <h3>Latency anomaly detector</h3>
+        <p>Catches sustained performance regression rather than single slow calls. Per-tool running
+          statistics, a frozen healthy baseline, and a cumulative-sum test. A warm-up period suppresses
+          false positives.</p>
+        <div class="algo">Welford mean/variance<br>+ Page CUSUM + frozen baseline</div>
+      </div>
+      <div class="dcard">
+        <div class="top"><span class="no">04 / 05</span><span class="tag drift">goal drift</span></div>
+        <h3>Goal-drift detector</h3>
+        <p>Compares the live run against a persisted <em>healthy</em> baseline profile and flags rising
+          error rates, latency several sigma past the healthy mean, and tools that never appeared in the
+          baseline at all. Dependency-free; a no-op until you supply a baseline.</p>
+        <div class="algo">Structural baseline comparison<br>optional embedder for semantic drift</div>
+      </div>
+      <div class="dcard">
+        <div class="top"><span class="no">05 / 05</span><span class="tag ml">ensemble</span></div>
+        <h3>ML ensemble orchestrator</h3>
+        <p>Combines the base detectors into one stronger signal. The default combiner is a transparent
+          noisy-OR over their scores, so confidence rises when independent detectors agree. Slot in a
+          fitted model via one callable when you want to.</p>
+        <div class="algo">noisy-OR: 1 &minus; &prod;(1 &minus; s&#7522;)<br>pluggable model hook</div>
+      </div>
+    </div>
+    <div class="track-note" aria-hidden="true"><b></b>Scroll to traverse &rarr;</div>
+  </div>
+</div>
+
+<!-- ░░ 03 · FEATURES ░░ -->
+<section id="features">
+  <div class="shead">
+    <div>
+      <div class="slabel rv">03 &mdash; Configuration</div>
+      <h2 class="stitle" data-split>Zero config. Total control.</h2>
+    </div>
+    <p class="sdesc rv d1">Sensible defaults out of the box. Every threshold, window size and sensitivity
+      parameter is a constructor argument on one dataclass &mdash; no config files, no environment
+      variables, no hidden state.</p>
+  </div>
+
+  <div class="pair">
+    <div class="code rv">
+      <div class="code-h"><span class="f">monitor.py</span><span class="g">python</span></div>
+      <div class="cap">
+        <h3>Works today</h3>
+        <p>One call gives you loop, error-cascade and latency detectors with a console sink attached.</p>
+      </div>
+      <pre><span class="kw">from</span> snagline <span class="kw">import</span> Monitor
 
 monitor <span class="op">=</span> Monitor.<span class="fn">default</span>()
 
-<span class="cmt"># That's it. Loop + error cascade + latency</span>
-<span class="cmt"># detectors running. Console sink attached.</span>
-<span class="cmt"># Zero dependencies. Sub-microsecond overhead.</span></pre>
-      </div>
+<span class="cmt"># That's it. Three detectors running,</span>
+<span class="cmt"># console sink attached, zero deps,</span>
+<span class="cmt"># ~2 microseconds of overhead per step.</span></pre>
     </div>
-    <div>
-      <h3 style="font-family:var(--mono);font-size:1rem;margin-bottom:0.75rem">Tune when you need to</h3>
-      <p style="color:var(--text-secondary);font-size:0.9375rem;line-height:1.7;margin-bottom:1.5rem">Every threshold, window size, and sensitivity parameter is a constructor argument. No config files, no env vars.</p>
-      <div class="code-block">
-        <div class="code-block-header">
-          <span class="code-block-title">custom_config.py</span>
-          <span class="code-block-lang">python</span>
-        </div>
-        <pre><span class="kw">from</span> snagline <span class="kw">import</span> Monitor, Config
+    <div class="code rv d1">
+      <div class="code-h"><span class="f">custom_config.py</span><span class="g">python</span></div>
+      <div class="cap">
+        <h3>Tune when you need to</h3>
+        <p>Override only what matters. Everything else keeps its default.</p>
+      </div>
+      <pre><span class="kw">from</span> snagline <span class="kw">import</span> Monitor, Config
 
 config <span class="op">=</span> <span class="fn">Config</span>(
-&nbsp;&nbsp;loop_window_size<span class="op">=</span><span class="num">20</span>,
-&nbsp;&nbsp;loop_repeat_threshold<span class="op">=</span><span class="num">5</span>,
-&nbsp;&nbsp;cusum_k<span class="op">=</span><span class="num">0.3</span>,
-&nbsp;&nbsp;cusum_h<span class="op">=</span><span class="num">3.0</span>,
+    loop_window_size<span class="op">=</span><span class="num">20</span>,
+    loop_repeat_threshold<span class="op">=</span><span class="num">5</span>,
+    cusum_k<span class="op">=</span><span class="num">0.3</span>,
+    cusum_h<span class="op">=</span><span class="num">3.0</span>,
 )
 
 monitor <span class="op">=</span> Monitor.<span class="fn">default</span>(config<span class="op">=</span>config)</pre>
-      </div>
     </div>
   </div>
 
-  <div class="bento reveal" style="margin-top:2rem">
-    <div class="bento-card">
-      <div class="bento-icon cyan">=</div>
-      <h3>Thread-safe</h3>
-      <p>Per-instance threading lock. Concurrent multi-episode monitoring works correctly.</p>
-    </div>
-    <div class="bento-card">
-      <div class="bento-icon green">#</div>
-      <h3>No content retention</h3>
-      <p>Detectors reason about hashes, timings, counts, and booleans. Never prompt or response content.</p>
-    </div>
-    <div class="bento-card">
-      <div class="bento-icon amber">&gt;</div>
-      <h3>Streaming and batch</h3>
-      <p>Live monitoring of running agents. Same schema and detectors work over exported trajectory files.</p>
-    </div>
+  <div class="grid3 rv" style="margin-top:clamp(1rem,2.5vw,2rem)">
+    <div class="cell"><div class="ic cy">=</div><h3>Thread-safe</h3>
+      <p>A per-instance lock means concurrent multi-episode monitoring stays correct under load.</p></div>
+    <div class="cell"><div class="ic gr">#</div><h3>No content retention</h3>
+      <p>Detectors see hashes, timings, counts and booleans. Prompt and response content never enters
+        the monitor, so it cannot leak from it.</p></div>
+    <div class="cell"><div class="ic am">&gt;</div><h3>Streaming and batch</h3>
+      <p>Monitor a live agent, or replay an exported trajectory file through the identical schema and
+        detectors with <code>snagline replay</code>.</p></div>
   </div>
 </section>
 
-<!-- INTEGRATIONS -->
+<!-- ░░ 04 · INTEGRATIONS ░░ -->
 <section id="integrations">
-  <div class="section-label reveal">Integrations</div>
-  <h2 class="section-title reveal">Works with any agent runtime.</h2>
-  <p class="section-desc reveal">Four adapters ship in the box. Write your own in under 50 lines against a documented protocol.</p>
+  <div class="shead">
+    <div>
+      <div class="slabel rv">04 &mdash; Integrations</div>
+      <h2 class="stitle" data-split>Works with any agent runtime</h2>
+    </div>
+    <p class="sdesc rv d1">Six adapters and three zero-touch auto-instrumenters ship in the box. Anything
+      that speaks HTTP can post events without an adapter at all &mdash; or write your own in under fifty
+      lines against a documented protocol.</p>
+  </div>
 
-  <div class="integrations-grid reveal">
-    <div class="integration">
-      <div class="integration-icon">
-        <img src="logos/python.svg" alt="Python" width="40" height="40" style="object-fit:contain">
-      </div>
-      <div class="integration-name">Raw Python</div>
-      <div class="integration-desc">Context manager + decorator. Stdlib only.</div>
+  <div class="rows rv">
+    <div class="rgroup">Adapters</div>
+    <div class="row">
+      <span class="no">01</span>
+      <span class="nm"><i></i>Raw Python</span>
+      <span class="ds">Context manager and decorator for any hand-rolled agent loop.</span>
+      <span class="mt ship">stdlib only</span>
     </div>
-    <div class="integration">
-      <div class="integration-icon">
-        <img src="logos/langchain.svg" alt="LangChain" width="40" height="40" style="object-fit:contain">
-      </div>
-      <div class="integration-name">LangChain</div>
-      <div class="integration-desc">Callback handler. Optional langchain-core.</div>
+    <div class="row">
+      <span class="no">02</span>
+      <span class="nm"><i></i>LangChain</span>
+      <span class="ds">Callback handler covering tool calls, LLM calls, chain errors and agent decisions.</span>
+      <span class="mt">snagline[langchain]</span>
     </div>
-    <div class="integration">
-      <div class="integration-icon">
-        <img src="logos/langgraph.svg" alt="LangGraph" width="40" height="40" style="object-fit:contain">
-      </div>
-      <div class="integration-name">LangGraph</div>
-      <div class="integration-desc">Stream wrapper. Optional langgraph.</div>
+    <div class="row">
+      <span class="no">03</span>
+      <span class="nm"><i></i>LangGraph</span>
+      <span class="ds">Stream wrapper that reads node transitions as steps.</span>
+      <span class="mt">snagline[langgraph]</span>
     </div>
-    <div class="integration">
-      <div class="integration-icon">
-        <img src="logos/claude.svg" alt="Claude" width="40" height="40" style="object-fit:contain">
-      </div>
-      <div class="integration-name">Claude Code</div>
-      <div class="integration-desc">Native hook mapping via HTTP sidecar.</div>
+    <div class="row">
+      <span class="no">04</span>
+      <span class="nm"><i></i>Claude Code</span>
+      <span class="ds">Native hook mapping, with Pre/Post tool-use pairing via HookTracker.</span>
+      <span class="mt ship">hooks bridge</span>
+    </div>
+    <div class="row">
+      <span class="no">05</span>
+      <span class="nm"><i></i>AutoGen</span>
+      <span class="ds">Event translation for AgentChat multi-agent conversations.</span>
+      <span class="mt">snagline[autogen]</span>
+    </div>
+    <div class="row">
+      <span class="no">06</span>
+      <span class="nm"><i></i>CrewAI</span>
+      <span class="ds">Crew and task lifecycle mapped onto the canonical step schema.</span>
+      <span class="mt">snagline[crewai]</span>
+    </div>
+
+    <div class="rgroup">Auto-instrument &middot; <code style="font-family:var(--mono);color:var(--accent)">snagline.auto</code></div>
+    <div class="row">
+      <span class="no">07</span><span class="nm"><i></i>OpenAI SDK</span>
+      <span class="ds">Patch the client once; every completion becomes a monitored step.</span>
+      <span class="mt">snagline[openai]</span>
+    </div>
+    <div class="row">
+      <span class="no">08</span><span class="nm"><i></i>Anthropic SDK</span>
+      <span class="ds">Same one-line attach for Claude message calls.</span>
+      <span class="mt">snagline[anthropic]</span>
+    </div>
+    <div class="row">
+      <span class="no">09</span><span class="nm"><i></i>LangChain (auto)</span>
+      <span class="ds">Registers the callback handler globally, no per-chain wiring.</span>
+      <span class="mt">snagline[langchain]</span>
     </div>
   </div>
 
-  <div class="bento reveal" style="margin-top:2rem">
-    <div class="bento-card">
-      <div class="bento-icon cyan">{}</div>
-      <h3>HTTP sidecar</h3>
-      <p>Any runtime that speaks HTTP can POST events. <code style="font-size:0.75rem;color:var(--accent)">snagline serve --port 8787</code></p>
+  <div class="grid3 rv" style="margin-top:clamp(1.5rem,3.5vw,2.5rem)">
+    <div class="cell"><div class="ic cy">{}</div><h3>HTTP sidecar</h3>
+      <p>Any runtime that speaks HTTP can POST events to the built-in server.
+        <code>snagline serve --port 8787</code></p></div>
+    <div class="cell"><div class="ic gr">|</div><h3>Command bridge</h3>
+      <p>Pipe hook payloads straight through the CLI. Always exits 0, so it can never break the caller.</p></div>
+    <div class="cell"><div class="ic am">~</div><h3>File bridge</h3>
+      <p>Tail a JSONL file, for frameworks that can only append to disk.</p></div>
+  </div>
+</section>
+
+<!-- ░░ 05 · SINKS ░░ -->
+<section id="sinks">
+  <div class="shead">
+    <div>
+      <div class="slabel rv">05 &mdash; Sinks</div>
+      <h2 class="stitle" data-split>Route risk anywhere</h2>
     </div>
-    <div class="bento-card">
-      <div class="bento-icon green">|</div>
-      <h3>Command bridge</h3>
-      <p>Pipe hook payloads through the CLI. Always exits 0. Never blocks the agent.</p>
+    <p class="sdesc rv d1">Seven sinks ship in the core, and the Slack and PagerDuty ones need no extra
+      dependency &mdash; they are stdlib all the way down. Compose them: wrap a noisy sink in dedup, then
+      in batching, and the semantics still hold.</p>
+  </div>
+
+  <div class="grid3 rv">
+    <div class="cell"><div class="ic cy">01</div><h3>ConsoleSink</h3>
+      <p>One JSON line per risk to stderr. The zero-config default.</p></div>
+    <div class="cell"><div class="ic cy">02</div><h3>WebhookSink</h3>
+      <p>POST the risk payload to any URL. Credentials in the URL are redacted from logs.</p></div>
+    <div class="cell"><div class="ic gr">03</div><h3>SlackSink</h3>
+      <p>Formatted incoming-webhook messages. Stdlib only, no extra install.</p></div>
+    <div class="cell"><div class="ic rd">04</div><h3>PagerDutySink</h3>
+      <p>Events API v2 alerts, with score mapped onto PagerDuty severity.</p></div>
+    <div class="cell"><div class="ic am">05</div><h3>DedupSink</h3>
+      <p>Cooldown wrapper that collapses repeat alerts for the same trigger.</p></div>
+    <div class="cell"><div class="ic vi">06</div><h3>BatchingSink</h3>
+      <p>Async, rate-limited dispatch on a background worker so slow endpoints never touch your agent.</p></div>
+  </div>
+  <div class="grid3 rv d1" style="margin-top:1px;grid-template-columns:1fr">
+    <div class="cell"><div class="ic gr">07</div><h3>Your own sink</h3>
+      <p>A sink is one method: <code>emit(risk) -&gt; None</code>. Implement the protocol, register it, and
+        the monitor's fail-open contract covers your code too &mdash; if it raises, the exception is caught
+        and logged, and the agent keeps running.</p></div>
+  </div>
+</section>
+
+<!-- ░░ 06 · EVIDENCE ░░ -->
+<section id="evidence">
+  <div class="shead">
+    <div>
+      <div class="slabel rv">06 &mdash; Evidence</div>
+      <h2 class="stitle" data-split>Verified, not asserted</h2>
     </div>
-    <div class="bento-card">
-      <div class="bento-icon amber">~</div>
-      <h3>File bridge</h3>
-      <p>Tail a JSONL file. For frameworks that can only append to disk.</p>
+    <p class="sdesc rv d1">Every claim on this page is reproducible from the repository. The proof scripts
+      are the primary artefact; the prose is secondary.</p>
+  </div>
+
+  <div class="ev rv">
+    <div class="evc">
+      <div class="lb">LangChain 1.x</div>
+      <q>Driven across chaos scenarios with a real create_agent. The callback handler captured tool calls,
+        LLM calls, chain errors and agent decisions, firing all three tier-1 detectors as expected.</q>
+      <div class="src">tests/test_integration.py</div>
+    </div>
+    <div class="evc">
+      <div class="lb">Claude Code hooks</div>
+      <q>Five PostToolUseFailure payloads posted to the HTTP sidecar produced both a loop and an
+        error-cascade FailureRisk, with HookTracker correctly pairing Pre and Post events.</q>
+      <div class="src">tests/test_claude_code.py</div>
+    </div>
+    <div class="evc">
+      <div class="lb">Fixture trajectories</div>
+      <q>Hand-built trajectory files act as ground truth. Loop, cascade and latency detectors fire on the
+        failing runs, and healthy runs produce zero false positives.</q>
+      <div class="src">tests/fixtures/trajectories/</div>
+    </div>
+    <div class="evc">
+      <div class="lb">Overhead benchmark</div>
+      <q>200,000 synthetic steps measured end to end. Median 2.08&#181;s per step, p99 2.31&#181;s &mdash;
+        comfortably inside the sub-100-microsecond design target.</q>
+      <div class="src">snagline bench &middot; 2026-08-19</div>
     </div>
   </div>
 </section>
 
-<!-- ROADMAP -->
-<section id="roadmap" class="roadmap">
-  <div class="section-label reveal">Roadmap</div>
-  <h2 class="section-title reveal">What's done. What's next.</h2>
+<!-- ░░ 07 · ROADMAP ░░ -->
+<section id="roadmap">
+  <div class="shead">
+    <div>
+      <div class="slabel rv">07 &mdash; Roadmap</div>
+      <h2 class="stitle" data-split>Nineteen phases, all shipped</h2>
+    </div>
+    <p class="sdesc rv d1">Two phases landed deterministic, dependency-free implementations with a heavier
+      optional upgrade still open: an ESN model behind <code>snagline[ml]</code> and sentence embeddings
+      behind <code>snagline[drift]</code>.</p>
+  </div>
 
-  <div class="roadmap-grid reveal">
-    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">Core schema (StepEvent, FailureRisk, Config)</div></div>
-    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">Monitor orchestrator with fail-open</div></div>
-    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">Loop detector</div></div>
-    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">Error cascade detector</div></div>
-    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">Console sink + raw adapter</div></div>
-    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">Latency anomaly (CUSUM) detector</div></div>
-    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">Overhead benchmark (snagline bench)</div></div>
-    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">LangChain adapter</div></div>
-    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">Webhook sink</div></div>
-    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">HTTP sidecar (snagline serve)</div></div>
-    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">LangGraph adapter</div></div>
-    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">Claude Code hooks bridge</div></div>
-    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">Offline replay CLI</div></div>
-    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">Framework bridge docs</div></div>
-    <div class="roadmap-item"><div class="roadmap-status planned"></div><div class="roadmap-text">Deduplication / cooldown for alert spam</div></div>
-    <div class="roadmap-item"><div class="roadmap-status planned"></div><div class="roadmap-text">ML ensemble detector (snagline[ml])</div></div>
-    <div class="roadmap-item"><div class="roadmap-status planned"></div><div class="roadmap-text">Goal-drift detector (snagline[drift])</div></div>
-    <div class="roadmap-item"><div class="roadmap-status planned"></div><div class="roadmap-text">AutoGen / CrewAI adapters</div></div>
+  <div class="rm rv">
+    <div class="rmi"><span class="dot"></span><span class="ph">01</span><span class="tx">Core schema &mdash; <b>StepEvent, FailureRisk, Config</b></span></div>
+    <div class="rmi"><span class="dot"></span><span class="ph">02</span><span class="tx"><b>Monitor</b> orchestrator with fail-open guarantee</span></div>
+    <div class="rmi"><span class="dot"></span><span class="ph">03</span><span class="tx">Loop detector</span></div>
+    <div class="rmi"><span class="dot"></span><span class="ph">04</span><span class="tx">Error cascade detector</span></div>
+    <div class="rmi"><span class="dot"></span><span class="ph">05</span><span class="tx">Console sink + raw adapter</span></div>
+    <div class="rmi"><span class="dot"></span><span class="ph">06</span><span class="tx">Latency anomaly (CUSUM) detector</span></div>
+    <div class="rmi"><span class="dot"></span><span class="ph">07</span><span class="tx">Overhead benchmark &mdash; <b>snagline bench</b></span></div>
+    <div class="rmi"><span class="dot"></span><span class="ph">08</span><span class="tx">LangChain adapter</span></div>
+    <div class="rmi"><span class="dot"></span><span class="ph">09</span><span class="tx">Webhook sink</span></div>
+    <div class="rmi"><span class="dot"></span><span class="ph">10</span><span class="tx">HTTP sidecar &mdash; <b>snagline serve</b></span></div>
+    <div class="rmi"><span class="dot"></span><span class="ph">11</span><span class="tx">LangGraph adapter</span></div>
+    <div class="rmi"><span class="dot"></span><span class="ph">12</span><span class="tx">Claude Code hooks bridge</span></div>
+    <div class="rmi"><span class="dot"></span><span class="ph">13</span><span class="tx">Framework bridge docs</span></div>
+    <div class="rmi"><span class="dot"></span><span class="ph">14</span><span class="tx">Offline replay CLI &mdash; <b>snagline replay</b></span></div>
+    <div class="rmi"><span class="dot"></span><span class="ph">15</span><span class="tx">Dedup / cooldown &mdash; <b>DedupSink</b></span></div>
+    <div class="rmi"><span class="dot part"></span><span class="ph">16</span><span class="tx">ML ensemble detector</span><span class="st2">ESN pending</span></div>
+    <div class="rmi"><span class="dot part"></span><span class="ph">17</span><span class="tx">Goal-drift detector</span><span class="st2">embeddings pending</span></div>
+    <div class="rmi"><span class="dot"></span><span class="ph">18</span><span class="tx">AutoGen / CrewAI adapters</span></div>
+    <div class="rmi"><span class="dot"></span><span class="ph">19</span><span class="tx">Slack + PagerDuty sinks</span></div>
   </div>
 </section>
 
-<!-- PROOF -->
-<section>
-  <div class="section-label reveal">Evidence</div>
-  <h2 class="section-title reveal">Verified against real agents.</h2>
-
-  <div class="proof-grid reveal">
-    <div class="proof">
-      <div class="proof-label">LangChain 1.x</div>
-      <div class="proof-text">"Driven across chaos scenarios with a real create_agent. The callback handler correctly captured tool calls, LLM calls, chain errors, and agent decisions, firing all three detectors as expected."</div>
-      <div class="proof-source">tests/test_integration.py</div>
-    </div>
-    <div class="proof">
-      <div class="proof-label">Claude Code Hooks</div>
-      <div class="proof-text">"Five PostToolUseFailure hook payloads posted to the HTTP sidecar produced both a loop and an error cascade FailureRisk, with HookTracker correctly pairing Pre/Post events."</div>
-      <div class="proof-source">tests/test_claude_code.py</div>
-    </div>
-    <div class="proof">
-      <div class="proof-label">Fixture trajectories</div>
-      <div class="proof-text">"Four hand-built trajectory files serve as ground truth. Loop, cascade, and latency detectors fire correctly. Healthy runs produce zero false positives."</div>
-      <div class="proof-source">tests/fixtures/trajectories/</div>
-    </div>
-    <div class="proof">
-      <div class="proof-label">Overhead benchmark</div>
-      <div class="proof-text">"200,000 synthetic steps. Median 1.91 us/step, p99 33.90 us/step. Comfortably under the sub-100-microsecond target."</div>
-      <div class="proof-source">snagline bench (2026-08-15)</div>
-    </div>
-  </div>
-</section>
-
-<!-- CTA -->
+<!-- ░░ CTA ░░ -->
 <div class="cta" id="install">
-  <h2 class="reveal">Start monitoring in 30 seconds.</h2>
-  <p class="reveal">Zero dependencies. Works with Python 3.10+.</p>
-  <div class="cta-actions reveal">
-    <div class="cta-install" onclick="navigator.clipboard.writeText('pip install .')">
-      <span class="prompt">$</span>
-      <span class="cmd">pip install .</span>
-      <span class="copy">click to copy</span>
-    </div>
-    <a href="https://github.com/Cyrax321/SNAGLINE" class="btn-secondary" style="text-decoration:none">View on GitHub</a>
+  <div class="orb2" aria-hidden="true"></div>
+  <h2 data-split>Start monitoring in thirty seconds</h2>
+  <p class="rv d1">Zero required dependencies. Python 3.10+. MIT licensed.</p>
+  <div class="cta-row rv d2">
+    <button class="copyable" data-copy="pip install ." data-mag>
+      <span class="p">$</span><span class="c">pip install .</span><span class="hint">copy</span>
+    </button>
+    <a href="https://github.com/Cyrax321/SNAGLINE" class="btn btn-fill" data-mag>View on GitHub ↗</a>
   </div>
 </div>
 
-<!-- FOOTER -->
+<!-- ░░ FOOTER ░░ -->
 <footer>
-  <div class="footer-left">SNAGLINE</div>
-  <div class="footer-links">
+  <div class="f-l">SNAGLINE &middot; MIT &middot; Built for agents that run unattended</div>
+  <div class="f-r">
     <a href="https://github.com/Cyrax321/SNAGLINE">GitHub</a>
     <a href="https://github.com/Cyrax321/SNAGLINE/issues">Issues</a>
-    <a href="docs/ADAPTER_GUIDE.md">Docs</a>
-    <a href="LICENSE">MIT License</a>
+    <a href="https://github.com/Cyrax321/SNAGLINE/blob/master/docs/ADAPTER_GUIDE.md">Adapter guide</a>
+    <a href="https://github.com/Cyrax321/SNAGLINE/blob/master/docs/DETECTOR_GUIDE.md">Detector guide</a>
+    <a href="https://github.com/Cyrax321/SNAGLINE/blob/master/LICENSE">License</a>
   </div>
 </footer>
 
 <script>
-// ---- SCROLL REVEAL ----
-const observer = new IntersectionObserver((entries) => {
-  entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); observer.unobserve(e.target); }});
-}, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
-document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+(function(){
+'use strict';
+/* ═══════════════ ENV ═══════════════ */
+var REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+var FINE    = matchMedia('(pointer: fine)').matches;
+var clamp   = function(v,a,b){ return v<a?a:v>b?b:v; };
+var $  = function(s,c){ return (c||document).querySelector(s); };
+var $$ = function(s,c){ return Array.prototype.slice.call((c||document).querySelectorAll(s)); };
 
-// ---- TERMINAL ANIMATION ----
-const termLines = [
-  { ts: '09:41:03', text: '<span class="dim">$</span> snagline watch --follow agent.log', delay: 0 },
-  { ts: '09:41:03', text: '<span class="ok">+</span> monitoring episode <span class="accent">ep-001</span>', delay: 400 },
-  { ts: '09:41:04', text: '<span class="dim">|</span> ingest tool_call:search <span class="ok">ok</span> <span class="dim">120ms</span>', delay: 800 },
-  { ts: '09:41:04', text: '<span class="dim">|</span> ingest tool_call:search <span class="ok">ok</span> <span class="dim">130ms</span>', delay: 1200 },
-  { ts: '09:41:04', text: '<span class="dim">|</span> ingest tool_call:search <span class="ok">ok</span> <span class="dim">110ms</span>', delay: 1600 },
-  { ts: '09:41:04', text: '<span class="warn">!</span> <span class="warn">LOOP</span> action repeated 3x in last 3 steps (score: 0.50)', delay: 2200 },
-  { ts: '09:41:05', text: '<span class="dim">|</span> ingest tool_call:db_write <span class="err">err</span> <span class="dim">timeout</span>', delay: 2800 },
-  { ts: '09:41:05', text: '<span class="dim">|</span> ingest tool_call:db_write <span class="err">err</span> <span class="dim">timeout</span>', delay: 3200 },
-  { ts: '09:41:05', text: '<span class="dim">|</span> ingest tool_call:db_write <span class="err">err</span> <span class="dim">timeout</span>', delay: 3600 },
-  { ts: '09:41:05', text: '<span class="err">!</span> <span class="err">CASCADE</span> 3 consecutive errors (score: 0.80)', delay: 4200 },
-  { ts: '09:41:06', text: '<span class="dim">|</span> ingest tool_call:search <span class="ok">ok</span> <span class="dim">140ms</span>', delay: 4800 },
-  { ts: '09:41:06', text: '<span class="dim">|</span> ingest tool_call:search <span class="ok">ok</span> <span class="dim">125ms</span>', delay: 5200 },
-];
-
-function runTerminal() {
-  const body = document.getElementById('terminal-body');
-  body.innerHTML = '';
-  termLines.forEach((line, i) => {
-    setTimeout(() => {
-      const div = document.createElement('div');
-      div.className = 'terminal-line';
-      div.innerHTML = `<span class="ts">${line.ts}</span> ${line.text}`;
-      div.style.animationDelay = '0s';
-      body.appendChild(div);
-      body.scrollTop = body.scrollHeight;
-    }, line.delay);
+/* ═══════════════ SPLIT TEXT ═══════════════ */
+function split(el){
+  var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+  var nodes = [], n;
+  while((n = walker.nextNode())) nodes.push(n);
+  nodes.forEach(function(tn){
+    if(!tn.textContent.trim()) return;
+    var frag = document.createDocumentFragment();
+    tn.textContent.split(/(\s+)/).forEach(function(w){
+      if(!w) return;
+      if(/^\s+$/.test(w)){ frag.appendChild(document.createTextNode(' ')); return; }
+      var o = document.createElement('span'); o.className = 'sw';
+      var i = document.createElement('span'); i.className = 'swi'; i.textContent = w;
+      o.appendChild(i); frag.appendChild(o);
+    });
+    tn.parentNode.replaceChild(frag, tn);
   });
-  // loop
-  setTimeout(runTerminal, 7000);
+  $$('.swi', el).forEach(function(w,i){
+    w.style.transitionDelay = Math.min(i*45, 700) + 'ms';
+  });
+}
+$$('[data-split]').forEach(split);
+
+/* ═══════════════ REVEAL ═══════════════ */
+function initReveals(){
+  var io = new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      if(e.isIntersecting){ e.target.classList.add('is-in'); io.unobserve(e.target); }
+    });
+  }, { threshold:0.12, rootMargin:'0px 0px -8% 0px' });
+  $$('.rv,[data-split]').forEach(function(el){
+    /* Anything already on screen reveals at once — the hero must not wait on
+       observer scheduling, or it flashes empty on a slow first paint. */
+    var r = el.getBoundingClientRect();
+    if(r.top < innerHeight * 0.92 && r.bottom > 0) el.classList.add('is-in');
+    else io.observe(el);
+  });
 }
 
-// start terminal when visible
-const termObs = new IntersectionObserver((entries) => {
-  entries.forEach(e => {
-    if (e.isIntersecting) { runTerminal(); termObs.unobserve(e.target); }
-  });
-}, { threshold: 0.3 });
-termObs.observe(document.querySelector('.terminal'));
-
-// ---- SMOOTH ANCHOR LINKS ----
-document.querySelectorAll('a[href^="#"]').forEach(a => {
-  a.addEventListener('click', e => {
-    e.preventDefault();
-    const target = document.querySelector(a.getAttribute('href'));
-    if (target) target.scrollIntoView({ behavior: 'smooth' });
-  });
-});
-
-// ---- THEME TOGGLE ----
-const toggle = document.getElementById('theme-toggle');
-const sunIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>';
-const moonIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
-
-function getPreferredTheme() {
-  const saved = localStorage.getItem('snagline-theme');
-  if (saved) return saved;
-  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-}
-
-function setTheme(theme) {
-  document.documentElement.setAttribute('data-theme', theme);
-  localStorage.setItem('snagline-theme', theme);
-  toggle.innerHTML = theme === 'dark' ? sunIcon : moonIcon;
-  toggle.setAttribute('aria-label', theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
-}
-
-toggle.addEventListener('click', () => {
-  const current = document.documentElement.getAttribute('data-theme') || 'dark';
-  setTheme(current === 'dark' ? 'light' : 'dark');
-});
-
-setTheme(getPreferredTheme());
-
-// listen for system preference changes
-window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
-  if (!localStorage.getItem('snagline-theme')) {
-    setTheme(e.matches ? 'dark' : 'light');
+/* ═══════════════ PRELOADER ═══════════════ */
+(function(){
+  var pre = $('#pre'), num = $('#preNum'), bar = $('#preBar');
+  var finished = false;
+  function finish(){
+    if(finished) return;
+    finished = true;
+    if(pre) pre.classList.add('done');
+    document.body.classList.add('ready');
+    try { initReveals(); } catch(err){ $$('.rv,[data-split]').forEach(function(el){ el.classList.add('is-in'); }); }
+    setTimeout(function(){ if(pre && pre.parentNode) pre.remove(); }, 1100);
   }
+  /* Failsafe: the curtain covers the whole page, so it must never be able to trap content. */
+  setTimeout(finish, 2200);
+  if(REDUCED || !pre){ if(pre) pre.remove(); finish(); return; }
+  requestAnimationFrame(function(){ pre.classList.add('in'); });
+  var t0 = performance.now(), DUR = 800;
+  (function tick(now){
+    var p = clamp((now - t0)/DUR, 0, 1);
+    var e = 1 - Math.pow(1-p, 3);
+    num.textContent = String(Math.round(e*100)).padStart(2,'0');
+    bar.style.width = (e*100) + '%';
+    if(p < 1){ requestAnimationFrame(tick); return; }
+    finish();
+  })(t0);
+})();
+
+/* ═══════════════ INERTIA SCROLL ═══════════════ */
+var SS = (function(){
+  var on = FINE && !REDUCED && innerWidth > 1000;
+  var target = scrollY, cur = scrollY, running = false;
+  function max(){ return document.documentElement.scrollHeight - innerHeight; }
+  function tick(){
+    var d = target - cur;
+    if(Math.abs(d) < 0.5){ cur = target; scrollTo(0, cur); running = false; return; }
+    cur += d * 0.22;
+    scrollTo(0, cur);
+    requestAnimationFrame(tick);
+  }
+  function run(){ if(!running){ running = true; requestAnimationFrame(tick); } }
+  function goTo(y){ target = clamp(y, 0, max()); if(on){ run(); } else { scrollTo({top:target, behavior:REDUCED?'auto':'smooth'}); } }
+  if(on){
+    addEventListener('wheel', function(e){
+      if(e.ctrlKey) return;
+      e.preventDefault();
+      var d = e.deltaY;
+      if(e.deltaMode === 1) d *= 16; else if(e.deltaMode === 2) d *= innerHeight;
+      target = clamp(target + d, 0, max());
+      run();
+    }, { passive:false });
+    addEventListener('scroll', function(){ if(!running){ target = cur = scrollY; } }, { passive:true });
+    addEventListener('resize', function(){ target = cur = scrollY; });
+  }
+  return { goTo:goTo, enabled:on };
+})();
+
+$$('a[href^="#"]').forEach(function(a){
+  a.addEventListener('click', function(e){
+    var id = a.getAttribute('href');
+    if(id === '#') return;
+    var t = document.querySelector(id);
+    if(!t) return;
+    e.preventDefault();
+    SS.goTo(t.getBoundingClientRect().top + scrollY - (id === '#top' ? 0 : 40));
+  });
 });
+
+/* ═══════════════ CURSOR + MAGNETIC ═══════════════ */
+(function(){
+  if(!FINE || REDUCED) return;
+  var dot = $('#dot'), ring = $('#ring');
+  document.body.classList.add('cursor-on');
+  var mx = innerWidth/2, my = innerHeight/2, rx = mx, ry = my, idle = 0;
+
+  /* Pointer position only. Measuring every [data-mag] rect on each mousemove
+     forced a synchronous layout per event; magnetism is per-element below. */
+  addEventListener('mousemove', function(e){
+    mx = e.clientX; my = e.clientY; idle = 0;
+    dot.style.transform = 'translate3d(' + mx + 'px,' + my + 'px,0)';
+  }, { passive:true });
+
+  /* Delegated hover state — two events per hover instead of one test per move. */
+  var HOT = 'a,button,.copyable,.dcard,.row,.cell,.evc';
+  addEventListener('mouseover', function(e){
+    if(e.target.closest && e.target.closest(HOT)) ring.classList.add('big');
+  }, { passive:true });
+  addEventListener('mouseout', function(e){
+    if(e.target.closest && e.target.closest(HOT)) ring.classList.remove('big');
+  }, { passive:true });
+
+  $$('[data-mag]').forEach(function(el){
+    var r = null;
+    el.addEventListener('mouseenter', function(){ r = el.getBoundingClientRect(); });
+    el.addEventListener('mousemove', function(e){
+      if(!r) r = el.getBoundingClientRect();
+      el.style.transform = 'translate3d(' + ((e.clientX - (r.left + r.width/2)) * 0.22) + 'px,' +
+                                            ((e.clientY - (r.top + r.height/2)) * 0.34) + 'px,0)';
+    });
+    el.addEventListener('mouseleave', function(){ r = null; el.style.transform = ''; });
+  });
+
+  /* Park the loop once the ring catches up, so an idle tab stops compositing. */
+  (function loop(){
+    var dx = mx - rx, dy = my - ry;
+    if(Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1){
+      rx += dx * 0.2; ry += dy * 0.2;
+      ring.style.transform = 'translate3d(' + rx + 'px,' + ry + 'px,0)';
+      idle = 0;
+    } else if(idle++ > 60){
+      addEventListener('mousemove', function once(){
+        removeEventListener('mousemove', once); idle = 0; loop();
+      }, { once:true, passive:true });
+      return;
+    }
+    requestAnimationFrame(loop);
+  })();
+})();
+
+/* ═══════════════ SCROLL-LINKED ═══════════════ */
+(function(){
+  var prog = $('#prog'), nav = $('#nav'), heroIn = $('#heroIn');
+  var wrap = $('#trackWrap'), rail = $('#rail');
+  var dist = 0, lastY = scrollY, acc = 0, hidden = false, solid = false, queued = false;
+
+  function measure(){
+    if(!wrap || !rail) return;
+    if(innerWidth <= 760){ wrap.style.height = 'auto'; dist = 0; rail.style.transform = ''; return; }
+    dist = Math.max(0, rail.scrollWidth - innerWidth);
+    wrap.style.height = (innerHeight + dist) + 'px';
+  }
+
+  function frame(){
+    queued = false;
+    var y = scrollY;
+    var max = document.documentElement.scrollHeight - innerHeight;
+    prog.style.transform = 'scaleX(' + (max > 0 ? y/max : 0) + ')';
+
+    if(y > 40 !== solid){ solid = y > 40; nav.classList.toggle('solid', solid); }
+
+    /* Direction is accumulated, not read per frame. An inertia glide decelerates
+       (40px -> 2px per frame), so any per-frame delta threshold flips state as the
+       glide converges — that reads as flicker. Require sustained travel instead,
+       with asymmetric thresholds so revealing is easier than hiding. */
+    var dy = y - lastY;
+    lastY = y;
+    if(Math.abs(dy) > 0.5){
+      if((dy > 0) !== (acc > 0)) acc = 0;
+      acc += dy;
+    }
+    if(y < 300){
+      if(hidden){ hidden = false; nav.classList.remove('hide'); }
+      acc = 0;
+    } else if(!hidden && acc > 90){
+      hidden = true; nav.classList.add('hide'); acc = 0;
+    } else if(hidden && acc < -50){
+      hidden = false; nav.classList.remove('hide'); acc = 0;
+    }
+
+    if(heroIn && y < innerHeight * 1.2){
+      var p = clamp(y / innerHeight, 0, 1);
+      /* No blur() here: filtering a viewport-sized 9rem headline forces a full
+         re-raster every frame and tanks the scroll. Transform + opacity only. */
+      heroIn.style.transform = 'translate3d(0,' + (p * -11) + 'vh,0) scale(' + (1 - p*0.11) + ')';
+      heroIn.style.opacity   = String(1 - p*0.95);
+    }
+
+    if(dist > 0){
+      var top = wrap.offsetTop, span = wrap.offsetHeight - innerHeight;
+      var tp = clamp((y - top) / (span || 1), 0, 1);
+      rail.style.transform = 'translate3d(' + (-tp * dist) + 'px,0,0)';
+    }
+  }
+  function onScroll(){ if(!queued){ queued = true; requestAnimationFrame(frame); } }
+
+  /* Reaching for the nav must always surface it, whatever the scroll state. */
+  function reveal(){ if(hidden){ hidden = false; acc = 0; nav.classList.remove('hide'); } }
+  nav.addEventListener('mouseenter', reveal);
+  addEventListener('mousemove', function(e){ if(e.clientY < 70) reveal(); }, { passive:true });
+  addEventListener('focusin', reveal);
+  addEventListener('keydown', function(e){
+    if(e.key === 'Home' || e.key === 'Escape') reveal();
+  }, { passive:true });
+
+  addEventListener('scroll', onScroll, { passive:true });
+  addEventListener('resize', function(){ measure(); onScroll(); });
+  addEventListener('load', function(){ measure(); onScroll(); });
+  measure(); frame();
+})();
+
+/* ═══════════════ COUNTERS ═══════════════ */
+(function(){
+  var io = new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      if(!e.isIntersecting) return;
+      io.unobserve(e.target);
+      var el = e.target;
+      var to = parseFloat(el.dataset.to), dec = parseInt(el.dataset.dec || '0', 10);
+      var u = el.querySelector('u'), uh = u ? u.outerHTML : '';
+      if(REDUCED){ el.innerHTML = to.toFixed(dec) + uh; return; }
+      var t0 = performance.now(), DUR = 1500;
+      (function tick(now){
+        var p = clamp((now - t0)/DUR, 0, 1);
+        var v = to * (1 - Math.pow(1-p, 4));
+        el.innerHTML = v.toFixed(dec) + uh;
+        if(p < 1) requestAnimationFrame(tick);
+      })(t0);
+    });
+  }, { threshold:0.4 });
+  $$('.st .n[data-to]').forEach(function(el){ io.observe(el); });
+})();
+
+/* ═══════════════ TERMINAL ═══════════════ */
+(function(){
+  var term = $('#term'); if(!term) return;
+  var L = [
+    ['09:41:03','<span class="dm">$</span> snagline watch --follow agent.log',380],
+    ['09:41:03','<span class="ok">+</span> monitoring episode <span class="ac">ep-001</span> <span class="dm">(5 detectors)</span>',420],
+    ['09:41:04','<span class="dm">|</span> tool_call:search <span class="ok">ok</span> <span class="dm">120ms</span>',300],
+    ['09:41:04','<span class="dm">|</span> tool_call:search <span class="ok">ok</span> <span class="dm">130ms</span>',300],
+    ['09:41:04','<span class="dm">|</span> tool_call:search <span class="ok">ok</span> <span class="dm">110ms</span>',480],
+    ['09:41:04','<span class="wa">!</span> <span class="wa">LOOP</span> action repeated 3x in last 3 steps <span class="dm">score 0.50</span>',560],
+    ['09:41:05','<span class="dm">|</span> tool_call:db_write <span class="er">err</span> <span class="dm">timeout</span>',280],
+    ['09:41:05','<span class="dm">|</span> tool_call:db_write <span class="er">err</span> <span class="dm">timeout</span>',280],
+    ['09:41:05','<span class="dm">|</span> tool_call:db_write <span class="er">err</span> <span class="dm">timeout</span>',480],
+    ['09:41:05','<span class="er">!</span> <span class="er">CASCADE</span> 3 consecutive errors <span class="dm">score 0.80</span>',520],
+    ['09:41:06','<span class="dm">|</span> tool_call:search <span class="ok">ok</span> <span class="dm">412ms</span>',300],
+    ['09:41:06','<span class="wa">!</span> <span class="wa">LATENCY</span> cusum 4.12 &gt; h=3.0 <span class="dm">score 0.65</span>',520],
+    ['09:41:07','<span class="vi">!</span> <span class="vi">ENSEMBLE</span> noisy-OR across 3 signals <span class="dm">score 0.97</span>',900]
+  ];
+  function add(l){
+    var d = document.createElement('div');
+    d.className = 'tl';
+    d.innerHTML = '<span class="ts">' + l[0] + '</span> ' + l[1];
+    term.appendChild(d);
+  }
+  if(REDUCED){ L.forEach(add); return; }
+  var i = 0, timer = null;
+  function step(){
+    if(i >= L.length){ timer = setTimeout(function(){ term.innerHTML=''; i=0; step(); }, 2800); return; }
+    var l = L[i++]; add(l);
+    timer = setTimeout(step, l[2]);
+  }
+  new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      if(e.isIntersecting && !timer){ step(); }
+      else if(!e.isIntersecting && timer){ clearTimeout(timer); timer = null; }
+    });
+  }, { threshold:0.25 }).observe(term);
+})();
+
+/* ═══════════════ LATENCY CANVAS ═══════════════ */
+(function(){
+  var cv = $('#sig'); if(!cv) return;
+  var ctx = cv.getContext('2d');
+  var badge = $('#cusumBadge'), rMean = $('#rMean'), rLast = $('#rLast'), rCusum = $('#rCusum');
+  var N = 88, MEAN = 120, SD = 11, K = 0.5, H = 3.0;
+  var data = [], S = 0, phase = 0, alarm = false, w = 0, h = 0;
+
+  function css(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+  /* getComputedStyle is a layout-flushing read; it was called ~10x per redraw at
+     9fps. Resolve the palette once and refresh it only when the theme changes. */
+  var PAL = {};
+  function palette(){
+    ['--line','--ink-2','--accent','--accent-dim','--red','--red-dim'].forEach(function(k){ PAL[k] = css(k); });
+  }
+  palette();
+  new MutationObserver(function(){ palette(); draw(); })
+    .observe(document.documentElement, { attributes:true, attributeFilter:['data-theme'] });
+  function size(){
+    var r = cv.getBoundingClientRect(), dpr = Math.min(devicePixelRatio || 1, 2);
+    w = r.width; h = r.height;
+    cv.width = Math.max(1, w*dpr); cv.height = Math.max(1, h*dpr);
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+  function next(){
+    phase++;
+    if(phase > 118){ phase = 0; S = 0; alarm = false; }
+    var drift = phase > 70 ? Math.min((phase-70)*4.6, 78) : 0;
+    var v = MEAN + drift + (Math.random()+Math.random()-1) * SD * 1.7;
+    data.push(v); if(data.length > N) data.shift();
+    S = Math.max(0, S + (v - MEAN - K*SD));
+    if(S > H*SD) alarm = true;
+    return v;
+  }
+  function draw(){
+    if(!w) size();
+    ctx.clearRect(0,0,w,h);
+    var lo = MEAN - SD*5, hi = MEAN + 110;
+    var Y = function(v){ return h - ((v-lo)/(hi-lo)) * h; };
+    var X = function(i){ return (i/(N-1)) * w; };
+
+    ctx.strokeStyle = PAL['--line']; ctx.lineWidth = 1;
+    for(var g=0; g<4; g++){
+      var gy = Math.round(h*g/3) + 0.5;
+      ctx.beginPath(); ctx.moveTo(0,gy); ctx.lineTo(w,gy); ctx.stroke();
+    }
+    ctx.fillStyle = PAL['--line']; ctx.globalAlpha = 0.5;
+    ctx.fillRect(0, Y(MEAN + SD*3), w, Math.max(1, Y(MEAN - SD*3) - Y(MEAN + SD*3)));
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = PAL['--ink-2']; ctx.setLineDash([3,4]);
+    ctx.beginPath(); ctx.moveTo(0, Y(MEAN)); ctx.lineTo(w, Y(MEAN)); ctx.stroke();
+    ctx.setLineDash([]);
+
+    if(data.length > 1){
+      ctx.beginPath();
+      data.forEach(function(v,i){ i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v)); });
+      ctx.strokeStyle = alarm ? PAL['--red'] : PAL['--accent'];
+      ctx.lineWidth = 1.6; ctx.lineJoin = 'round'; ctx.stroke();
+      ctx.lineTo(X(data.length-1), h); ctx.lineTo(X(0), h); ctx.closePath();
+      var grd = ctx.createLinearGradient(0,0,0,h);
+      grd.addColorStop(0, alarm ? PAL['--red-dim'] : PAL['--accent-dim']);
+      grd.addColorStop(1, 'transparent');
+      ctx.fillStyle = grd; ctx.fill();
+      var lx = X(data.length-1), ly = Y(data[data.length-1]);
+      ctx.beginPath(); ctx.arc(lx, ly, 2.6, 0, Math.PI*2);
+      ctx.fillStyle = alarm ? PAL['--red'] : PAL['--accent']; ctx.fill();
+    }
+    var lastV = data.length ? data[data.length-1] : MEAN;
+    rMean.textContent  = MEAN.toFixed(0) + 'ms';
+    rLast.textContent  = lastV.toFixed(0) + 'ms';
+    rCusum.textContent = S.toFixed(2);
+    rCusum.className = alarm ? 'fire' : '';
+    badge.innerHTML = alarm
+      ? '<i style="background:var(--red)"></i>cusum alarm'
+      : '<i></i>nominal';
+    badge.style.color = alarm ? 'var(--red)' : 'var(--green)';
+  }
+
+  size();
+  /* Seed a full window of healthy samples: the panel should open nominal and
+     earn its alarm, not arrive already firing. */
+  for(var i=0;i<N;i++) data.push(MEAN + (Math.random()+Math.random()-1) * SD * 1.7);
+  phase = 0; S = 0; alarm = false;
+  draw();
+  addEventListener('resize', function(){ size(); draw(); });
+  if(REDUCED) return;
+  var iv = null;
+  new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      if(e.isIntersecting && !iv){ iv = setInterval(function(){ next(); draw(); }, 110); }
+      else if(!e.isIntersecting && iv){ clearInterval(iv); iv = null; }
+    });
+  }, { threshold:0.2 }).observe(cv);
+})();
+
+/* ═══════════════ THEME ═══════════════ */
+(function(){
+  var tt = $('#tt'), meta = document.querySelector('meta[name="theme-color"]');
+  var SUN  = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.5"/><path d="M12 1.5v2M12 20.5v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1.5 12h2M20.5 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></svg>';
+  var MOON = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
+  function set(t){
+    document.documentElement.setAttribute('data-theme', t);
+    localStorage.setItem('snagline-theme', t);
+    tt.innerHTML = t === 'dark' ? SUN : MOON;
+    tt.setAttribute('aria-label', t === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
+    if(meta) meta.setAttribute('content', t === 'dark' ? '#07070a' : '#f1f0ec');
+  }
+  var saved = localStorage.getItem('snagline-theme');
+  set(saved === 'light' ? 'light' : 'dark');
+  tt.addEventListener('click', function(){
+    set(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+  });
+})();
+
+/* ═══════════════ COPY ═══════════════ */
+$$('[data-copy]').forEach(function(el){
+  el.addEventListener('click', function(){
+    var hint = el.querySelector('.hint');
+    var done = function(ok){
+      if(!hint) return;
+      hint.textContent = ok ? 'copied' : 'press ⌘C';
+      setTimeout(function(){ hint.textContent = 'copy'; }, 1500);
+    };
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(el.dataset.copy).then(function(){ done(true); }, function(){ done(false); });
+    } else { done(false); }
+  });
+});
+})();
 </script>
 </body>
 </html>
