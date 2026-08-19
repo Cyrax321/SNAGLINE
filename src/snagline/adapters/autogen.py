@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import itertools
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import Callable
 from typing import Any
 
 from snagline.events import StepEvent, make_signature
@@ -149,24 +149,35 @@ async def run_and_monitor(
 
     Wraps ``await agent.run_stream(task)`` (falling back to ``agent.run``) and
     feeds every emitted event to a :class:`SnaglineAutogenHandler`. Returns the
-    agent's final result. The agent must be an Autogen chat agent exposing
-    ``run_stream``; if it does not, raise a clear error at call time.
+    agent's final result. The agent must expose an async ``run_stream`` (or
+    ``run``) method; if it exposes neither, raise a clear error at call time.
     """
     handler = SnaglineAutogenHandler(
         monitor, episode_id, agent_name=agent_name, clock=clock
     )
-    stream: AsyncIterator[Any] = None  # type: ignore[assignment]
-    if hasattr(agent, "run_stream"):
-        stream = await agent.run_stream(task)  # type: ignore[assignment]
-    else:  # pragma: no cover - version fallback
-        result = await agent.run(task)  # type: ignore[attr-defined]
-        handler.observe(result)
-        handler.close()
-        return result
+    if not hasattr(agent, "run_stream"):
+        if not hasattr(agent, "run"):  # pragma: no cover - caller bug
+            raise TypeError(
+                "agent must expose an async 'run_stream' (or 'run') method, "
+                f"got {type(agent).__name__!r}"
+            )
+        try:
+            result = await agent.run(task)  # type: ignore[attr-defined]
+            handler.observe(result)
+            return result
+        finally:
+            handler.close()
 
-    final = None
-    async for event in stream:  # type: ignore[union-attr]
-        handler.observe(event)
-        final = event
-    handler.close()
-    return final
+    try:
+        stream = await agent.run_stream(task)
+        if stream is None:
+            raise TypeError(
+                f"agent.run_stream({task!r}) returned None; expected an async iterator"
+            )
+        final = None
+        async for event in stream:
+            handler.observe(event)
+            final = event
+        return final
+    finally:
+        handler.close()
