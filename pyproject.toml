@@ -38,8 +38,9 @@ anthropic  = ["anthropic>=0.30"]
 # Optional extras (not required for the core fail-open detector):
 ml         = ["numpy>=1.24", "scikit-learn>=1.3"]   # future baseline fitting (ml extra)
 drift      = ["sentence-transformers>=2.2"]          # future semantic-drift detector
-slack      = ["httpx>=0.27"]                          # Slack escalation sink
-all        = ["snagline-agent[langchain,langgraph,autogen,crewai,openai,anthropic,ml,drift,slack]"]
+# Slack and PagerDuty sinks ship in the core and use only the stdlib, so they
+# need no extra dependency; the `all` extra pulls in the framework/SDK extras.
+all        = ["snagline-agent[langchain,langgraph,autogen,crewai,openai,anthropic,ml,drift]"]
 
 [project.scripts]
 snagline = "snagline.cli:main"
