@@ -20,9 +20,20 @@ class _RecordingSink:
         self.risks.append(risk)
 
 
-def _start_server(sink: _RecordingSink, auth_token: str | None = None):
+def _start_server(
+    sink: _RecordingSink,
+    auth_token: str | None = None,
+    max_body_bytes: int | None = None,
+):
+    kwargs = {}
+    if max_body_bytes is not None:
+        kwargs["max_body_bytes"] = max_body_bytes
     server = make_server(
-        Monitor.default(sinks=[sink]), host="127.0.0.1", port=0, auth_token=auth_token
+        Monitor.default(sinks=[sink]),
+        host="127.0.0.1",
+        port=0,
+        auth_token=auth_token,
+        **kwargs,
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -136,6 +147,64 @@ def test_post_requires_token_when_configured():
         )
         with urllib.request.urlopen(req, timeout=5) as resp:
             assert resp.status == 202
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_events_endpoint_accepts_batch():
+    sink = _RecordingSink()
+    server, base = _start_server(sink)
+    try:
+        events = [
+            {
+                "step_id": str(i),
+                "episode_id": "ep-batch",
+                "timestamp": 1718300000.0 + i,
+                "action_type": "tool_call",
+                "action_signature": f"sig-{i}",
+                "tool_name": "search",
+            }
+            for i in range(3)
+        ]
+        req = urllib.request.Request(
+            base + "/events",
+            data=json.dumps(events).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            assert resp.status == 202
+            assert json.loads(resp.read())["count"] == 3
+        assert len(sink.risks) == 0  # batch of unique signatures => no loop
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_post_payload_too_large_returns_413():
+    sink = _RecordingSink()
+    server, base = _start_server(sink, max_body_bytes=10)
+    try:
+        event = {
+            "step_id": "0",
+            "episode_id": "ep-big",
+            "timestamp": 1718300000.0,
+            "action_type": "tool_call",
+            "action_signature": "aaaa1111bbbb2222",
+            "tool_name": "search",
+        }
+        req = urllib.request.Request(
+            base + "/events",
+            data=json.dumps(event).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            urllib.request.urlopen(req, timeout=5)
+            raise AssertionError("expected HTTP 413")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 413
     finally:
         server.shutdown()
         server.server_close()

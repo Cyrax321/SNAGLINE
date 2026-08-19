@@ -4,8 +4,13 @@ A minimal stdlib ``http.server`` endpoint any runtime (TypeScript, Node, a
 shell script, a Claude Code hook) can POST ``StepEvent`` JSON to:
 
     POST /events             body: a StepEvent as a JSON object      -> monitor.ingest()
+                               or a JSON array of StepEvent objects     (batched)
     POST /hooks/claude-code  body: a native Claude Code hook payload -> mapped + ingested
     GET  /health                                                     -> 200 OK
+
+POST bodies are capped at ``max_body_bytes`` (default 1 MB); larger payloads
+get 413. This keeps the sidecar safe to expose and able to absorb buffered
+telemetry from any host.
 
 Optionally protect the POST endpoints with a shared secret by passing
 ``auth_token=`` to ``make_server``/``serve``. When set, POSTs must carry the
@@ -38,15 +43,10 @@ from snagline.monitor import Monitor
 logger = logging.getLogger("snagline")
 
 
-def _handle_event_body(monitor: Monitor, body: bytes) -> StepEvent:
-    obj = json.loads(body.decode("utf-8"))
-    if not isinstance(obj, dict):
-        raise ValueError("event body must be a JSON object")
-    return StepEvent(**obj)
-
-
 def make_handler(
-    monitor: Monitor, auth_token: str | None = None
+    monitor: Monitor,
+    auth_token: str | None = None,
+    max_body_bytes: int = 1_000_000,
 ) -> type[BaseHTTPRequestHandler]:
     """Build a request-handler class bound to ``monitor``."""
     tracker = HookTracker()
@@ -57,6 +57,7 @@ def make_handler(
         snagline_tracker: Any = None
         snagline_risks: Any = None
         snagline_auth: str | None = None
+        snagline_max_body: int = 1_000_000
 
         def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
             # Route http.server's access log through logging, not stderr raw.
@@ -82,6 +83,10 @@ def make_handler(
         def do_POST(self) -> None:  # noqa: N802 - http.server naming
             if not self._authorized():
                 self._respond(401, {"error": "unauthorized"})
+                return
+            length = int(self.headers.get("Content-Length") or 0)
+            if length > self.snagline_max_body:
+                self._respond(413, {"error": "payload too large"})
                 return
             if self.path == "/events":
                 self._post_events()
@@ -121,8 +126,36 @@ def make_handler(
         def _post_events(self) -> None:
             body = self._read_body()
             try:
-                event = _handle_event_body(self.snagline_monitor, body)
-            except (ValueError, TypeError, json.JSONDecodeError):
+                obj = json.loads(body.decode("utf-8"))
+            except (ValueError, json.JSONDecodeError):
+                self._respond(400, {"error": "invalid StepEvent JSON"})
+                return
+            if isinstance(obj, list):
+                # Batched ingestion: a JSON array of StepEvent objects. This
+                # lets a host buffer telemetry and flush many steps in one
+                # request (useful for high-throughput or offline replay).
+                count = 0
+                for item in obj:
+                    if not isinstance(item, dict):
+                        self._respond(400, {"error": "invalid StepEvent in batch"})
+                        return
+                    try:
+                        event = StepEvent(**item)
+                    except (ValueError, TypeError):
+                        self._respond(400, {"error": "invalid StepEvent in batch"})
+                        return
+                    self.snagline_monitor.ingest(event)
+                    count += 1
+                self._respond(202, {"status": "ingested", "count": count})
+                return
+            if not isinstance(obj, dict):
+                self._respond(
+                    400, {"error": "event body must be a JSON object or array"}
+                )
+                return
+            try:
+                event = StepEvent(**obj)
+            except (ValueError, TypeError):
                 self._respond(400, {"error": "invalid StepEvent JSON"})
                 return
             # Ingest itself is fail-open inside the Monitor; a bad event shape
@@ -173,6 +206,7 @@ def make_handler(
     _Handler.snagline_tracker = tracker
     _Handler.snagline_risks = []
     _Handler.snagline_auth = auth_token
+    _Handler.snagline_max_body = max_body_bytes
     return _Handler
 
 
@@ -181,9 +215,12 @@ def make_server(
     host: str = "127.0.0.1",
     port: int = 8787,
     auth_token: str | None = None,
+    max_body_bytes: int = 1_000_000,
 ) -> ThreadingHTTPServer:
     """Construct a ready-to-``serve_forever()`` sidecar server."""
-    return ThreadingHTTPServer((host, port), make_handler(monitor, auth_token))
+    return ThreadingHTTPServer(
+        (host, port), make_handler(monitor, auth_token, max_body_bytes)
+    )
 
 
 def serve(
@@ -191,9 +228,10 @@ def serve(
     host: str = "127.0.0.1",
     port: int = 8787,
     auth_token: str | None = None,
+    max_body_bytes: int = 1_000_000,
 ) -> None:
     """Run the sidecar server in the foreground until interrupted."""
-    server = make_server(monitor, host, port, auth_token)
+    server = make_server(monitor, host, port, auth_token, max_body_bytes)
     logger.info(
         "snagline sidecar listening on http://%s:%d (POST /events, GET /health)",
         host,
