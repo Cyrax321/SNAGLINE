@@ -18,6 +18,7 @@ import time
 from collections.abc import Iterator
 from contextlib import suppress
 
+from snagline.config import Config
 from snagline.events import StepEvent
 from snagline.monitor import Monitor
 from snagline.risk import FailureRisk
@@ -84,12 +85,27 @@ def replay(path: str, monitor: Monitor | None = None) -> int:
     return steps
 
 
+def _build_config(args: argparse.Namespace) -> Config:
+    """Resolve the effective Config from --config and SNAGLINE_* env vars."""
+    path = getattr(args, "config", None)
+    return Config.resolve(path=path)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="snagline",
         description="Real-time failure detection for AI agents (v0.1).",
     )
     sub = parser.add_subparsers(dest="command")
+
+    # 12-factor configuration applies across all subcommands: a config file
+    # and/or SNAGLINE_* environment variables tune the detectors (P0).
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="Path to a JSON/TOML config file. Environment variables "
+        "(SNAGLINE_*) override it. See docs/ATTACH_ANY_SYSTEM.md.",
+    )
 
     p_replay = sub.add_parser(
         "replay", help="Replay a JSONL trajectory through the detectors (offline)."
@@ -209,7 +225,7 @@ def _cmd_watch(args: argparse.Namespace) -> int:
         from snagline.sinks.webhook import WebhookSink
 
         sinks.append(WebhookSink(args.webhook_url))
-    monitor = Monitor.default(sinks=sinks or None)
+    monitor = Monitor.default(config=_build_config(args), sinks=sinks or None)
     episode = args.episode_id or (args.file or "stdin")
     steps = 0
     try:
@@ -293,7 +309,7 @@ def _cmd_hook(args: argparse.Namespace) -> int:
     if not args.url and not args.out:
         # Fail-open by construction; Monitor.default() is also fail-open.
         with suppress(Exception):
-            monitor = Monitor.default()
+            monitor = Monitor.default(config=_build_config(args))
             monitor.ingest(event)
     return 0
 
@@ -342,7 +358,11 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         file=sys.stderr,
     )
     with suppress(KeyboardInterrupt):
-        serve(Monitor.default(), host=args.host, port=args.port)
+        serve(
+            Monitor.default(config=_build_config(args)),
+            host=args.host,
+            port=args.port,
+        )
     return 0
 
 
@@ -417,7 +437,7 @@ def main(argv: list[str] | None = None) -> int:
 
             sinks.append(ConsoleSink())
         sinks.append(counter)
-        monitor = Monitor.default(sinks=sinks)
+        monitor = Monitor.default(config=_build_config(args), sinks=sinks)
         steps = replay(args.trajectory, monitor=monitor)
         if args.summary:
             print(
