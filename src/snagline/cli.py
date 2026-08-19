@@ -317,6 +317,33 @@ def _build_parser() -> argparse.ArgumentParser:
         default="baseline.json",
         help="Where to write the fitted baseline JSON [default: baseline.json].",
     )
+    sp.add_argument(
+        "--store-dir",
+        default=None,
+        help="If set, store the baseline in a versioned BaselineStore at this "
+        "root (per --tenant/--deployment) instead of a single --output file.",
+    )
+    sp.add_argument(
+        "--tenant",
+        default="default",
+        help="Tenant scope for the BaselineStore [default: default].",
+    )
+    sp.add_argument(
+        "--deployment",
+        default="default",
+        help="Deployment scope for the BaselineStore [default: default].",
+    )
+    sp.add_argument(
+        "--list-versions",
+        action="store_true",
+        help="With --store-dir: list stored versions and exit (ignores fitting).",
+    )
+    sp.add_argument(
+        "--max-versions",
+        type=int,
+        default=None,
+        help="With --store-dir: cap retained versions (oldest pruned).",
+    )
 
     return parser
 
@@ -451,7 +478,44 @@ def _event_to_json(event: StepEvent) -> dict:
 
 
 def _cmd_baseline(args: argparse.Namespace) -> int:
-    """Fit a healthy-run baseline from a trajectory and persist it as JSON."""
+    """Fit a healthy-run baseline from a trajectory and persist it.
+
+    With ``--store-dir`` the baseline is stored versioned and per-tenant in a
+    ``BaselineStore``; ``--list-versions`` just lists what is already stored.
+    Otherwise it writes a single JSON file (``--output``).
+    """
+    if args.store_dir:
+        from snagline.baseline_store import (
+            BaselineStore,
+            capture_from_jsonl,
+        )
+
+        store = BaselineStore(args.store_dir, max_versions=args.max_versions or 10)
+        if args.list_versions:
+            versions = store.list_versions(args.tenant, args.deployment)
+            if not versions:
+                print(
+                    f"snagline baseline: no stored versions for "
+                    f"{args.tenant}/{args.deployment}"
+                )
+                return 0
+            print(f"snagline baseline: versions for {args.tenant}/{args.deployment}:")
+            for v in versions:
+                print(f"  {v}")
+            return 0
+        version = capture_from_jsonl(
+            store,
+            args.trajectory,
+            tenant=args.tenant,
+            deployment=args.deployment,
+            max_versions=args.max_versions,
+        )
+        print(
+            f"snagline baseline: stored version {version} for "
+            f"{args.tenant}/{args.deployment}"
+        )
+        return 0
+
     from snagline.baseline import fit_baseline_from_jsonl, save_baseline
 
     profile = fit_baseline_from_jsonl(args.trajectory)
