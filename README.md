@@ -502,7 +502,7 @@ SNAGLINE sits at the overlap of real-time monitoring, anomaly detection, and rel
 
 ## Status and Limitations
 
-- **Tested**: 123 tests passing, 1 skipped (see [Verification Status](#empirical-verification)).
+- **Tested**: 129 tests passing, 1 skipped (see [Verification Status](#empirical-verification)).
 - **Not on PyPI.** Install from a clone (see Quick Start).
 - **Overhead is measured, not asserted.** Run `snagline bench` to reproduce on your hardware.
 - **Framework adapters are optional extras.** The LangChain and LangGraph adapters are optional installs (`pip install snagline-agent[langchain]`, etc.). The core is always zero-dependency.

@@ -766,7 +766,7 @@ reported either way.
 ## 15. Status (as of 2026-08-19)
 
 Implementation status against the spec above. All merged to `master` with
-green CI (ruff + mypy + pytest, py3.10-3.13).
+green CI (ruff + mypy + pytest, py3.10-3.13; 129 tests passing, 1 skipped).
 
 ### Shipped
 
@@ -786,9 +786,11 @@ green CI (ruff + mypy + pytest, py3.10-3.13).
   detectors and combines their scores with a transparent noisy-OR; a real
   model can be injected via `model=` (the `ml` extra provides scikit-learn).
 - **Autogen adapter** (`adapters/autogen.py`): `SnaglineAutogenHandler` +
-  `run_and_monitor` wrapping `agent.run_stream`. Duck-typed.
+  `run_and_monitor` wrapping `agent.run_stream`. Duck-typed. Hardened to raise
+  clear errors and guarantee per-episode teardown.
 - **CrewAI adapter** (`adapters/crewai.py`): `snagline_step_callback` for
-  `Agent(step_callback=...)` plus `observe_crewai_step`. Duck-typed.
+  `Agent(step_callback=...)` plus `observe_crewai_step`. Duck-typed. Hardened
+  with unified latency extraction and a close hook.
 - **Docs**: README detector/integration tables + "Baseline and advanced
   detection" section; `docs/DETECTOR_GUIDE.md` and `docs/ADAPTER_GUIDE.md`
   updated; `examples/baseline_to_monitor.py` runnable end-to-end walkthrough.
