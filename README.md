@@ -498,19 +498,20 @@ SNAGLINE sits at the overlap of real-time monitoring, anomaly detection, and rel
 | 16 | ML ensemble detector (`snagline[ml]`) | Complete (deterministic combiner; `snagline[ml]` ESN pending) |
 | 17 | Goal-drift detector (`snagline[drift]`) | Complete (deterministic; `snagline[drift]` embeddings pending) |
 | 18 | AutoGen / CrewAI adapters | Complete |
-| 19 | Slack sink (`SlackSink`) | Complete; PagerDuty planned |
+| 19 | Slack + PagerDuty sinks | Complete |
 
 ## Status and Limitations
 
-- **Tested**: 165 tests passing, 1 skipped (see [Verification Status](#empirical-verification)).
+- **Tested**: 169 tests passing, 1 skipped (see [Verification Status](#empirical-verification)).
 - **Not on PyPI.** Install from a clone (see Quick Start).
 - **Overhead is measured, not asserted.** Run `snagline bench` to reproduce on your hardware.
-- **Framework adapters are optional extras; sinks ship in core.** The LangChain, LangGraph, Autogen, and CrewAI adapters are optional installs (`pip install snagline-agent[langchain]`, etc.). The console, webhook, Slack, and dedup sinks are zero-dependency stdlib and always available.
+- **Framework adapters are optional extras; sinks ship in core.** The LangChain, LangGraph, Autogen, and CrewAI adapters are optional installs (`pip install snagline-agent[langchain]`, etc.). The console, webhook, Slack, PagerDuty, and dedup sinks are zero-dependency stdlib and always available.
 - **The latency anomaly detector requires warm-up.** It learns a baseline from `cusum_min_samples` (default 20) events before any alarm can fire. This prevents false positives on normal jitter but means the detector is blind during warm-up.
 - **No goal-drift detection.** That needs embeddings and is a real dependency; planned for v2 at earliest.
 - **No automatic repair.** Detection and escalation only. Repair is a distinct, harder problem.
 - **Alert spam under sustained anomalies.** The loop and error-cascade detectors emit a risk on every step while the triggering condition holds. Wrap a sink in `DedupSink` to suppress repeats within a cooldown window ([#4](https://github.com/Cyrax321/SNAGLINE/issues/4)).
 - **Slack delivery is fire-and-forget.** `SlackSink` posts to an incoming webhook with a short timeout; it never raises and never blocks `ingest()` for long.
+- **PagerDuty pages on-call.** `PagerDutySink` triggers a PagerDuty Events API v2 incident per qualifying `FailureRisk`, with an optional `min_severity` filter. Fire-and-forget and fail-open.
 - **WebhookSink blocks `ingest()` under the lock.** A slow webhook endpoint blocks concurrent `ingest()` calls for up to the timeout duration. Fix planned (tracked as [#8](https://github.com/Cyrax321/SNAGLINE/issues/8)).
 - **LangChain error events lack latency.** `on_tool_error`, `on_llm_error`, and `on_chain_error` omit `latency_ms` even though the start time is available. Fix planned (tracked as [#17](https://github.com/Cyrax321/SNAGLINE/issues/17)).
 

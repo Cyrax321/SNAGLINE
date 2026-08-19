@@ -766,13 +766,14 @@ reported either way.
 ## 15. Status (as of 2026-08-19)
 
 Implementation status against the spec above. All merged to `master` with
-green CI (ruff + mypy + pytest, py3.10-3.13; 129 tests passing, 1 skipped).
+green CI (ruff + mypy + pytest, py3.10-3.13; 169 tests passing, 1 skipped).
 
 ### Shipped
 
 - **Core v0.1** (steps 1-2, 4): `events`, `risk`, `Monitor` (fail-open),
-  loop, error-cascade, latency/CUSUM detectors, console + webhook sinks,
-  `raw` adapter, `snagline replay`, overhead benchmark. Zero required deps.
+  loop, error-cascade, latency/CUSUM detectors, console, webhook, Slack,
+  PagerDuty, and dedup sinks, `raw` adapter, `snagline replay`, overhead
+  benchmark. Zero required deps.
 - **`snagline baseline` command** (§9): `src/snagline/baseline.py` fits a
   `BaselineProfile` (per-tool latency mean/std/min/max + error rate) from a
   JSONL trajectory; `save_baseline`/`load_baseline` round-trip it. Exposed at
@@ -791,6 +792,15 @@ green CI (ruff + mypy + pytest, py3.10-3.13; 129 tests passing, 1 skipped).
 - **CrewAI adapter** (`adapters/crewai.py`): `snagline_step_callback` for
   `Agent(step_callback=...)` plus `observe_crewai_step`. Duck-typed. Hardened
   with unified latency extraction and a close hook.
+- **Slack sink** (`sinks/slack.py`): posts `FailureRisk` to a Slack incoming
+  webhook via stdlib `urllib.request`. Zero-dependency core sink with an
+  optional `min_severity` filter; fire-and-forget (never raises, short timeout).
+- **`DedupSink`** (`sinks/dedup.py`): wraps any `AlertSink` and suppresses
+  identical alerts within a cooldown window (issue #4), so sustained anomalies
+  page once instead of storming on-call. Customizable `key_fn`; zero dependency.
+- **PagerDuty sink** (`sinks/pagerduty.py`): triggers a PagerDuty Events API v2
+  incident per qualifying `FailureRisk` via stdlib `urllib.request`. Optional
+  `min_severity` filter; fire-and-forget and fail-open.
 - **Docs**: README detector/integration tables + "Baseline and advanced
   detection" section; `docs/DETECTOR_GUIDE.md` and `docs/ADAPTER_GUIDE.md`
   updated; `examples/baseline_to_monitor.py` runnable end-to-end walkthrough.
@@ -801,7 +811,6 @@ green CI (ruff + mypy + pytest, py3.10-3.13; 129 tests passing, 1 skipped).
   `ml_ensemble` shipped detector is the deterministic stand-in.
 - `drift` extra semantic goal-drift (`drift/goal_drift.py`,
   sentence-transformers).
-- `claude_code_adapter.py`, `continuum_adapter.py`/`continuum_sink.py`,
-  `openai_adapter.py`, `anthropic_adapter.py`, and the sidecar server mode
-  (`server/http_server.py`).
+- `continuum_adapter.py`/`continuum_sink.py`, `openai_adapter.py`,
+  `anthropic_adapter.py`.
 - `benchmarks/detection_accuracy.py` (paper-number honesty gate in §14).
