@@ -81,12 +81,22 @@ enterprise-grade alerting. Concretely:
    lingua franca for any language or runtime. Validate it round-trips
    `StepEvent`, add auth (HMAC or bearer) and TLS verification, and document
    the schema.
+   - **Done:** bearer/token auth (#31), body-size cap + batched `POST /events`
+     (#32), 12-factor config + CLI wiring (#36). TLS termination is delegated
+     to a reverse proxy (not in-process) - documented as such.
 2. **Add Python auto-instrumentation.** Wrap OpenAI/Anthropic clients and
    LangChain automatically so a user adds one line (`import snagline.auto`)
    instead of editing every call. This is the real "attach to any system"
    lever.
+   - **Done:** `snagline.auto.openai` (#33), `snagline.auto.anthropic` (#34),
+     `snagline.auto.langchain` (#35). All import-safe (no-op when SDK absent)
+     and handle sync + async.
 3. **Publish to PyPI** with versioning and per-framework extras; load config
    from env/yml with secret handling (12-factor).
+   - **Done (code side):** PyPI-ready metadata + verified `python -m build`
+     sdist/wheel (#37); `Config.from_env` / `load_file` / `resolve` 12-factor
+     loader (#30) wired into the CLI (#36). Actual `pip install snagline-agent`
+     upload still needs a PyPI token (not performed automatically).
 
 ### P1 (production readiness)
 
@@ -114,6 +124,21 @@ enterprise-grade alerting. Concretely:
 ## Suggested starting point
 
 P0 items 1 to 3 are what turn this from "a library you wire in" into
-"something you attach." The highest-leverage, lowest-risk first move is the
-HTTP sidecar hardening plus a config and secrets loader, followed by the
-auto-instrumentation hook.
+"something you attach." They are now implemented (see Progress below). The
+next highest-leverage move is P1 item 4 (pluggable state backend) and P1
+item 5 (alerting dedup/cooldown + Slack/PagerDuty sinks).
+
+## Progress log
+
+- **sidecar auth + hardening + 12-factor config + auto-instrumentation + PyPI
+  metadata** (P0). Granular PRs, all merged with green CI:
+  - #30 `feat/config-env-loader` - `Config.from_env` / `load_file`.
+  - #31 `feat/sidecar-auth` - bearer/token auth on the sidecar.
+  - #32 `feat/sidecar-hardening` - body-size cap + batched events.
+  - #33 `feat/auto-openai` - OpenAI auto-instrumentation.
+  - #34 `feat/auto-anthropic` - Anthropic auto-instrumentation.
+  - #35 `feat/auto-langchain` - LangChain auto-instrumentation.
+  - #36 `feat/config-cli-wiring` - `Config.resolve` wired into the CLI/Monitor.
+  - #37 `feat/pypi-metadata` - PyPI-ready metadata; `python -m build` verified.
+- **Remaining for true "attach anywhere":** actual PyPI upload (needs token),
+  in-process TLS (or documented reverse-proxy), then P1 items 4-6.
