@@ -23,6 +23,7 @@ from snagline.detectors.base import Detector
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk
 from snagline.sinks.base import AlertSink
+from snagline.state import StateBackend, default_state_backend
 
 logger = logging.getLogger("snagline")
 
@@ -33,6 +34,11 @@ class Monitor:
 
     Fail-open: detector/sink exceptions are caught and logged, never
     propagated into the host agent, unless ``fail_open=False``.
+
+    Concurrency is sharded by ``episode_id`` via a ``StateBackend``: two
+    distinct episodes can be observed concurrently, while a single episode's
+    events serialize. This removes the single global ingest lock that would
+    bottleneck a high-throughput service (P1, item 4).
     """
 
     def __init__(
@@ -40,11 +46,12 @@ class Monitor:
         detectors: list[Detector],
         sinks: list[AlertSink],
         fail_open: bool = True,
+        state_backend: StateBackend | None = None,
     ) -> None:
         self._detectors = list(detectors)
         self._sinks = list(sinks)
         self._fail_open = fail_open
-        self._lock = threading.Lock()
+        self._state = state_backend or default_state_backend()
         # A faulty detector or sink must not spam the logs on every single step
         # (issue #14) -- log each distinct fault exactly once.
         self._fault_lock = threading.Lock()
@@ -62,7 +69,7 @@ class Monitor:
         that re-enters ``ingest`` must not deadlock.
         """
         risks: list[FailureRisk] = []
-        with self._lock:
+        with self._state.episode_lock(event.episode_id):
             for detector in self._detectors:
                 try:
                     risk = detector.observe(event)
@@ -117,7 +124,7 @@ class Monitor:
 
         Fail-open: a detector's ``reset`` exception is logged, never propagated.
         """
-        with self._lock:
+        with self._state.episode_lock(episode_id):
             for detector in self._detectors:
                 try:
                     detector.reset(episode_id)
@@ -134,6 +141,7 @@ class Monitor:
         cls,
         config: Config | None = None,
         sinks: list[AlertSink] | None = None,
+        state_backend: StateBackend | None = None,
     ) -> Monitor:
         """Construct a zero-configuration Monitor with sensible defaults.
 
@@ -164,4 +172,8 @@ class Monitor:
         else:
             detectors = list(base)
         chosen_sinks: list[AlertSink] = sinks if sinks is not None else [ConsoleSink()]
-        return cls(detectors, chosen_sinks, fail_open=cfg.fail_open)
+        monitor = cls(detectors, chosen_sinks, fail_open=cfg.fail_open)
+        # Set after construction so subclasses with a fixed __init__ signature
+        # (e.g. test doubles) still work; base Monitor.__init__ also sets it.
+        monitor._state = state_backend or default_state_backend()
+        return monitor
