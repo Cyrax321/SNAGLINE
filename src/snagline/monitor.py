@@ -28,6 +28,29 @@ from snagline.state import StateBackend, default_state_backend
 logger = logging.getLogger("snagline")
 
 
+class MonitorMetrics:
+    """Self-observability counters for a Monitor (P3, item 10).
+
+    Lets an operator see, without touching the host, how much traffic the
+    monitor is handling and whether its detectors/sinks are faulting. Counts
+    are incremented under a dedicated lock so concurrent ingest stays safe.
+    """
+
+    def __init__(self) -> None:
+        self.events_ingested = 0
+        self.risks_emitted = 0
+        self.detector_errors = 0
+        self.sink_errors = 0
+
+    def as_dict(self) -> dict:
+        return {
+            "events_ingested": self.events_ingested,
+            "risks_emitted": self.risks_emitted,
+            "detector_errors": self.detector_errors,
+            "sink_errors": self.sink_errors,
+        }
+
+
 class Monitor:
     """Runs every registered detector against each ingested event and
     dispatches any resulting ``FailureRisk`` to every registered sink.
@@ -56,6 +79,8 @@ class Monitor:
         # (issue #14) -- log each distinct fault exactly once.
         self._fault_lock = threading.Lock()
         self._fault_logged: set[str] = set()
+        self._metrics = MonitorMetrics()
+        self._metrics_lock = threading.Lock()
 
     def ingest(self, event: StepEvent) -> None:
         """Run all detectors against ``event`` and dispatch any risks.
@@ -74,6 +99,7 @@ class Monitor:
                 try:
                     risk = detector.observe(event)
                 except Exception:
+                    self._incr("detector_errors")
                     self._log_fault_once(
                         f"detector {getattr(detector, 'name', repr(detector))} "
                         "raised; ignoring (fail-open)"
@@ -83,6 +109,9 @@ class Monitor:
                     continue
                 if risk is not None:
                     risks.append(risk)
+        with self._metrics_lock:
+            self._metrics.events_ingested += 1
+            self._metrics.risks_emitted += len(risks)
         for risk in risks:
             self._dispatch(risk)
 
@@ -91,11 +120,21 @@ class Monitor:
             try:
                 sink.emit(risk)
             except Exception:
+                self._incr("sink_errors")
                 self._log_fault_once(
                     f"sink {type(sink).__name__} raised; ignoring (fail-open)"
                 )
                 if not self._fail_open:
                     raise
+
+    def _incr(self, name: str) -> None:
+        with self._metrics_lock:
+            setattr(self._metrics, name, getattr(self._metrics, name) + 1)
+
+    def metrics(self) -> dict:
+        """Return a snapshot of self-observability counters (P3, item 10)."""
+        with self._metrics_lock:
+            return self._metrics.as_dict()
 
     def _log_fault_once(self, key: str) -> None:
         """Log a fail-open fault, but only the first time we see this exact
