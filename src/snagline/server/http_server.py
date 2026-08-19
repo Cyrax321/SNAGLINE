@@ -7,6 +7,12 @@ shell script, a Claude Code hook) can POST ``StepEvent`` JSON to:
     POST /hooks/claude-code  body: a native Claude Code hook payload -> mapped + ingested
     GET  /health                                                     -> 200 OK
 
+Optionally protect the POST endpoints with a shared secret by passing
+``auth_token=`` to ``make_server``/``serve``. When set, POSTs must carry the
+token via ``Authorization: Bearer <token>`` or ``X-Snagline-Token: <token>``;
+missing or wrong tokens get 401. ``GET /health`` stays open for liveness
+probes.
+
 No framework, no third-party dependency -- this keeps the zero-dependency
 principle intact even for server mode. For high-throughput production use,
 front it with a real ASGI server / reverse proxy; that is the user's infra
@@ -39,7 +45,9 @@ def _handle_event_body(monitor: Monitor, body: bytes) -> StepEvent:
     return StepEvent(**obj)
 
 
-def make_handler(monitor: Monitor) -> type[BaseHTTPRequestHandler]:
+def make_handler(
+    monitor: Monitor, auth_token: str | None = None
+) -> type[BaseHTTPRequestHandler]:
     """Build a request-handler class bound to ``monitor``."""
     tracker = HookTracker()
 
@@ -48,10 +56,20 @@ def make_handler(monitor: Monitor) -> type[BaseHTTPRequestHandler]:
         snagline_monitor: Any = None
         snagline_tracker: Any = None
         snagline_risks: Any = None
+        snagline_auth: str | None = None
 
         def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
             # Route http.server's access log through logging, not stderr raw.
             logger.debug("snagline http: " + format, *args)
+
+        def _authorized(self) -> bool:
+            token = self.snagline_auth
+            if not token:
+                return True
+            authz = self.headers.get("Authorization", "")
+            if authz.startswith("Bearer "):
+                return authz[len("Bearer ") :].strip() == token
+            return self.headers.get("X-Snagline-Token") == token
 
         def do_GET(self) -> None:  # noqa: N802 - http.server naming
             if self.path == "/health":
@@ -62,6 +80,9 @@ def make_handler(monitor: Monitor) -> type[BaseHTTPRequestHandler]:
                 self._respond(404, {"error": "not found"})
 
         def do_POST(self) -> None:  # noqa: N802 - http.server naming
+            if not self._authorized():
+                self._respond(401, {"error": "unauthorized"})
+                return
             if self.path == "/events":
                 self._post_events()
             elif self.path == "/hooks/claude-code":
@@ -151,19 +172,28 @@ def make_handler(monitor: Monitor) -> type[BaseHTTPRequestHandler]:
     _Handler.snagline_monitor = monitor
     _Handler.snagline_tracker = tracker
     _Handler.snagline_risks = []
+    _Handler.snagline_auth = auth_token
     return _Handler
 
 
 def make_server(
-    monitor: Monitor, host: str = "127.0.0.1", port: int = 8787
+    monitor: Monitor,
+    host: str = "127.0.0.1",
+    port: int = 8787,
+    auth_token: str | None = None,
 ) -> ThreadingHTTPServer:
     """Construct a ready-to-``serve_forever()`` sidecar server."""
-    return ThreadingHTTPServer((host, port), make_handler(monitor))
+    return ThreadingHTTPServer((host, port), make_handler(monitor, auth_token))
 
 
-def serve(monitor: Monitor, host: str = "127.0.0.1", port: int = 8787) -> None:
+def serve(
+    monitor: Monitor,
+    host: str = "127.0.0.1",
+    port: int = 8787,
+    auth_token: str | None = None,
+) -> None:
     """Run the sidecar server in the foreground until interrupted."""
-    server = make_server(monitor, host, port)
+    server = make_server(monitor, host, port, auth_token)
     logger.info(
         "snagline sidecar listening on http://%s:%d (POST /events, GET /health)",
         host,
