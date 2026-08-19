@@ -220,6 +220,36 @@ def test_health_open_without_token():
         server.server_close()
 
 
+def test_metrics_endpoint_reports_ingested_counts():
+    server, base = _start_server(_RecordingSink())
+    try:
+        event = {
+            "step_id": "0",
+            "episode_id": "ep-metrics",
+            "timestamp": 1718300000.0,
+            "action_type": "tool_call",
+            "action_signature": "aaaa1111bbbb2222",
+            "tool_name": "search",
+        }
+        req = urllib.request.Request(
+            base + "/events",
+            data=json.dumps(event).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            assert resp.status == 202
+        with urllib.request.urlopen(base + "/metrics", timeout=5) as resp:
+            assert resp.status == 200
+            body = json.loads(resp.read())
+        assert body["events_ingested"] >= 1
+        assert "risks_emitted" in body
+        assert "detector_errors" in body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_unknown_paths_are_404():
     server, base = _start_server(_RecordingSink())
     try:

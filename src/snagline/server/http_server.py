@@ -7,6 +7,7 @@ shell script, a Claude Code hook) can POST ``StepEvent`` JSON to:
                                or a JSON array of StepEvent objects     (batched)
     POST /hooks/claude-code  body: a native Claude Code hook payload -> mapped + ingested
     GET  /health                                                     -> 200 OK
+    GET  /metrics                                                    -> self-observability counters
 
 POST bodies are capped at ``max_body_bytes`` (default 1 MB); larger payloads
 get 413. This keeps the sidecar safe to expose and able to absorb buffered
@@ -75,6 +76,8 @@ def make_handler(
         def do_GET(self) -> None:  # noqa: N802 - http.server naming
             if self.path == "/health":
                 self._respond(200, {"status": "ok"})
+            elif self.path == "/metrics":
+                self._respond(200, self.snagline_monitor.metrics())
             elif self.path == "/risks":
                 self._respond(200, {"risks": self.snagline_risks})
             else:
