@@ -1,52 +1,34 @@
-<!--
-Thank you for contributing to CONTINUUM.
+📝 Summary of Changes
 
-Please fill out each section below. Sections left empty may delay review.
-The PR title should follow conventional commits, for example:
-feat: add recovery validator for partial checkpoints
+Please provide a clear and concise summary of the changes you've made.
 
--->
 
-## Description
+🎯 Justification
 
-<!-- Describe what this PR changes. Explain the approach where the approach itself is non-obvious. -->
+Explain why this change is important and which use case benefits from this
+change.
 
-## Related issues
 
-<!--
-Link the issue this PR addresses.
-Use "Fixes #N" if merging this PR fully resolves the issue,
-otherwise use "Addresses #N" or "Refs #N".
-If there is no related issue, explain why here.
--->
+🚀 Kind of Contribution
 
-## Types of changes
+Please remove what does not apply: 🐛 Bug Fix, ⚡️ Performance Improvement,
+✨ New Feature, ♻️ Cleanup, 📚 Documentation, 🧪 Tests
 
-<!-- Keep the one that applies, delete the rest. -->
 
-- Type: `bugfix` | `feature` | `refactor` | `performance` | `docs` | `tests` | `build` | `ci`
+📊 Benchmark (for Performance Improvements)
 
-## Breaking changes
+If this change affects detection latency or overhead, include numbers from
+`benchmarks/overhead_benchmark.py` before and after the change.
 
-<!-- State Yes or No. If Yes, describe the impact and the migration path for users. -->
 
-## How has this been tested?
+🧪 Unit Tests:
 
-<!-- Describe the tests you ran to verify your changes. Include the exact commands and note the environment. For example:
+What unit tests were added or updated under `tests/`? Every new detector,
+adapter, or sink behaviour should be covered by a focused test case.
 
-pytest tests/test_recovery.py --tb=short -q
-ruff check src/ tests/
-mypy src/continuum
 
-Mention any configuration or environment details relevant to reproducing the run.
--->
+🧪 Execution Tests:
 
-## Checklist
-
-<!-- Reviewers will check these during review. Confirm them before requesting review. -->
-
-Tests added or updated for the changed behaviour. Documentation updated where the change affects user-facing behaviour. CI passes on the latest commit. Security-relevant changes state known limitations explicitly in this description.
-
-## Additional context
-
-<!-- Anything else reviewers should know: benchmarks, design tradeoffs, alternatives considered. -->
+How was this change verified end to end? For example, attach the monitor to
+one of the examples in `examples/` or a real agent run and describe what
+SNAGLINE reported.

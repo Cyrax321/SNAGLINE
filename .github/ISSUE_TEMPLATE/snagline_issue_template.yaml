@@ -1,0 +1,116 @@
+name: SNAGLINE Issue Template
+description: Use this template to report SNAGLINE-related issues
+body:
+  - type: dropdown
+    id: issue-type
+    attributes:
+      label: Issue type
+      description: What type of issue would you like to report?
+      multiple: false
+      options:
+        - Bug
+        - Build/Install
+        - Performance
+        - Support
+        - Feature Request
+        - Documentation Feature Request
+        - Documentation Bug
+        - Others
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        Please make sure that this is a bug, performance issue, feature request,
+        build/installation issue, or documentation issue. General usage questions
+        are welcome as well, but search existing issues first so duplicates can
+        be avoided.
+
+  - type: dropdown
+    id: latest-master
+    attributes:
+      label: Have you reproduced the bug on the latest commit of `master`?
+      description: It is strongly suggested that you test against the latest commit before reporting.
+      options:
+        - "Yes"
+        - "No"
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        You can obtain the SNAGLINE version with the following:<br>
+        1. From Python: `import snagline; print(snagline.__version__)`<br>
+        2. From source: `git rev-parse HEAD`
+
+  - type: dropdown
+    id: source
+    attributes:
+      label: Source
+      description: SNAGLINE installed from
+      options:
+        - source
+        - binary
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: SNAGLINE version
+      placeholder: e.g., 0.1.0 or commit SHA
+    validations:
+      required: true
+
+  - type: dropdown
+    id: code
+    attributes:
+      label: Custom code
+      options:
+        - "Yes"
+        - "No"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS platform and distribution
+      placeholder: e.g., Linux Ubuntu 22.04, macOS 15.2
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      placeholder: e.g., 3.12
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: Current behavior?
+      description: Also tell us, what did you expect to happen?
+      placeholder: Tell us what you see!
+    validations:
+      required: true
+
+  - type: textarea
+    id: code-to-reproduce
+    attributes:
+      label: Standalone code to reproduce the issue
+      description: Provide a reproducible test case that is the bare minimum necessary to generate the problem.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: Please copy and paste any relevant log output. This will be automatically formatted into code, so no need for backticks.
+      render: shell
