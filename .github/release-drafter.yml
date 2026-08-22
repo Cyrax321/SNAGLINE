@@ -1,0 +1,69 @@
+name-template: "v$RESOLVED_VERSION"
+tag-template: "v$RESOLVED_VERSION"
+
+autolabeler:
+  - label: "enhancement"
+    title:
+      - '/^feat(\(.+\))?(!)?:/'
+      - '/^perf(\(.+\))?(!)?:/'
+  - label: "bug"
+    title:
+      - '/^fix(\(.+\))?:/'
+  - label: "documentation"
+    title:
+      - '/^docs(\(.+\))?:/'
+  - label: "ci"
+    title:
+      - '/^ci(\(.+\))?:/'
+      - '/^build(\(.+\))?:/'
+  - label: "tests"
+    title:
+      - '/^test(\(.+\))?:/'
+  - label: "adapter"
+    files:
+      - "src/snagline/adapters/**"
+  - label: "detector"
+    files:
+      - "src/snagline/detectors/**"
+  - label: "sink"
+    files:
+      - "src/snagline/sinks/**"
+  - label: "server"
+    files:
+      - "src/snagline/server/**"
+  - label: "cli"
+    files:
+      - "src/snagline/**/*cli*"
+  - label: "benchmark"
+    files:
+      - "benchmarks/**"
+
+categories:
+  - title: "🚀 Features"
+    labels: ["enhancement"]
+  - title: "🐛 Bug Fixes"
+    labels: ["bug"]
+  - title: "🔌 Adapters & Detectors"
+    labels: ["adapter", "detector", "sink", "server"]
+  - title: "📚 Documentation"
+    labels: ["documentation"]
+  - title: "⚙️ Infrastructure"
+    labels: ["ci", "dependencies"]
+  - title: "🧪 Tests & Benchmarks"
+    labels: ["tests", "benchmark"]
+
+version-resolver:
+  major:
+    labels: ["breaking", "major"]
+  minor:
+    labels: ["enhancement", "feature"]
+  patch:
+    labels: ["bug", "documentation", "ci", "tests", "dependencies", "adapter", "detector"]
+
+template: |
+  ## What's Changed
+
+  $CHANGES
+
+exclude:
+  labels: ["duplicate", "invalid", "wontfix"]

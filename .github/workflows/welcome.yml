@@ -1,0 +1,37 @@
+name: Welcome
+
+on:
+  issues:
+    types: [opened]
+  pull_request_target:
+    types: [opened]
+
+jobs:
+  welcome:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/first-interaction@v1
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          issue-message: |
+            Thanks for opening your first issue in SNAGLINE.
+
+            Taking the time to write up a problem you found is a real
+            contribution, and reports like this are how the project improves.
+            If you can add reproduction steps and your Python version, that
+            helps a maintainer dig in faster. Someone will take a look soon,
+            so keep an eye on this thread.
+          pr-message: |
+            Thanks for your first pull request to SNAGLINE.
+
+            Getting a change from idea to open PR is the hard part, and you
+            have already done it. CI will run automatically. Please make sure
+            it passes and that your PR title follows conventional commits
+            (for example `feat:` or `fix:`). A maintainer will review it soon.
+
+            Review feedback is normal and expected, so do not worry about
+            getting everything perfect on the first try. Thanks again for
+            contributing.

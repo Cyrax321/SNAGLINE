@@ -1,0 +1,39 @@
+adapter:
+  - changed-files:
+      - any-glob-to-any-file: "src/snagline/adapters/**"
+
+detector:
+  - changed-files:
+      - any-glob-to-any-file: "src/snagline/detectors/**"
+
+sink:
+  - changed-files:
+      - any-glob-to-any-file: "src/snagline/sinks/**"
+
+server:
+  - changed-files:
+      - any-glob-to-any-file: "src/snagline/server/**"
+
+cli:
+  - changed-files:
+      - any-glob-to-any-file: ["src/snagline/cli*", "src/snagline/**/*cli*"]
+
+benchmark:
+  - changed-files:
+      - any-glob-to-any-file: ["benchmarks/**", "**/*bench*"]
+
+examples:
+  - changed-files:
+      - any-glob-to-any-file: "examples/**"
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file: ["docs/**", "**/*.md"]
+
+tests:
+  - changed-files:
+      - any-glob-to-any-file: "tests/**"
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file: [".github/workflows/**", ".github/dependabot.yml"]
