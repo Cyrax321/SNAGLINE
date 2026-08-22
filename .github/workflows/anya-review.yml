@@ -9,6 +9,8 @@ on:
 jobs:
   anya-review:
     if: |
+      github.event.comment.user.login != 'anya-research' &&
+      github.event.comment.user.login != 'yuki-fuyutsuki' &&
       contains(github.event.comment.body, '/anya review')
     runs-on: ubuntu-latest
     permissions:

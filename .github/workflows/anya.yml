@@ -9,6 +9,8 @@ on:
 jobs:
   anya:
     if: |
+      github.event.comment.user.login != 'anya-research' &&
+      github.event.comment.user.login != 'yuki-fuyutsuki' &&
       (startsWith(github.event.comment.body, '/anya') ||
       contains(github.event.comment.body, ' /anya')) &&
       !contains(github.event.comment.body, '/anya review')
