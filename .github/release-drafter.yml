@@ -39,17 +39,17 @@ autolabeler:
       - "benchmarks/**"
 
 categories:
-  - title: "🚀 Features"
+  - title: "Features"
     labels: ["enhancement"]
-  - title: "🐛 Bug Fixes"
+  - title: "Bug Fixes"
     labels: ["bug"]
-  - title: "🔌 Adapters & Detectors"
+  - title: "Adapters and Detectors"
     labels: ["adapter", "detector", "sink", "server"]
-  - title: "📚 Documentation"
+  - title: "Documentation"
     labels: ["documentation"]
-  - title: "⚙️ Infrastructure"
+  - title: "Infrastructure"
     labels: ["ci", "dependencies"]
-  - title: "🧪 Tests & Benchmarks"
+  - title: "Tests and Benchmarks"
     labels: ["tests", "benchmark"]
 
 version-resolver:
