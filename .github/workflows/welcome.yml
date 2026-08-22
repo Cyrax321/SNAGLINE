@@ -15,8 +15,8 @@ jobs:
     steps:
       - uses: actions/first-interaction@v3
         with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          issue-message: |
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          issue_message: |
             Thanks for opening your first issue in SNAGLINE.
 
             Taking the time to write up a problem you found is a real
@@ -24,7 +24,7 @@ jobs:
             If you can add reproduction steps and your Python version, that
             helps a maintainer dig in faster. Someone will take a look soon,
             so keep an eye on this thread.
-          pr-message: |
+          pr_message: |
             Thanks for your first pull request to SNAGLINE.
 
             Getting a change from idea to open PR is the hard part, and you
