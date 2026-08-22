@@ -4,7 +4,7 @@ on:
   pull_request_target:
     types: [opened, reopened, synchronize]
   pull_request_review:
-    types: [submitted]
+    types: [submitted, dismissed]
 
 jobs:
   update-labels:
@@ -54,31 +54,47 @@ jobs:
             // Both event payloads carry the PR at payload.pull_request
             const pr = context.payload.pull_request;
             const prNumber = pr.number;
+            const action = context.payload.action;
 
             let addLabel;
             let removeLabels;
 
-            if (isReview) {
-              const state = context.payload.review.state;
-              if (state === "approved") {
-                addLabel = "ready to merge";
-                removeLabels = ["awaiting review", "changes requested"];
-                await thankContributor(pr);
-              } else if (state === "changes_requested") {
+            if (isReview && action === "submitted" && context.payload.review.state === "approved") {
+              addLabel = "ready to merge";
+              removeLabels = ["awaiting review", "changes requested"];
+              await thankContributor(pr);
+            } else if (action === "synchronize") {
+              // New commits pushed: approval no longer reflects HEAD
+              addLabel = null;
+              removeLabels = ["ready to merge"];
+            } else {
+              // Reconcile from the full review history so a lost or gated
+              // pull_request_review run can never leave labels stale.
+              // Covers opened, reopened, submitted (changes_requested/comment),
+              // and dismissed events.
+              const reviews = await github.paginate(github.rest.pulls.listReviews, {
+                owner,
+                repo,
+                pull_number: prNumber,
+                per_page: 100,
+              });
+
+              // Latest non-COMMENT review per reviewer, in submission order
+              const latest = new Map();
+              for (const r of reviews) {
+                if (r.state === "COMMENTED") continue;
+                latest.set(r.user.login, r.state);
+              }
+              const states = [...latest.values()];
+
+              if (states.includes("CHANGES_REQUESTED")) {
                 addLabel = "changes requested";
                 removeLabels = ["awaiting review", "ready to merge"];
+              } else if (states.includes("APPROVED")) {
+                addLabel = "ready to merge";
+                removeLabels = ["awaiting review", "changes requested"];
               } else {
-                // COMMENT reviews do not change approval status
-                return;
-              }
-            } else {
-              const action = context.payload.action;
-              if (action === "synchronize") {
-                // New commits pushed: approval no longer reflects HEAD
-                addLabel = null;
-                removeLabels = ["ready to merge"];
-              } else {
-                // opened or reopened
+                // No actionable reviews yet, or every decision was dismissed
                 addLabel = "awaiting review";
                 removeLabels = ["ready to merge", "changes requested"];
               }
