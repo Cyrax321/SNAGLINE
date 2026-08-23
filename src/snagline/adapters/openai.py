@@ -100,6 +100,227 @@ def observe_openai_call(
     return event
 
 
+def _is_stream_request(kwargs: dict) -> bool:
+    return kwargs.get("stream") is True
+
+
+def _is_stream_like(obj: Any) -> bool:
+    return (
+        hasattr(obj, "__iter__")
+        or hasattr(obj, "__next__")
+        or hasattr(obj, "__aiter__")
+        or hasattr(obj, "__anext__")
+    )
+
+
+class _SyncStreamWrapper:
+    def __init__(
+        self,
+        monitor: Any,
+        counter: Any,
+        episode_id: str,
+        model: Any,
+        sig_text: str,
+        start: float,
+        stream: Any,
+    ) -> None:
+        self._monitor = monitor
+        self._counter = counter
+        self._episode_id = episode_id
+        self._model = model
+        self._sig_text = sig_text
+        self._start = start
+        self._stream = stream
+        self._iter = iter(stream)  # type: ignore[call-overload]
+        self._last: Any = None
+        self._emitted = False
+
+    def __iter__(self) -> Any:
+        return self
+
+    def __next__(self) -> Any:
+        if self._emitted:
+            raise StopIteration
+        try:
+            chunk = next(self._iter)
+            self._last = chunk
+            return chunk
+        except StopIteration:
+            self._emit(error=False, error_type=None)
+            raise
+        except Exception as e:
+            self._emit(error=True, error_type=type(e).__name__)
+            raise
+
+    def close(self) -> None:
+        if not self._emitted:
+            self._emit(error=False, error_type=None)
+        close = getattr(self._stream, "close", None)
+        if callable(close):
+            with contextlib.suppress(Exception):
+                close()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._stream, name)
+
+    def _emit(self, *, error: bool, error_type: str | None) -> None:
+        if self._emitted:
+            return
+        self._emitted = True
+        latency = (time.time() - self._start) * 1000.0
+        tokens_in, tokens_out = (None, None)
+        if not error and self._last is not None:
+            tokens_in, tokens_out = _extract_tokens(self._last)
+            # OpenAI streaming with include_usage also exposes usage on final chunk
+            if tokens_in is None and tokens_out is None:
+                # Some SDKs attach usage to the wrapper stream object itself
+                tokens_in, tokens_out = _extract_tokens(self._stream)
+        sig = make_signature("tool_call", str(self._model), self._sig_text)
+        event = StepEvent(
+            step_id=str(next(self._counter)),
+            episode_id=self._episode_id,
+            timestamp=time.time(),
+            action_type="tool_call",
+            action_signature=sig,
+            tool_name=str(self._model),
+            latency_ms=latency,
+            error=error,
+            error_type=error_type,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            metadata={"adapter": "openai", "stream": True},
+        )
+        with contextlib.suppress(Exception):
+            self._monitor.ingest(event)
+
+    def __del__(self) -> None:
+        if not self._emitted:
+            with contextlib.suppress(Exception):
+                self._emit(error=False, error_type=None)
+
+
+class _AsyncStreamWrapper:
+    def __init__(
+        self,
+        monitor: Any,
+        counter: Any,
+        episode_id: str,
+        model: Any,
+        sig_text: str,
+        start: float,
+        stream: Any,
+    ) -> None:
+        self._monitor = monitor
+        self._counter = counter
+        self._episode_id = episode_id
+        self._model = model
+        self._sig_text = sig_text
+        self._start = start
+        self._stream = stream
+        # aiter() is 3.10+
+        try:
+            self._aiter = stream.__aiter__()  # type: ignore[union-attr]
+        except Exception:
+            self._aiter = aiter(stream)  # type: ignore[arg-type]
+        self._last: Any = None
+        self._emitted = False
+
+    def __aiter__(self) -> Any:
+        return self
+
+    async def __anext__(self) -> Any:
+        if self._emitted:
+            raise StopAsyncIteration
+        try:
+            chunk = await anext(self._aiter)  # type: ignore[arg-type]
+            self._last = chunk
+            return chunk
+        except StopAsyncIteration:
+            self._emit(error=False, error_type=None)
+            raise
+        except Exception as e:
+            self._emit(error=True, error_type=type(e).__name__)
+            raise
+
+    async def aclose(self) -> None:
+        if not self._emitted:
+            self._emit(error=False, error_type=None)
+        close = getattr(self._stream, "aclose", None) or getattr(
+            self._stream, "close", None
+        )
+        if callable(close):
+            with contextlib.suppress(Exception):
+                res = close()
+                if inspect.isawaitable(res):
+                    await res
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._stream, name)
+
+    def _emit(self, *, error: bool, error_type: str | None) -> None:
+        if self._emitted:
+            return
+        self._emitted = True
+        latency = (time.time() - self._start) * 1000.0
+        tokens_in, tokens_out = (None, None)
+        if not error and self._last is not None:
+            tokens_in, tokens_out = _extract_tokens(self._last)
+            if tokens_in is None and tokens_out is None:
+                tokens_in, tokens_out = _extract_tokens(self._stream)
+        sig = make_signature("tool_call", str(self._model), self._sig_text)
+        event = StepEvent(
+            step_id=str(next(self._counter)),
+            episode_id=self._episode_id,
+            timestamp=time.time(),
+            action_type="tool_call",
+            action_signature=sig,
+            tool_name=str(self._model),
+            latency_ms=latency,
+            error=error,
+            error_type=error_type,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            metadata={"adapter": "openai", "stream": True},
+        )
+        with contextlib.suppress(Exception):
+            self._monitor.ingest(event)
+
+
+def _emit_now(
+    monitor: Any,
+    counter: Any,
+    episode_id: str,
+    model: Any,
+    sig_text: str,
+    start: float,
+    *,
+    error: bool,
+    error_type: str | None,
+    result: Any,
+) -> None:
+    latency = (time.time() - start) * 1000.0
+    tokens_in, tokens_out = (None, None)
+    if not error:
+        tokens_in, tokens_out = _extract_tokens(result)
+    sig = make_signature("tool_call", str(model), sig_text)
+    event = StepEvent(
+        step_id=str(next(counter)),
+        episode_id=episode_id,
+        timestamp=time.time(),
+        action_type="tool_call",
+        action_signature=sig,
+        tool_name=str(model),
+        latency_ms=latency,
+        error=error,
+        error_type=error_type,
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        metadata={"adapter": "openai"},
+    )
+    with contextlib.suppress(Exception):
+        monitor.ingest(event)
+
+
 def _wrap_one(monitor: Any, original: Any, episode_id: str, counter: Any) -> Any:
     is_async = inspect.iscoroutinefunction(original)
 
@@ -107,74 +328,73 @@ def _wrap_one(monitor: Any, original: Any, episode_id: str, counter: Any) -> Any
         model = kwargs.get("model", "unknown")
         sig_text = str(kwargs.get("messages") or kwargs.get("prompt") or args)
         start = time.time()
-        error = False
-        error_type: str | None = None
-        result: Any = None
         try:
             result = original(*args, **kwargs)
         except Exception as e:
-            error = True
-            error_type = type(e).__name__
+            _emit_now(
+                monitor,
+                counter,
+                episode_id,
+                model,
+                sig_text,
+                start,
+                error=True,
+                error_type=type(e).__name__,
+                result=None,
+            )
             raise
-        finally:
-            latency = (time.time() - start) * 1000.0
-            tokens_in, tokens_out = (
-                _extract_tokens(result) if not error else (None, None)
+        if _is_stream_request(kwargs) and _is_stream_like(result):
+            # Defer telemetry until stream exhaustion, close, or iteration error
+            return _SyncStreamWrapper(
+                monitor, counter, episode_id, model, sig_text, start, result
             )
-            sig = make_signature("tool_call", str(model), sig_text)
-            event = StepEvent(
-                step_id=str(next(counter)),
-                episode_id=episode_id,
-                timestamp=time.time(),
-                action_type="tool_call",
-                action_signature=sig,
-                tool_name=str(model),
-                latency_ms=latency,
-                error=error,
-                error_type=error_type,
-                tokens_in=tokens_in,
-                tokens_out=tokens_out,
-                metadata={"adapter": "openai"},
-            )
-            with contextlib.suppress(Exception):
-                monitor.ingest(event)
+        _emit_now(
+            monitor,
+            counter,
+            episode_id,
+            model,
+            sig_text,
+            start,
+            error=False,
+            error_type=None,
+            result=result,
+        )
         return result
 
     async def _async(*args: Any, **kwargs: Any) -> Any:
         model = kwargs.get("model", "unknown")
         sig_text = str(kwargs.get("messages") or kwargs.get("prompt") or args)
         start = time.time()
-        error = False
-        error_type = None
-        result = None
         try:
             result = await original(*args, **kwargs)
         except Exception as e:
-            error = True
-            error_type = type(e).__name__
+            _emit_now(
+                monitor,
+                counter,
+                episode_id,
+                model,
+                sig_text,
+                start,
+                error=True,
+                error_type=type(e).__name__,
+                result=None,
+            )
             raise
-        finally:
-            latency = (time.time() - start) * 1000.0
-            tokens_in, tokens_out = (
-                _extract_tokens(result) if not error else (None, None)
+        if _is_stream_request(kwargs) and _is_stream_like(result):
+            return _AsyncStreamWrapper(
+                monitor, counter, episode_id, model, sig_text, start, result
             )
-            sig = make_signature("tool_call", str(model), sig_text)
-            event = StepEvent(
-                step_id=str(next(counter)),
-                episode_id=episode_id,
-                timestamp=time.time(),
-                action_type="tool_call",
-                action_signature=sig,
-                tool_name=str(model),
-                latency_ms=latency,
-                error=error,
-                error_type=error_type,
-                tokens_in=tokens_in,
-                tokens_out=tokens_out,
-                metadata={"adapter": "openai"},
-            )
-            with contextlib.suppress(Exception):
-                monitor.ingest(event)
+        _emit_now(
+            monitor,
+            counter,
+            episode_id,
+            model,
+            sig_text,
+            start,
+            error=False,
+            error_type=None,
+            result=result,
+        )
         return result
 
     return _async if is_async else _sync
