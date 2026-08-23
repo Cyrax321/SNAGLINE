@@ -26,7 +26,15 @@ from snagline.events import EpisodeMeta, StepEvent, make_signature
 from snagline.monitor import Monitor
 from snagline.risk import FailureRisk, TriggerType
 
+try:
+    from importlib.metadata import version
+
+    __version__ = version("snagline-agent")
+except Exception:
+    __version__ = "0.1.0"
+
 __all__ = [
+    "__version__",
     "Monitor",
     "StepEvent",
     "EpisodeMeta",
