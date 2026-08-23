@@ -55,8 +55,8 @@ class ErrorCascadeDetector:
         )
         self._windows: dict[str, deque] = {}
         self._consecutive: dict[str, int] = {}
-        # Dedupe: emit at most once per cascade episode, then stay quiet until
-        # the alarm condition clears and re-arms (issue #4).
+        # Dedupe: emit at most once per cascade, then stay quiet until the alarm
+        # condition clears and re-arms (issue #4).
         self._fired: dict[str, bool] = {}
 
     def _is_error(self, event: StepEvent) -> bool:
@@ -87,6 +87,14 @@ class ErrorCascadeDetector:
         )
 
         if not (consecutive_alarm or density_alarm):
+            # The cascade cleared: re-arm so a later, independent cascade in the
+            # same episode escalates again (mirrors ``LoopDetector``). Without
+            # this the flag latches for the life of the episode, and a long-lived
+            # episode -- a user session, or a sidecar episode that never calls
+            # ``end_episode`` -- alerts exactly once, ever. A *sustained* cascade
+            # still emits only once (issue #4): the flag clears only when neither
+            # rule holds any more.
+            self._fired[event.episode_id] = False
             return None
         # Already escalated this cascade -- suppress until it clears.
         if self._fired.get(event.episode_id, False):
