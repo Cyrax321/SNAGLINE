@@ -1,7 +1,7 @@
 name: Auto Assign
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened]
 
 jobs:
@@ -15,9 +15,17 @@ jobs:
         uses: actions/github-script@v9
         with:
           script: |
-            await github.rest.issues.addAssignees({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-              assignees: ['Cyrax321'],
-            });
+            try {
+              await github.rest.issues.addAssignees({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                assignees: ['Cyrax321'],
+              });
+            } catch (e) {
+              if (e.status === 403) {
+                console.log('Assign skipped: Resource not accessible (likely fork PR with limited token). ' + e.message);
+                return;
+              }
+              throw e;
+            }
