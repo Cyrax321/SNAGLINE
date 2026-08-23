@@ -157,9 +157,13 @@ class Monitor:
         """Signal that ``episode_id`` has finished; clear its per-episode state.
 
         Calls ``reset(episode_id)`` on every detector so loop windows, CUSUM
-        baselines, and cascade counters for that episode are dropped. This is
-        the teardown hook adapters call when an agent run completes; without it,
+        baselines, and cascade counters for that episode are dropped, then asks
+        the state backend to release whatever it holds for that id. This is the
+        teardown hook adapters call when an agent run completes; without it,
         per-episode state would accumulate for the life of the Monitor.
+
+        Backends are only asked to release if they implement it -- a backend
+        written against the narrower ``StateBackend`` protocol is unaffected.
 
         Fail-open: a detector's ``reset`` exception is logged, never propagated.
         """
@@ -171,6 +175,19 @@ class Monitor:
                     self._log_fault_once(
                         f"detector {getattr(detector, 'name', repr(detector))} "
                         "reset raised; ignoring (fail-open)"
+                    )
+                    if not self._fail_open:
+                        raise
+            # Inside the lock: no other thread can be in this episode's
+            # critical section, so dropping the entry cannot strand a holder.
+            release = getattr(self._state, "release", None)
+            if callable(release):
+                try:
+                    release(episode_id)
+                except Exception:
+                    self._log_fault_once(
+                        f"state backend {type(self._state).__name__} release "
+                        "raised; ignoring (fail-open)"
                     )
                     if not self._fail_open:
                         raise
