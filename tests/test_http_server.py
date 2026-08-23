@@ -24,10 +24,13 @@ def _start_server(
     sink: _RecordingSink,
     auth_token: str | None = None,
     max_body_bytes: int | None = None,
+    max_risks: int | None = None,
 ):
     kwargs = {}
     if max_body_bytes is not None:
         kwargs["max_body_bytes"] = max_body_bytes
+    if max_risks is not None:
+        kwargs["max_risks"] = max_risks
     server = make_server(
         Monitor.default(sinks=[sink]),
         host="127.0.0.1",
@@ -38,6 +41,16 @@ def _start_server(
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, f"http://127.0.0.1:{server.server_address[1]}"
+
+
+def _get(base: str, path: str, headers: dict | None = None) -> int:
+    """GET ``path`` and return the status code, HTTPError codes included."""
+    req = urllib.request.Request(base + path, headers=headers or {}, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return int(resp.status)
+    except urllib.error.HTTPError as exc:
+        return int(exc.code)
 
 
 def test_health_endpoint():
@@ -315,6 +328,108 @@ def test_risks_endpoint_records_received_risk():
         with urllib.request.urlopen(base + "/risks", timeout=5) as resp:
             assert resp.status == 200
             assert json.loads(resp.read())["risks"]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_get_metrics_requires_token_when_configured():
+    """Regression: do_GET never consulted _authorized(), so /metrics leaked."""
+    server, base = _start_server(_RecordingSink(), auth_token="secret")
+    try:
+        assert _get(base, "/metrics") == 401
+        assert _get(base, "/metrics", {"Authorization": "Bearer wrong"}) == 401
+        assert _get(base, "/metrics", {"Authorization": "Bearer secret"}) == 200
+        assert _get(base, "/metrics", {"X-Snagline-Token": "secret"}) == 200
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_get_risks_requires_token_when_configured():
+    """Regression: /risks returned every risk the sidecar had ever received --
+    episode ids, triggers, and detail strings -- to an unauthenticated caller."""
+    sink = _RecordingSink()
+    server, base = _start_server(sink, auth_token="secret")
+    try:
+        risk = {
+            "episode_id": "ep-secret",
+            "step_id": "s1",
+            "score": 0.9,
+            "trigger": "loop",
+            "detail": "repeated",
+            "timestamp": 1.0,
+        }
+        req = urllib.request.Request(
+            base + "/risks",
+            data=json.dumps(risk).encode(),
+            headers={"Authorization": "Bearer secret"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            assert resp.status == 202
+
+        assert _get(base, "/risks") == 401
+        req = urllib.request.Request(
+            base + "/risks", headers={"Authorization": "Bearer secret"}, method="GET"
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            assert resp.status == 200
+            assert json.loads(resp.read())["risks"][0]["episode_id"] == "ep-secret"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_unknown_get_path_is_401_not_404_when_token_configured():
+    """An unauthenticated caller must not be able to enumerate which paths
+    exist, so the 404 fallthrough sits behind the token too."""
+    server, base = _start_server(_RecordingSink(), auth_token="secret")
+    try:
+        assert _get(base, "/nope") == 401
+        assert _get(base, "/nope", {"Authorization": "Bearer secret"}) == 404
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_get_endpoints_stay_open_when_no_token_is_configured():
+    """Without auth_token the sidecar is unchanged: GETs are open."""
+    server, base = _start_server(_RecordingSink())
+    try:
+        assert _get(base, "/health") == 200
+        assert _get(base, "/metrics") == 200
+        assert _get(base, "/risks") == 200
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_received_risks_are_bounded():
+    """POST /risks is an open-ended ingest point; retention must be capped."""
+    server, base = _start_server(_RecordingSink(), max_risks=3)
+    try:
+        for i in range(5):
+            req = urllib.request.Request(
+                base + "/risks",
+                data=json.dumps(
+                    {
+                        "episode_id": "ep",
+                        "step_id": str(i),
+                        "score": 0.9,
+                        "trigger": "loop",
+                        "detail": "d",
+                        "timestamp": float(i),
+                    }
+                ).encode(),
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                assert resp.status == 202
+        with urllib.request.urlopen(base + "/risks", timeout=5) as resp:
+            risks = json.loads(resp.read())["risks"]
+        # Oldest dropped, newest kept, and still JSON-serializable.
+        assert [r["step_id"] for r in risks] == ["2", "3", "4"]
     finally:
         server.shutdown()
         server.server_close()
