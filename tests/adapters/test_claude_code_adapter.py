@@ -11,7 +11,9 @@ from snagline.adapters.claude_code import (
     is_claude_code_payload,
     payload_to_event,
 )
+from snagline.config import Config
 from snagline.events import StepEvent
+from snagline.monitor import Monitor
 from snagline.risk import FailureRisk
 
 
@@ -106,6 +108,91 @@ def test_tracker_pairs_pre_and_post_for_latency():
     ev = payload_to_event(_tool_payload("PostToolUse"), tracker=tracker)
     assert ev is not None
     assert ev.latency_ms == 250.0
+
+
+def test_ingest_payload_preserves_latency_on_the_shipped_path():
+    # Issue #64: ingest_payload used to call tracker.note() *before* mapping,
+    # and note() retires the paired PreToolUse start -- so every PostToolUse
+    # came out with latency_ms=None. Assert through ingest_payload (the path
+    # `snagline hook` and POST /hooks/claude-code actually take), not through a
+    # hand-sequenced payload_to_event call.
+    clock = {"now": 0.0}
+    tracker = HookTracker(clock=lambda: clock["now"])
+    m = _RecordingMonitor()
+    ingest_payload(m, _tool_payload("PreToolUse"), tracker)
+    clock["now"] = 0.25
+    ingest_payload(m, _tool_payload("PostToolUse"), tracker)
+    assert [e.latency_ms for e in m.events] == [None, 250.0]
+
+
+def test_pretooluse_carries_no_latency():
+    # Issue #64: PreToolUse fires before the tool runs. Reporting 0.0 ms poisons
+    # the CUSUM baseline with synthetic zeros; it must be None.
+    clock = {"now": 0.0}
+    tracker = HookTracker(clock=lambda: clock["now"])
+    m = _RecordingMonitor()
+    ingest_payload(m, _tool_payload("PreToolUse"), tracker)
+    assert m.events[0].latency_ms is None
+
+
+def test_post_tool_use_failure_also_carries_latency():
+    # A tool that fails still took time; the CUSUM detector must see it.
+    clock = {"now": 0.0}
+    tracker = HookTracker(clock=lambda: clock["now"])
+    m = _RecordingMonitor()
+    ingest_payload(m, _tool_payload("PreToolUse"), tracker)
+    clock["now"] = 1.5
+    ingest_payload(m, _tool_payload("PostToolUseFailure", error="exit 1"), tracker)
+    assert m.events[-1].latency_ms == 1500.0
+    assert m.events[-1].error is True
+
+
+def test_hook_latency_reaches_the_cusum_detector():
+    # Issue #64, end to end: a healthy 100ms baseline followed by a 30s call
+    # must raise a latency_anomaly risk through the real Monitor.
+    risks: list[FailureRisk] = []
+
+    class _Sink:
+        def emit(self, risk: FailureRisk) -> None:
+            risks.append(risk)
+
+    monitor = Monitor.default(config=Config(), sinks=[_Sink()])
+    clock = {"now": 0.0}
+    tracker = HookTracker(clock=lambda: clock["now"])
+
+    def call(i: int, duration_s: float) -> None:
+        p = _tool_payload("PreToolUse", tool_use_id=f"toolu_{i}")
+        p["tool_input"] = {"command": f"step-{i}"}
+        ingest_payload(monitor, p, tracker)
+        clock["now"] += duration_s
+        ingest_payload(monitor, {**p, "hook_event_name": "PostToolUse"}, tracker)
+
+    for i in range(10):
+        call(i, 0.100)
+    call(99, 30.0)
+    assert [r.trigger for r in risks if r.trigger == "latency_anomaly"], (
+        "a 30s tool call after a 100ms baseline must trip the CUSUM detector"
+    )
+
+
+def test_tracker_evicts_stale_starts_by_age_not_wholesale():
+    # Issue #64: the old eviction cleared the whole dict once it passed 256
+    # entries, dropping fresh in-flight starts along with stale ones despite a
+    # comment promising an age-based policy.
+    clock = {"now": 0.0}
+    tracker = HookTracker(clock=lambda: clock["now"], ttl_seconds=600.0, max_pending=8)
+    for i in range(9):  # 9 unpaired PreToolUse starts, all abandoned
+        tracker.note(_tool_payload("PreToolUse", tool_use_id=f"stale_{i}"))
+    clock["now"] = 601.0  # every start above is now past the TTL
+    fresh = _tool_payload("PreToolUse", tool_use_id="fresh")
+    for i in range(9, 18):
+        tracker.note(_tool_payload("PreToolUse", tool_use_id=f"more_{i}"))
+    tracker.note(fresh)
+    clock["now"] = 601.5
+    ev = payload_to_event(_tool_payload("PostToolUse", tool_use_id="fresh"), tracker)
+    assert ev is not None
+    assert ev.latency_ms == 500.0, "a fresh in-flight start must survive eviction"
+    assert not any(k.startswith("stale_") for k in tracker._starts)
 
 
 def test_user_prompt_submit_maps_and_repeats_are_detectable():

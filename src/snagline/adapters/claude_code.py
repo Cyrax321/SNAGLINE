@@ -27,6 +27,7 @@ signature, never ``metadata``.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import time
 import uuid
@@ -60,22 +61,49 @@ class HookTracker:
     and defensive: malformed payloads never raise out of ``note``/``latency``.
     """
 
-    def __init__(self, clock=None) -> None:
+    def __init__(
+        self,
+        clock=None,
+        ttl_seconds: float = 600.0,
+        max_pending: int = 1024,
+    ) -> None:
         self._clock = clock or time.monotonic
         self._starts: dict[str, float] = {}
+        self._ttl = ttl_seconds
+        self._max_pending = max_pending
 
     def note(self, payload: dict) -> None:
+        """Record a ``PreToolUse`` start, or retire a paired start.
+
+        Call this *after* the payload has been mapped: it pops the start, so
+        reading the latency afterwards would always see ``None`` (issue #64).
+        """
         event = payload.get("hook_event_name")
         tool_use_id = payload.get("tool_use_id")
         if not isinstance(tool_use_id, str):
             return
+        now = self._clock()
         if event == "PreToolUse":
-            self._starts[tool_use_id] = self._clock()
+            self._starts[tool_use_id] = now
         else:
             self._starts.pop(tool_use_id, None)
-        # Bound memory: drop stale starts older than 10 minutes.
-        if len(self._starts) > 256:
-            self._starts.clear()
+        if len(self._starts) > self._max_pending:
+            self._evict(now)
+
+    def _evict(self, now: float) -> None:
+        """Bound memory by age, so a tool still running keeps its start.
+
+        A ``PreToolUse`` whose ``PostToolUse`` never arrives (crashed tool,
+        dropped hook) would otherwise leak. Drop those by age first; only if
+        nothing is actually stale do we shed the oldest half, which keeps the
+        newest -- still pairable -- starts.
+        """
+        cutoff = now - self._ttl
+        for key in [k for k, started in self._starts.items() if started < cutoff]:
+            del self._starts[key]
+        if len(self._starts) > self._max_pending:
+            by_age = sorted(self._starts.items(), key=lambda kv: kv[1])
+            self._starts = dict(by_age[len(by_age) // 2 :])
 
     def latency_ms(self, payload: dict) -> float | None:
         tool_use_id = payload.get("tool_use_id")
@@ -94,9 +122,12 @@ def payload_to_event(
 ) -> StepEvent | None:
     """Map one Claude Code hook payload to a ``StepEvent`` (or ``None``).
 
-    ``tracker`` is consulted for latency: call ``tracker.note(payload)`` on
-    every payload (including unmapped ones), then this function fills
-    ``latency_ms`` on ``PostToolUse`` events.
+    ``tracker`` is consulted for latency: map the payload with this function
+    first, then call ``tracker.note(payload)``. ``note`` retires the paired
+    ``PreToolUse`` start, so noting before mapping loses the latency entirely
+    (issue #64). ``latency_ms`` is filled only on the events that *end* a tool
+    call (``PostToolUse`` / ``PostToolUseFailure``); a ``PreToolUse`` has not
+    run yet and therefore has no duration.
     """
     mapped = _EVENT_MAP.get(str(payload.get("hook_event_name")))
     if mapped is None:
@@ -131,8 +162,13 @@ def payload_to_event(
             else (str(err) if err else payload.get("hook_event_name"))
         )
 
+    # Only the event that *ends* a tool call has a duration; PreToolUse fires
+    # before the tool runs, so asking the tracker there would read the start it
+    # just wrote and report a bogus 0.0 ms (issue #64).
     latency_ms = (
-        tracker.latency_ms(payload) if tracker is not None and is_tool else None
+        tracker.latency_ms(payload)
+        if tracker is not None and is_tool and subkind == "end"
+        else None
     )
 
     return StepEvent(
@@ -154,18 +190,25 @@ def payload_to_event(
 def ingest_payload(
     monitor: Any, payload: dict, tracker: HookTracker | None = None
 ) -> StepEvent | None:
-    """Convenience: note the payload on ``tracker`` and ingest the mapped event.
+    """Convenience: map the payload, ingest it, then note it on ``tracker``.
 
     Returns the event that was ingested, or ``None`` for unmapped events.
     Never raises: mapping/ingest failures are the Monitor's fail-open concern,
     and a bridge must not break the host process.
+
+    Order matters. ``tracker.note`` retires the ``PreToolUse`` start that
+    ``payload_to_event`` needs to compute ``latency_ms``, so mapping happens
+    first and the tracker is updated afterwards -- in a ``finally`` so an
+    unmapped or malformed payload still advances the tracker (issue #64).
     """
     try:
-        if tracker is not None:
-            tracker.note(payload)
         event = payload_to_event(payload, tracker=tracker)
         if event is not None:
             monitor.ingest(event)
         return event
     except Exception:
         return None
+    finally:
+        if tracker is not None:
+            with contextlib.suppress(Exception):
+                tracker.note(payload)
