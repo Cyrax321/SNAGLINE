@@ -25,6 +25,7 @@ the adapter stays loosely coupled to a specific CrewAI release.
 from __future__ import annotations
 
 import itertools
+import json
 import time
 from collections.abc import Callable
 from typing import Any
@@ -67,6 +68,39 @@ def _extract_text(step: dict[str, Any]) -> str:
     return ""
 
 
+def _extract_tool_input(step: dict[str, Any]) -> str | None:
+    """Canonical form of the tool arguments, or ``None`` when unavailable.
+
+    The arguments -- not the model's prose -- are what make two tool calls "the
+    same attempt" (see ``make_signature`` and docs/ADAPTER_GUIDE.md). CrewAI
+    exposes them on the step itself or nested under ``action``, so mirror the
+    dual lookup :func:`_extract_tool_name` already does. ``sort_keys`` matches
+    the canonicalization the Claude Code adapter uses, so a dict payload hashes
+    the same regardless of key order.
+
+    A payload JSON cannot represent (unorderable key types, a reference cycle,
+    an arbitrary object) yields ``None`` so the caller keeps its previous stable
+    part. Serializing is deliberately strict rather than falling back to
+    ``str``: the default repr of an object embeds its memory address, which
+    would vary per attempt and defeat loop detection all over again.
+    """
+    action = step.get("action") if isinstance(step.get("action"), dict) else None
+    for src in (action, step):
+        if src is None:
+            continue
+        val = src.get("tool_input")
+        if val is None:
+            continue
+        try:
+            return json.dumps(val, sort_keys=True)
+        except Exception:
+            # _map_step runs in the framework's thread, before Monitor.ingest
+            # and therefore outside its fail-open guard, so an exotic payload
+            # must never propagate into the host agent.
+            return None
+    return None
+
+
 def _map_step(
     step: Any,
     *,
@@ -86,7 +120,17 @@ def _map_step(
     action: dict[str, Any] = raw_action if isinstance(raw_action, dict) else {}
     if latency is None:
         latency = action.get("latency_ms")
-    sig = make_signature(action_type, tool_name, text or str(d))
+    # Key the signature on the *attempt* -- tool plus arguments -- never on the
+    # step's output. Model prose is re-worded on every retry, so hashing it made
+    # a stuck loop look like a stream of unique actions, while omitting the
+    # arguments collapsed a legitimate iteration into one signature (issue #61).
+    # Non-tool steps carry no argument payload, so they keep hashing the text.
+    tool_args = _extract_tool_input(d)
+    if action_type == "tool_call" and tool_args is not None:
+        stable = tool_args
+    else:
+        stable = text or str(d)
+    sig = make_signature(action_type, tool_name, stable)
     return StepEvent(
         step_id=step_id,
         episode_id=episode_id,

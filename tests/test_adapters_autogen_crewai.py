@@ -6,6 +6,8 @@ import asyncio
 
 from snagline.adapters.autogen import SnaglineAutogenHandler, run_and_monitor
 from snagline.adapters.crewai import observe_crewai_step, snagline_step_callback
+from snagline.detectors.loop import LoopDetector
+from snagline.monitor import Monitor
 
 
 class _Collector:
@@ -216,3 +218,75 @@ def test_crewai_callback_close_ends_episode():
     cb.close()
     assert mon.ended == ["ep-7"]
     assert len(mon.events) == 1
+
+
+def _crewai_step(tool_input, text, tool="search"):
+    # Shape of crewai.agents.parser.AgentAction: the raw LLM block lands in
+    # ``text``, the argument payload in ``tool_input``.
+    return {"tool": tool, "tool_input": tool_input, "text": text}
+
+
+def test_crewai_signature_is_stable_across_reworded_prose():
+    # Issue #61: the signature must come from the tool arguments, not the step
+    # output. A stuck agent retries the identical call while the model re-words
+    # its thought each attempt; if that prose feeds the hash, every retry looks
+    # unique and the loop detector never fires.
+    mon = _Collector()
+    args = '{"query": "Q3 revenue"}'
+    first = observe_crewai_step(  # noqa: F821
+        mon, "ep", _crewai_step(args, "Thought: let me search for that")
+    )
+    second = observe_crewai_step(  # noqa: F821
+        mon, "ep", _crewai_step(args, "Thought: the search failed, retrying")
+    )
+    assert first.action_signature == second.action_signature
+    # The nested ``action`` dict shape must resolve to the same signature.
+    nested = observe_crewai_step(  # noqa: F821
+        mon,
+        "ep",
+        {"action": {"tool": "search", "tool_input": args}, "text": "unrelated prose"},
+    )
+    assert nested.action_signature == first.action_signature
+
+
+def test_crewai_different_tool_inputs_have_different_signatures():
+    # Issue #61, other direction: leaving the arguments out entirely collapses a
+    # legitimate iteration over distinct inputs into one signature, which the
+    # loop detector then reports as a loop. Same prose, different arguments.
+    mon = _Collector()
+    text = "Thought: look up the next city"
+    a = observe_crewai_step(mon, "ep", _crewai_step('{"q": "Paris"}', text))  # noqa: F821
+    b = observe_crewai_step(mon, "ep", _crewai_step('{"q": "Berlin"}', text))  # noqa: F821
+    assert a.action_signature != b.action_signature
+
+
+def test_crewai_stuck_tool_loop_escalates_end_to_end():
+    # The user-visible consequence, through a real Monitor and LoopDetector: an
+    # agent that keeps issuing the same call with the same arguments must
+    # escalate exactly once (the dedupe from issue #4 keeps it to one).
+    risks = []
+
+    class _Sink:
+        def emit(self, risk):
+            risks.append(risk)
+
+    monitor = Monitor([LoopDetector()], [_Sink()])
+    cb = snagline_step_callback(monitor, "ep-stuck")  # noqa: F821
+    for i in range(5):
+        cb(_crewai_step('{"query": "Q3 revenue"}', f"Thought: attempt {i}"))
+    assert [r.trigger for r in risks] == ["loop"]
+
+
+def test_crewai_exotic_tool_input_does_not_raise_into_the_host():
+    # Mapping runs in the framework's thread, before Monitor.ingest and so
+    # outside its fail-open guard. A payload JSON cannot canonicalize (unorderable
+    # key types, a reference cycle, an arbitrary object) must fall back to the
+    # previous stable part rather than surface inside the user's agent.
+    mon = _Collector()
+    cb = snagline_step_callback(mon, "ep-odd")  # noqa: F821
+    cycle: dict = {"a": None}
+    cycle["a"] = cycle
+    for payload in ({1: "a", "b": 2}, cycle, {"x", "y"}, object()):
+        cb({"tool": "search", "tool_input": payload, "text": "prose"})
+    assert len(mon.events) == 4
+    assert all(ev.action_signature for ev in mon.events)
