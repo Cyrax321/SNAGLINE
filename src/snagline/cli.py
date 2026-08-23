@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from collections.abc import Iterator
@@ -243,6 +244,27 @@ def _build_parser() -> argparse.ArgumentParser:
         "--host", default="127.0.0.1", help="Bind address [default: 127.0.0.1]."
     )
     p_serve.add_argument("--port", type=int, default=8787, help="Port [default: 8787].")
+    p_serve.add_argument(
+        "--auth-token",
+        default=None,
+        help="Shared secret required on every request except GET /health "
+        "(Authorization: Bearer <token> or X-Snagline-Token). Falls back to "
+        "$SNAGLINE_SERVE_AUTH_TOKEN, which keeps the secret out of argv. "
+        "Unset means all endpoints are open.",
+    )
+    p_serve.add_argument(
+        "--max-body-bytes",
+        type=int,
+        default=1_000_000,
+        help="Reject POST bodies larger than this with 413 [default: 1000000].",
+    )
+    p_serve.add_argument(
+        "--max-risks",
+        type=int,
+        default=1000,
+        help="How many risks received on POST /risks to retain for GET /risks "
+        "[default: 1000].",
+    )
     p_serve.add_argument(
         "--sink",
         choices=["console", "webhook", "slack", "pagerduty"],
@@ -541,15 +563,27 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         sinks = _build_sinks(args)
     except SystemExit as exc:
         return int(exc.code or 2)
+    # Prefer the flag, fall back to the environment so the secret need not
+    # appear in argv (visible to every other process via ps).
+    auth_token = args.auth_token or os.environ.get("SNAGLINE_SERVE_AUTH_TOKEN") or None
     print(
         f"snagline serve: listening on http://{args.host}:{args.port} (POST /events, GET /health)",
         file=sys.stderr,
     )
+    if not auth_token:
+        print(
+            "snagline serve: no --auth-token / $SNAGLINE_SERVE_AUTH_TOKEN set; "
+            "every endpoint is open to anyone who can reach this port",
+            file=sys.stderr,
+        )
     with suppress(KeyboardInterrupt):
         serve(
             Monitor.default(config=_build_config(args), sinks=sinks),
             host=args.host,
             port=args.port,
+            auth_token=auth_token,
+            max_body_bytes=args.max_body_bytes,
+            max_risks=args.max_risks,
         )
     return 0
 

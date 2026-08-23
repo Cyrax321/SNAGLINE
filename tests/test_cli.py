@@ -189,12 +189,74 @@ def test_main_hook_forwards_to_out(tmp_path, monkeypatch):
 def test_main_serve_starts_server(monkeypatch):
     started: dict = {}
 
-    def _fake_serve(monitor, host="127.0.0.1", port=8787):
+    def _fake_serve(monitor, host="127.0.0.1", port=8787, **kwargs):
         started["ok"] = (host, port)
+        started["kwargs"] = kwargs
 
+    monkeypatch.delenv("SNAGLINE_SERVE_AUTH_TOKEN", raising=False)
     monkeypatch.setattr("snagline.server.http_server.serve", _fake_serve)
     assert main(["serve"]) == 0
     assert started.get("ok") == ("127.0.0.1", 8787)
+    # Defaults: no token, 1 MB body cap, 1000 retained risks.
+    assert started["kwargs"] == {
+        "auth_token": None,
+        "max_body_bytes": 1_000_000,
+        "max_risks": 1000,
+    }
+
+
+def test_main_serve_passes_auth_token_and_limits(monkeypatch):
+    """Regression: serve() accepted auth_token/max_body_bytes but the CLI had no
+    flags for them, so a token could not be set from the command line at all."""
+    started: dict = {}
+
+    def _fake_serve(monitor, host="127.0.0.1", port=8787, **kwargs):
+        started.update(kwargs)
+
+    monkeypatch.setattr("snagline.server.http_server.serve", _fake_serve)
+    assert (
+        main(
+            [
+                "serve",
+                "--auth-token",
+                "s3cret",
+                "--max-body-bytes",
+                "4096",
+                "--max-risks",
+                "7",
+            ]
+        )
+        == 0
+    )
+    assert started["auth_token"] == "s3cret"
+    assert started["max_body_bytes"] == 4096
+    assert started["max_risks"] == 7
+
+
+def test_main_serve_reads_auth_token_from_the_environment(monkeypatch):
+    """The token must be settable without putting it in argv, where every other
+    process on the box can read it out of ps."""
+    started: dict = {}
+
+    def _fake_serve(monitor, host="127.0.0.1", port=8787, **kwargs):
+        started.update(kwargs)
+
+    monkeypatch.setattr("snagline.server.http_server.serve", _fake_serve)
+    monkeypatch.setenv("SNAGLINE_SERVE_AUTH_TOKEN", "from-env")
+    assert main(["serve"]) == 0
+    assert started["auth_token"] == "from-env"
+
+
+def test_main_serve_flag_beats_the_environment(monkeypatch):
+    started: dict = {}
+
+    def _fake_serve(monitor, host="127.0.0.1", port=8787, **kwargs):
+        started.update(kwargs)
+
+    monkeypatch.setattr("snagline.server.http_server.serve", _fake_serve)
+    monkeypatch.setenv("SNAGLINE_SERVE_AUTH_TOKEN", "from-env")
+    assert main(["serve", "--auth-token", "from-flag"]) == 0
+    assert started["auth_token"] == "from-flag"
 
 
 def test_maybe_dedup_wraps_sinks_only_when_cooldown_set():

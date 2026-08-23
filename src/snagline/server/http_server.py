@@ -13,11 +13,15 @@ POST bodies are capped at ``max_body_bytes`` (default 1 MB); larger payloads
 get 413. This keeps the sidecar safe to expose and able to absorb buffered
 telemetry from any host.
 
-Optionally protect the POST endpoints with a shared secret by passing
-``auth_token=`` to ``make_server``/``serve``. When set, POSTs must carry the
+Optionally protect the endpoints with a shared secret by passing
+``auth_token=`` to ``make_server``/``serve``. When set, requests must carry the
 token via ``Authorization: Bearer <token>`` or ``X-Snagline-Token: <token>``;
 missing or wrong tokens get 401. ``GET /health`` stays open for liveness
-probes.
+probes -- everything else, GET and POST alike, is behind the token.
+
+``POST /risks`` retains the most recent ``max_risks`` risks (default 1000) for
+``GET /risks``; older ones are discarded so an unbounded sender cannot grow the
+sidecar's memory without limit.
 
 No framework, no third-party dependency -- this keeps the zero-dependency
 principle intact even for server mode. For high-throughput production use,
@@ -34,6 +38,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -48,6 +53,7 @@ def make_handler(
     monitor: Monitor,
     auth_token: str | None = None,
     max_body_bytes: int = 1_000_000,
+    max_risks: int = 1000,
 ) -> type[BaseHTTPRequestHandler]:
     """Build a request-handler class bound to ``monitor``."""
     tracker = HookTracker()
@@ -74,12 +80,21 @@ def make_handler(
             return self.headers.get("X-Snagline-Token") == token
 
         def do_GET(self) -> None:  # noqa: N802 - http.server naming
+            # /health is deliberately open: a liveness probe (k8s, ELB, docker
+            # healthcheck) generally cannot be taught to carry a shared secret,
+            # and it reveals nothing but reachability.
             if self.path == "/health":
                 self._respond(200, {"status": "ok"})
-            elif self.path == "/metrics":
+                return
+            # Everything else is behind the token, including the 404 fallthrough
+            # so an unauthenticated caller cannot probe which paths exist.
+            if not self._authorized():
+                self._respond(401, {"error": "unauthorized"})
+                return
+            if self.path == "/metrics":
                 self._respond(200, self.snagline_monitor.metrics())
             elif self.path == "/risks":
-                self._respond(200, {"risks": self.snagline_risks})
+                self._respond(200, {"risks": list(self.snagline_risks)})
             else:
                 self._respond(404, {"error": "not found"})
 
@@ -207,7 +222,9 @@ def make_handler(
 
     _Handler.snagline_monitor = monitor
     _Handler.snagline_tracker = tracker
-    _Handler.snagline_risks = []
+    # Bounded: POST /risks is an open-ended ingest point, so retain only the
+    # most recent max_risks entries rather than growing without limit.
+    _Handler.snagline_risks = deque(maxlen=max(1, max_risks))
     _Handler.snagline_auth = auth_token
     _Handler.snagline_max_body = max_body_bytes
     return _Handler
@@ -219,10 +236,11 @@ def make_server(
     port: int = 8787,
     auth_token: str | None = None,
     max_body_bytes: int = 1_000_000,
+    max_risks: int = 1000,
 ) -> ThreadingHTTPServer:
     """Construct a ready-to-``serve_forever()`` sidecar server."""
     return ThreadingHTTPServer(
-        (host, port), make_handler(monitor, auth_token, max_body_bytes)
+        (host, port), make_handler(monitor, auth_token, max_body_bytes, max_risks)
     )
 
 
@@ -232,13 +250,15 @@ def serve(
     port: int = 8787,
     auth_token: str | None = None,
     max_body_bytes: int = 1_000_000,
+    max_risks: int = 1000,
 ) -> None:
     """Run the sidecar server in the foreground until interrupted."""
-    server = make_server(monitor, host, port, auth_token, max_body_bytes)
+    server = make_server(monitor, host, port, auth_token, max_body_bytes, max_risks)
     logger.info(
-        "snagline sidecar listening on http://%s:%d (POST /events, GET /health)",
+        "snagline sidecar listening on http://%s:%d (POST /events, GET /health)%s",
         host,
         port,
+        "" if auth_token else " -- no auth token set, all endpoints are open",
     )
     try:
         server.serve_forever()
