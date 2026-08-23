@@ -37,7 +37,9 @@ def _extract_tokens(result: Any) -> tuple[int | None, int | None]:
         if isinstance(usage, dict):
             # Anthropic: input_tokens / output_tokens
             return usage.get("input_tokens"), usage.get("output_tokens")
-        return getattr(usage, "input_tokens", None), getattr(usage, "output_tokens", None)
+        return getattr(usage, "input_tokens", None), getattr(
+            usage, "output_tokens", None
+        )
     except Exception:
         return None, None
 
@@ -96,7 +98,9 @@ def _wrap_one(monitor: Any, original: Any, episode_id: str, counter: Any) -> Any
             raise
         finally:
             latency = (time.time() - start) * 1000.0
-            tokens_in, tokens_out = _extract_tokens(result) if not error else (None, None)
+            tokens_in, tokens_out = (
+                _extract_tokens(result) if not error else (None, None)
+            )
             sig = make_signature("tool_call", str(model), sig_text)
             event = StepEvent(
                 step_id=str(next(counter)),
@@ -131,7 +135,9 @@ def _wrap_one(monitor: Any, original: Any, episode_id: str, counter: Any) -> Any
             raise
         finally:
             latency = (time.time() - start) * 1000.0
-            tokens_in, tokens_out = _extract_tokens(result) if not error else (None, None)
+            tokens_in, tokens_out = (
+                _extract_tokens(result) if not error else (None, None)
+            )
             sig = make_signature("tool_call", str(model), sig_text)
             event = StepEvent(
                 step_id=str(next(counter)),
@@ -154,7 +160,9 @@ def _wrap_one(monitor: Any, original: Any, episode_id: str, counter: Any) -> Any
     return _async if is_async else _sync
 
 
-def wrap_anthropic_client(monitor: Any, client: Any, episode_id: str = "anthropic") -> Any:
+def wrap_anthropic_client(
+    monitor: Any, client: Any, episode_id: str = "anthropic"
+) -> Any:
     """Wrap an ``Anthropic``/``AsyncAnthropic`` client instance explicitly.
 
     Patches ``client.messages.create`` in place on this instance only.
@@ -171,5 +179,7 @@ def wrap_anthropic_client(monitor: Any, client: Any, episode_id: str = "anthropi
     return client
 
 
-def instrument_anthropic_explicit(monitor: Any, client: Any, episode_id: str = "anthropic") -> Any:
+def instrument_anthropic_explicit(
+    monitor: Any, client: Any, episode_id: str = "anthropic"
+) -> Any:
     return wrap_anthropic_client(monitor, client, episode_id=episode_id)

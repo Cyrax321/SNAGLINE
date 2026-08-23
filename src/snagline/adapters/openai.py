@@ -49,7 +49,9 @@ def _extract_tokens(result: Any) -> tuple[int | None, int | None]:
             return None, None
         if isinstance(usage, dict):
             return usage.get("prompt_tokens"), usage.get("completion_tokens")
-        return getattr(usage, "prompt_tokens", None), getattr(usage, "completion_tokens", None)
+        return getattr(usage, "prompt_tokens", None), getattr(
+            usage, "completion_tokens", None
+        )
     except Exception:
         return None, None
 
@@ -116,7 +118,9 @@ def _wrap_one(monitor: Any, original: Any, episode_id: str, counter: Any) -> Any
             raise
         finally:
             latency = (time.time() - start) * 1000.0
-            tokens_in, tokens_out = _extract_tokens(result) if not error else (None, None)
+            tokens_in, tokens_out = (
+                _extract_tokens(result) if not error else (None, None)
+            )
             sig = make_signature("tool_call", str(model), sig_text)
             event = StepEvent(
                 step_id=str(next(counter)),
@@ -151,7 +155,9 @@ def _wrap_one(monitor: Any, original: Any, episode_id: str, counter: Any) -> Any
             raise
         finally:
             latency = (time.time() - start) * 1000.0
-            tokens_in, tokens_out = _extract_tokens(result) if not error else (None, None)
+            tokens_in, tokens_out = (
+                _extract_tokens(result) if not error else (None, None)
+            )
             sig = make_signature("tool_call", str(model), sig_text)
             event = StepEvent(
                 step_id=str(next(counter)),
@@ -201,6 +207,8 @@ def wrap_openai_client(monitor: Any, client: Any, episode_id: str = "openai") ->
     return client
 
 
-def instrument_openai_explicit(monitor: Any, client: Any, episode_id: str = "openai") -> Any:
+def instrument_openai_explicit(
+    monitor: Any, client: Any, episode_id: str = "openai"
+) -> Any:
     """Alias for ``wrap_openai_client`` covering the explicit-wrapper naming."""
     return wrap_openai_client(monitor, client, episode_id=episode_id)
