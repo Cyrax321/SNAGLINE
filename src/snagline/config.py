@@ -90,15 +90,21 @@ class Config:
 
     # --- 12-factor configuration (project.md §5.4, ATTACH_ANY_SYSTEM P0) -----
     @classmethod
-    def from_env(
+    def from_env_overrides(
         cls, environ: Mapping[str, str] | None = None, prefix: str = "SNAGLINE_"
-    ) -> Config:
-        """Build a ``Config`` from environment variables (12-factor).
+    ) -> dict[str, Any]:
+        """Return only the fields that ``environ`` actually sets, coerced.
 
-        Reads ``<prefix><FIELD>`` (case-insensitive) and overrides the matching
-        scalar field. Unknown prefixes, unknown keys, and values that fail to
-        coerce are ignored (logged at warning) rather than fatal, so a host can
-        pass through unrelated environment without breaking startup.
+        ``resolve`` needs the *set of keys present in the environment*, not just
+        their values: once folded into a ``Config``, an environment variable
+        whose value equals the built-in default is indistinguishable from an
+        unset one, and comparing against a default instance would silently drop
+        it (issue #66).
+
+        Reads ``<prefix><FIELD>`` (case-insensitive). Unknown prefixes, unknown
+        keys, and values that fail to coerce are ignored (logged at warning)
+        rather than fatal, so a host can pass through unrelated environment
+        without breaking startup.
         """
         environ = os.environ if environ is None else environ
         hints = get_type_hints(cls)
@@ -115,7 +121,20 @@ class Config:
                     overrides[name] = _coerce(hint, value)
                 except ValueError:
                     logger.warning("snagline: ignoring bad env %s=%r", key, value)
-        return cls(**overrides)
+        return overrides
+
+    @classmethod
+    def from_env(
+        cls, environ: Mapping[str, str] | None = None, prefix: str = "SNAGLINE_"
+    ) -> Config:
+        """Build a ``Config`` from environment variables (12-factor).
+
+        Reads ``<prefix><FIELD>`` (case-insensitive) and overrides the matching
+        scalar field; every other field keeps its built-in default. See
+        ``from_env_overrides`` for the same information as a dict of just the
+        keys the environment set.
+        """
+        return cls(**cls.from_env_overrides(environ=environ, prefix=prefix))
 
     @classmethod
     def load_file(cls, path: str) -> Config:
@@ -131,7 +150,7 @@ class Config:
             data: dict[str, Any] = _load_toml(text)
         else:
             data = json.loads(text)
-        valid = {f.name for f in fields(cls)}  # noqa: F821
+        valid = {f.name for f in fields(cls)}
         return cls(**{k: v for k, v in data.items() if k in valid})
 
     @classmethod
@@ -152,12 +171,14 @@ class Config:
         so behavior is consistent across ``snagline serve``, ``watch``,
         ``replay``, and embedded use.
         """
-        cfg = cls()
-        if path:
-            cfg = cls.load_file(path)
-        env = cls.from_env(environ=environ, prefix=prefix)
-        defaults = cls()
-        for fld in fields(cls):
-            if getattr(env, fld.name) != getattr(defaults, fld.name):
-                setattr(cfg, fld.name, getattr(env, fld.name))
+        cfg = cls.load_file(path) if path else cls()
+        # Apply exactly the keys the environment set. Comparing an env-derived
+        # Config against a default instance instead would treat "set to the
+        # default value" as "unset" and let the file win (issue #66) -- which is
+        # precisely the case an operator hits when resetting a shared config
+        # file back to stock behaviour from the environment.
+        for name, value in cls.from_env_overrides(
+            environ=environ, prefix=prefix
+        ).items():
+            setattr(cfg, name, value)
         return cfg
