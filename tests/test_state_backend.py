@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import threading
+from contextlib import contextmanager
 
+import pytest
+
+from snagline.config import Config
 from snagline.events import StepEvent, make_signature
 from snagline.monitor import Monitor
 from snagline.state import (
@@ -71,3 +75,77 @@ def test_concurrent_ingest_of_distinct_episodes_no_deadlock():
     # Each episode's state was torn down cleanly.
     for j in range(4):
         monitor.end_episode(f"ep{j}")
+
+
+def test_end_episode_releases_the_episode_lock():
+    """Regression: the lock dict must not grow once per episode forever.
+
+    A long-lived Monitor (sidecar, hook bridge) sees one fresh episode id per
+    agent run, so a lock retained past ``end_episode`` is an unbounded leak.
+    """
+    backend = MemoryStateBackend()
+    monitor = Monitor.default(state_backend=backend)
+    for n in range(500):
+        ep = f"episode-{n}"
+        monitor.ingest(_event(episode_id=ep, i=n))
+        monitor.end_episode(ep)
+    assert backend._locks == {}
+
+
+def test_release_keeps_other_episodes_untouched():
+    backend = MemoryStateBackend()
+    with backend.episode_lock("a"):
+        pass
+    with backend.episode_lock("b"):
+        pass
+    kept = backend._locks["b"]
+    backend.release("a")
+    assert "a" not in backend._locks
+    assert backend._locks["b"] is kept
+
+
+def test_release_of_an_unknown_episode_is_a_no_op():
+    backend = MemoryStateBackend()
+    backend.release("never-seen")  # must not raise
+    assert backend._locks == {}
+
+
+def test_end_episode_tolerates_a_backend_without_release():
+    """``release`` is optional: a backend implementing only the narrower
+    ``StateBackend`` protocol must keep working unchanged."""
+
+    class MinimalBackend:
+        def __init__(self):
+            self.locked: list[str] = []
+
+        @contextmanager
+        def episode_lock(self, episode_id):
+            self.locked.append(episode_id)
+            yield
+
+    backend = MinimalBackend()
+    monitor = Monitor.default(state_backend=backend)
+    monitor.ingest(_event(episode_id="ep", i=0))
+    monitor.end_episode("ep")  # must not raise AttributeError
+    assert backend.locked == ["ep", "ep"]
+
+
+def test_end_episode_is_fail_open_when_release_raises():
+    class BrokenBackend(MemoryStateBackend):
+        def release(self, episode_id):
+            raise RuntimeError("backend down")
+
+    monitor = Monitor.default(state_backend=BrokenBackend())
+    monitor.end_episode("ep")  # fail-open: logged, not raised
+
+
+def test_end_episode_propagates_release_error_when_not_fail_open():
+    class BrokenBackend(MemoryStateBackend):
+        def release(self, episode_id):
+            raise RuntimeError("backend down")
+
+    monitor = Monitor.default(
+        config=Config(fail_open=False), state_backend=BrokenBackend()
+    )
+    with pytest.raises(RuntimeError):
+        monitor.end_episode("ep")

@@ -33,6 +33,19 @@ class StateBackend(Protocol):
         ...
 
 
+class ReleasableStateBackend(StateBackend, Protocol):
+    """A ``StateBackend`` that can drop what it holds for a finished episode.
+
+    Optional capability: ``Monitor.end_episode`` probes for ``release`` and
+    skips backends that do not expose it, so a backend written against the
+    narrower ``StateBackend`` above keeps working unchanged.
+    """
+
+    def release(self, episode_id: str) -> None:
+        """Discard any per-episode state held for ``episode_id``."""
+        ...
+
+
 class MemoryStateBackend:
     """Process-local backend: one re-entrant lock per episode id."""
 
@@ -49,6 +62,22 @@ class MemoryStateBackend:
                 self._locks[episode_id] = lock
         with lock:
             yield
+
+    def release(self, episode_id: str) -> None:
+        """Drop the lock allocated for a finished episode.
+
+        Without this the dict grows by one entry per episode id and never
+        shrinks, so a long-lived Monitor watching many short runs retains a
+        lock for every episode it has ever seen.
+
+        ``Monitor.end_episode`` calls this while holding the episode lock, so
+        no other thread can be inside the critical section when the entry is
+        dropped. A thread that ingests for the same id *after* the release
+        simply allocates a fresh lock -- correct, because an episode that has
+        ended has no detector state left to serialize.
+        """
+        with self._meta:
+            self._locks.pop(episode_id, None)
 
 
 class RedisStateBackend:  # pragma: no cover - optional, requires redis
@@ -69,6 +98,13 @@ class RedisStateBackend:  # pragma: no cover - optional, requires redis
         finally:
             if acquired:
                 lock.release()
+
+    def release(self, episode_id: str) -> None:
+        """No-op: Redis locks are per-acquisition and expire on their own.
+
+        Nothing is retained between ``episode_lock`` calls, so a finished
+        episode leaves nothing behind to discard.
+        """
 
 
 def default_state_backend() -> StateBackend:
