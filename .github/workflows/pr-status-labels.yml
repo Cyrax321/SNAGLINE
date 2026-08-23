@@ -2,7 +2,7 @@ name: PR Status Labels
 
 on:
   pull_request_target:
-    types: [opened, reopened, synchronize]
+    types: [opened, reopened, synchronize, labeled]
   pull_request_review:
     types: [submitted, dismissed]
 
@@ -55,6 +55,26 @@ jobs:
             const pr = context.payload.pull_request;
             const prNumber = pr.number;
             const action = context.payload.action;
+
+            // Fork PRs: pull_request_review runs with a read-only token even when
+            // the reviewer is a maintainer, so thankContributor 403s there. The
+            // subsequent labeled event runs as pull_request_target with write scope
+            // and can post the thank you reliably. Handle it first.
+            if (context.eventName === "pull_request_target" && action === "labeled") {
+              const labelName = context.payload.label?.name;
+              if (labelName === "ready to merge") {
+                try {
+                  await thankContributor(pr);
+                } catch (e) {
+                  if (e.status === 403) {
+                    console.log('Thank you comment skipped on labeled (403): ' + e.message);
+                  } else {
+                    console.log('Thank you on labeled failed: ' + e.message);
+                  }
+                }
+              }
+              return;
+            }
 
             let addLabel;
             let removeLabels;
