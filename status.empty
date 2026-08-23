@@ -1,0 +1,254 @@
+SNAGLINE — PROJECT STATUS SNAPSHOT
+==================================
+
+Generated: 2026-08-23
+Repo:      /Users/adhinans/Desktop/Open source/snagline
+Branch:    master (in sync with origin/master, working tree clean)
+HEAD:      7166edd  "Merge pull request #49 from Cyrax321/docs/integration-matrix"
+Remote:    https://github.com/Adhi1-2/SNAGLINE.git
+           (pyproject/docs still point at https://github.com/Cyrax321/SNAGLINE)
+
+
+1. IDENTITY
+-----------
+Package name:     snagline-agent
+Import name:      snagline
+Version:          0.1.0
+Description:      Lightweight, dependency-free real-time failure detection for
+                  AI agents.
+License:          MIT
+Python:           >=3.10 (CI matrix: 3.10, 3.11, 3.12, 3.13)
+Core deps:        NONE (zero required third-party dependencies — non-negotiable
+                  design constraint, see project.md §1)
+Console script:   snagline = snagline.cli:main
+Dev status:       4 - Beta. Not published to PyPI (metadata is ready; upload
+                  needs a token).
+Timeline:         first commit 2026-08-14, last commit 2026-08-19. No git tags.
+
+
+2. VERIFICATION RUN LOCALLY (2026-08-23)
+----------------------------------------
+Executed in a throwaway venv (system python3.13 has no pytest installed):
+
+  tests:        188 passed, 1 skipped  (~11 s)
+                skip = tests/adapters/test_langchain_integration.py
+                (requires langchain_core, not installed locally)
+  ruff check:   All checks passed
+  ruff format:  71 files already formatted
+  mypy src:     Success: no issues found in 37 source files
+
+Reproduce:
+  python3 -m venv .venv && . .venv/bin/activate
+  pip install -e . --no-deps
+  pip install pytest "pytest-cov==7.1.0" "ruff==0.16.3" mypy
+  python -m pytest tests/ -q -o addopts=""     # skip the --cov-fail-under gate
+  ruff check src tests && ruff format --check src tests && mypy src
+
+NOTE — DOC DRIFT: README.md ("Status and Limitations") and project.md §15 both
+state "169 tests passing, 1 skipped". The actual current count is 188 passing,
+1 skipped. The test count grew with PRs #44-#49 and the docs were not updated.
+Worth correcting in README.md:505 and project.md:769.
+
+Published benchmark (from README, reproduce with `snagline bench`):
+  median 1.91 us/step, p99 33.90 us/step over 200,000 synthetic steps.
+
+
+3. CODE SIZE
+------------
+src/:   4,305 lines across 37 Python modules
+tests/: 3,548 lines across 34 test files, 190 test functions
+docs/:  6 markdown documents + architecture.svg
+examples/: 8 runnable scripts   benchmarks/: 1   site/: static landing page
+
+
+4. MODULE INVENTORY (src/snagline)
+----------------------------------
+Core
+  events.py            StepEvent, EpisodeMeta, make_signature() wire format
+  risk.py              FailureRisk, TriggerType, severity
+  monitor.py           Monitor orchestrator; fail-open by construction;
+                       metrics() self-counters; per-episode lock sharding
+  config.py            Config + from_env / load_file / resolve (12-factor)
+  state.py             Pluggable StateBackend (in-memory default, optional Redis)
+  baseline.py          BaselineProfile / ToolBaseline, fit_baseline_from_jsonl,
+                       save_baseline, load_baseline, BaselineCollector
+  baseline_store.py    Versioned, per-tenant BaselineStore
+  cli.py               subcommands: replay, bench, watch, serve, hook, baseline
+
+Detectors (detectors/)
+  base.py              Detector protocol (the extension point)
+  loop.py              repeated-signature loop detector
+  error_cascade.py     consecutive/rate-based error cascade detector
+  latency_anomaly.py   CUSUM latency drift (needs cusum_min_samples warm-up,
+                       default 20 — blind during warm-up)
+  goal_drift.py        deterministic, opt-in; compares live run to a persisted
+                       BaselineProfile (error rate, latency sigmas, unseen tools)
+  ml_ensemble.py       MLOrchestrator; noisy-OR combiner over base detectors,
+                       accepts an injected model=
+
+Sinks (sinks/)  — all stdlib-only, ship in core
+  base.py              AlertSink protocol
+  console.py           stderr output
+  webhook.py           POST FailureRisk JSON
+  slack.py             Slack incoming webhook, optional min_severity
+  pagerduty.py         PagerDuty Events API v2 trigger, optional min_severity
+  dedup.py             DedupSink cooldown/suppression wrapper (issue #4)
+  batching.py          BatchingSink async, rate-limited dispatch (#48)
+
+Adapters (adapters/)
+  raw.py               generic StepEvent stream / watch() — the default path
+  langchain_adapter.py LLMChainObserver
+  langgraph_adapter.py GraphObserver
+  autogen.py           SnaglineAutogenHandler + run_and_monitor (duck-typed)
+  crewai.py            snagline_step_callback + observe_crewai_step (duck-typed)
+  claude_code.py       Claude Code hooks bridge
+
+Auto-instrumentation (auto/)
+  openai.py            instrument_openai()      (#33)
+  anthropic.py         instrument_anthropic()   (#34)
+  langchain.py         instrument_langchain()   (#35)
+  All import-safe: clean no-op when the SDK is absent; sync + async clients.
+
+Server (server/)
+  http_server.py       sidecar: POST /events (single or batched),
+                       POST /hooks/claude-code, GET /health, GET /metrics;
+                       bearer/token auth, body-size cap
+
+Top-level exports (__init__.py): Monitor, StepEvent, EpisodeMeta,
+make_signature, FailureRisk, TriggerType, Config, watch, BaselineProfile,
+ToolBaseline, fit_baseline_from_jsonl, save_baseline, load_baseline,
+GoalDriftDetector, MLOrchestrator
+
+
+5. OPTIONAL EXTRAS (pyproject)
+------------------------------
+  langchain  langchain-core>=0.2          shipped adapter
+  langgraph  langgraph>=0.2               shipped adapter
+  autogen    autogen-agentchat>=0.4       shipped adapter
+  crewai     crewai>=0.30                 shipped adapter
+  openai     openai>=1.0                  demos + auto-instrumentation
+  anthropic  anthropic>=0.30              demos + auto-instrumentation
+  ml         numpy, scikit-learn          RESERVED — ESN ensemble not built
+  drift      sentence-transformers        RESERVED — semantic drift not built
+  all        everything above
+Slack/PagerDuty/dedup/batching sinks need no extra (stdlib only).
+
+
+6. ROADMAP STATUS
+-----------------
+project.md §13 build sequencing (steps 1-10):
+  Steps 1-8   DONE  (core, three tier-1 detectors, console sink, raw adapter,
+                     replay CLI, overhead benchmark, LangChain, LangGraph,
+                     adapter + detector guides)
+  Step 9      NOT BUILT — ml extra echo-state-network ensemble
+                          (ml_ensemble.py is the deterministic stand-in)
+  Step 10     PARTIAL — Autogen, CrewAI, claude_code adapters + sidecar DONE;
+                        continuum_adapter/continuum_sink, openai_adapter.py,
+                        anthropic_adapter.py and the drift extra still pending
+                        (the auto/ modules cover OpenAI/Anthropic instead)
+
+project.md §14 "Definition of done for v0.1": SATISFIED (all 7 boxes checked).
+
+docs/ATTACH_ANY_SYSTEM.md priorities:
+  P0  DONE  — sidecar auth + hardening, 12-factor config, auto-instrumentation,
+              PyPI-ready metadata (#30-#37)
+  P1  DONE  — pluggable StateBackend + per-episode lock sharding (#44);
+              alerting maturity: severity, DedupSink, Slack, PagerDuty, CLI
+              exposure, BatchingSink (#39-#43, #48);
+              baseline lifecycle: BaselineStore, BaselineCollector,
+              `snagline baseline --store-dir` (#45, #46)
+              TAIL OPEN: scheduled/automated retrain cadence (host-owned today)
+  P2  NOT STARTED — the research differentiators:
+              7. ml + drift extras with training pipelines (train.py)
+              8. auto-threshold calibration from the baseline
+              9. eval harness + labeled dataset for honest detection numbers
+                 (benchmarks/detection_accuracy.py — the §14 honesty gate)
+  P3  MOSTLY DONE —
+              10. Monitor.metrics() + GET /metrics (#47) DONE;
+                  Prometheus export + structured logging OPEN
+              11. docs/INTEGRATION_MATRIX.md (#49) DONE
+
+README roadmap table: phases 1-19 all "Complete" (16 and 17 complete as
+deterministic implementations; the ml/drift extras behind them are pending).
+
+
+7. WHAT IS STILL OPEN
+---------------------
+  - P2 entirely: ml extra (ESN ensemble), drift extra (semantic goal drift),
+    auto-threshold calibration, eval harness + labeled dataset.
+  - benchmarks/detection_accuracy.py — required before any doc may claim parity
+    with the source paper's detection numbers (project.md §14 honesty gate).
+  - Prometheus export + structured logging (P3 item 10 tail).
+  - Scheduled baseline retrain cadence (P1 item 6 tail).
+  - Actual PyPI upload (needs a token); in-process TLS or a documented
+    reverse-proxy story for the sidecar.
+  - continuum_adapter.py / continuum_sink.py (verify the real CONTINUUM
+    Storage API first, per project.md §6.6).
+  - Doc drift: test count 169 -> 188 in README.md and project.md; repo URLs
+    point at Cyrax321/SNAGLINE while origin is Adhi1-2/SNAGLINE.
+
+
+8. KNOWN LIMITATIONS (as documented, still true)
+------------------------------------------------
+  - No goal-drift detection via embeddings; only the deterministic baseline
+    comparison. Real semantic drift is a v2-at-earliest dependency.
+  - No automatic repair. Detection and escalation only.
+  - Latency anomaly detector is blind during its warm-up window
+    (cusum_min_samples, default 20).
+  - Loop and error-cascade detectors emit a risk on every step while the
+    condition holds — wrap sinks in DedupSink to avoid alert storms (#4).
+  - WebhookSink blocks ingest() under the lock for up to its timeout; fix
+    tracked as issue #8. BatchingSink is the non-blocking path.
+  - LangChain error callbacks (on_tool_error / on_llm_error / on_chain_error)
+    omit latency_ms even though start time is available; issue #17.
+  - Slack and PagerDuty delivery is fire-and-forget: never raises, short
+    timeout, no delivery confirmation.
+  - Not on PyPI — install from a clone.
+
+
+9. CI
+-----
+.github/workflows/ci.yml — on push to master/main and on every PR:
+  venv -> pip install -e . --no-deps -> pip install pytest, pytest-cov==7.1.0,
+  ruff==0.16.3, mypy -> ruff check + ruff format --check -> mypy src ->
+  pytest tests/ -q
+Coverage gate in pyproject: --cov=snagline --cov-fail-under=80.
+
+Lint config: ruff line-length 88, target py310, select E,F,I,W,UP,B,C4,SIM,
+ignore E501; tests exempt from B,C4,SIM.
+Typing: mypy py3.10, check_untyped_defs=true, ignore_missing_imports=true.
+
+
+10. DOCUMENTATION MAP
+---------------------
+  README.md                     33 KB — main entry: why, quick start, detector
+                                and integration tables, empirical verification,
+                                roadmap, status and limitations
+  project.md                    36 KB — the build spec: design principles,
+                                architecture, schemas, per-component design,
+                                build sequencing (§13), v0.1 DoD (§14),
+                                status (§15)
+  docs/ADAPTER_GUIDE.md         write a new adapter in under 50 lines
+  docs/DETECTOR_GUIDE.md        the detector contract, constraints, test shape
+  docs/FRAMEWORK_BRIDGES.md     HTTP / command / file bridges for external
+                                agent processes
+  docs/ATTACH_ANY_SYSTEM.md     P0-P3 productionization plan + progress log
+  docs/INTEGRATION_MATRIX.md    every attach path by language and mechanism
+  docs/REAL_WORLD_PROOF.md      real-agent testing evidence
+  docs/architecture.svg         architecture diagram
+  site/index.html               static landing page
+
+
+11. SUGGESTED NEXT ACTIONS
+--------------------------
+  1. Fix the doc drift (test count, repo URLs) — trivial, keeps the docs
+     trustworthy, which this project explicitly cares about.
+  2. benchmarks/detection_accuracy.py + a labeled dataset (P2 item 9). It is
+     the gate that unblocks every accuracy claim in the docs.
+  3. Prometheus export + structured logging (P3 item 10 tail) — small, closes
+     out P3.
+  4. Then P2 items 7 and 8 (ml/drift extras, auto-calibration) — the research
+     differentiators.
+
+
+--- end of snapshot ---
