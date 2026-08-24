@@ -89,3 +89,38 @@ def test_two_distinct_loops_each_alert():
     """
     d = LoopDetector(window_size=12, repeat_threshold=3)
     assert _fires(d, [_sig(1)] * 3 + [_sig(2)] * 3) == [2, 5]
+
+
+def test_fired_bookkeeping_is_released_when_the_loop_clears():
+    """The per-signature fired set is pruned once it empties. An empty set left
+    behind kept one dict entry for every episode that ever looped, alive until
+    ``reset()`` -- the same unbounded per-episode growth this branch removes from
+    the dedup path, reappearing in the detector.
+    """
+    d = LoopDetector(window_size=6, repeat_threshold=3)
+    for i, s in enumerate([_sig(1)] * 3):
+        d.observe(_event(i, s))
+    assert d._fired["ep"] == {_sig(1)}, "the loop should have escalated"
+
+    # Push the loop out of the window entirely: nothing repeats any more.
+    for i in range(6):
+        d.observe(_event(10 + i, _sig(200 + i)))
+    assert "ep" not in d._fired, "empty bookkeeping outlived the loop"
+
+
+def test_pruning_the_fired_set_does_not_break_realerting():
+    """Guard on the fix above: the pruned entry has to be recreated through the
+    dict, not mutated on the detached set.
+
+    The prune and an escalation can land on the *same* ``observe()`` call -- the
+    window slides, the old loop's signature drops below the threshold, and a new
+    one reaches it -- and only then is the distinction observable. Recording
+    that fire against the orphaned set loses it, so the next repeat escalates
+    again: exactly the spam this bookkeeping exists to prevent.
+    """
+    # window 5 / threshold 3: the slide from [A,A,A,B,B] to [A,A,B,B,B] drops A
+    # from 3 to 2 (prune) and lifts B from 2 to 3 (escalate) in one step.
+    d = LoopDetector(window_size=5, repeat_threshold=3)
+    fires = _fires(d, [_sig(1)] * 3 + [_sig(2)] * 4)
+    assert fires == [2, 5], f"expected one alert per loop, got {fires}"
+    assert d._fired["ep"] == {_sig(2)}, "the colliding fire was not recorded"

@@ -75,6 +75,18 @@ class LoopDetector:
                 seen = count if sig == event.action_signature else w.count(sig)
                 if seen < self.repeat_threshold:
                     fired.discard(sig)
+            if not fired:
+                # Every escalated signature re-armed, so this episode is back to
+                # "nothing looping". Drop the entry instead of leaving an empty
+                # set behind: otherwise every episode that ever looped keeps
+                # bookkeeping until ``reset()``, an unbounded per-episode leak of
+                # exactly the kind the DedupSink sweep removes. Clearing the
+                # local too makes the escalation path below recreate the entry
+                # through ``setdefault`` -- mutating the detached set would
+                # record the fire against a dict entry that no longer exists and
+                # silently disable dedupe for the rest of the episode.
+                del self._fired[event.episode_id]
+                fired = None
         if count < self.repeat_threshold:
             return None
         if fired is None:
