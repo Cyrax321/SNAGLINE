@@ -74,6 +74,52 @@ def test_rate_limit_paces_delivery():
         sink.close()
 
 
+def test_rate_limit_paces_across_separate_batches():
+    # The pacing clock was a local in _deliver, reset to 0.0 on every flush, so
+    # the first item of each batch always went out immediately and only pacing
+    # *within* one batch worked. The test above hides that by putting all three
+    # risks in a single batch (max_batch=1000 + one flush_now).
+    #
+    # A burst does not arrive as one tidy batch in production -- the flusher
+    # ticks on flush_interval and delivers whatever accumulated, so N risks
+    # normally arrive as N small batches. Here each risk is flushed on its own,
+    # which delivered all 3 with zero delay before the fix.
+    inner = _RecordingSink()
+    sink = BatchingSink(
+        inner, max_batch=1000, flush_interval=3600.0, max_per_second=10.0
+    )
+    try:
+        start = time.monotonic()
+        for i in range(3):
+            sink.emit(_risk(i))
+            sink.flush_now()
+        elapsed = time.monotonic() - start
+        # 3 deliveries at 10/s: the first is free, then two 0.1s gaps.
+        assert elapsed >= 0.18, (
+            f"max_per_second not enforced across batches: {elapsed:.3f}s"
+        )
+        assert len(inner.emitted) == 3
+    finally:
+        sink.close()
+
+
+def test_rate_limit_unset_does_not_delay_delivery():
+    # Guard the fix against over-correcting: with no max_per_second there is no
+    # gap to honour, and the persisted clock must not introduce one.
+    inner = _RecordingSink()
+    sink = BatchingSink(inner, max_batch=1000, flush_interval=3600.0)
+    try:
+        start = time.monotonic()
+        for i in range(20):
+            sink.emit(_risk(i))
+            sink.flush_now()
+        elapsed = time.monotonic() - start
+        assert elapsed < 0.1
+        assert len(inner.emitted) == 20
+    finally:
+        sink.close()
+
+
 def _wait_for(predicate, timeout: float = 5.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:

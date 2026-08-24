@@ -43,11 +43,18 @@ class FailureRisk:
     trigger: TriggerType
     detail: str  # short human-readable explanation, no raw content
     timestamp: float
-    severity: str = SEVERITY_WARNING  # auto-derived from score if left default
+    # Default "" means "unset" -- derived from the score in __post_init__. It is
+    # NOT ``SEVERITY_WARNING``: "warning" is a real value a caller may pass, and
+    # using it as the sentinel made an explicit ``severity="warning"`` indistin-
+    # guishable from unset, so it was silently overwritten by the score-derived
+    # severity. An empty string can never be a legitimate severity, so it is a
+    # safe sentinel that keeps the field type ``str`` for every call site.
+    severity: str = ""
 
     def __post_init__(self) -> None:
         # If the caller did not set an explicit severity, derive one from the
         # score so every risk carries a useful routing hint. A caller that
-        # passes `severity=` explicitly keeps that value.
-        if self.severity == SEVERITY_WARNING:
+        # passes `severity=` explicitly keeps that value exactly -- including
+        # ``severity="warning"``, which the old sentinel clobbered.
+        if not self.severity:
             object.__setattr__(self, "severity", severity_from_score(self.score))
