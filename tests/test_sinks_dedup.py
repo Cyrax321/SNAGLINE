@@ -43,6 +43,30 @@ def test_risk_explicit_severity_kept():
     assert _risk(0.9, severity=SEVERITY_INFO).severity == SEVERITY_INFO
 
 
+def test_risk_explicit_warning_severity_is_not_overwritten():
+    # "warning" used to double as the "unset" sentinel, so an explicit
+    # severity=SEVERITY_WARNING was indistinguishable from an omitted one and
+    # got silently replaced by the score-derived severity. Both directions
+    # regressed: a high score escalated it to critical and a low score
+    # downgraded it to info, against the documented "kept exactly" contract.
+    assert _risk(0.9, severity=SEVERITY_WARNING).severity == SEVERITY_WARNING
+    assert _risk(0.2, severity=SEVERITY_WARNING).severity == SEVERITY_WARNING
+    # The band where derivation happens to agree must stay correct too.
+    assert _risk(0.6, severity=SEVERITY_WARNING).severity == SEVERITY_WARNING
+
+
+def test_risk_explicit_severity_survives_the_dedup_key():
+    # severity is part of DedupSink's default key, so an overwritten severity
+    # silently re-buckets an alert. Two risks the caller pinned to the same
+    # severity must dedupe together even when their scores land in different
+    # derivation bands.
+    inner = _RecordingSink()
+    sink = DedupSink(inner, cooldown_seconds=300.0)
+    sink.emit(_risk(0.9, severity=SEVERITY_WARNING))
+    sink.emit(_risk(0.2, severity=SEVERITY_WARNING))
+    assert len(inner.emitted) == 1
+
+
 class _RecordingSink:
     def __init__(self):
         self.emitted: list[FailureRisk] = []
