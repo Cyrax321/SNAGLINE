@@ -43,14 +43,6 @@ class BatchingSink:
         self._flush_interval = flush_interval
         self._min_gap = 1.0 / max_per_second if max_per_second else 0.0
         self._queue: collections.deque[FailureRisk] = collections.deque()
-        # Monotonic timestamp of the last delivery, carried *across* batches.
-        # Holding this in a ``_deliver`` local reset the rate limit on every
-        # flush, so the first item of each batch always went out immediately --
-        # which meant a burst arriving as many small flushes (the normal
-        # interval-driven shape) bypassed ``max_per_second`` entirely. 0.0 is
-        # "nothing delivered yet": ``monotonic() - 0.0`` is large, so the very
-        # first delivery never waits.
-        self._last_delivery = 0.0
         self._lock = threading.Lock()
         self._stop = threading.Event()
         # Set when the queue reaches ``max_batch`` (or on close) so the flusher
@@ -93,13 +85,14 @@ class BatchingSink:
         self._deliver(batch)
 
     def _deliver(self, batch: list[FailureRisk]) -> None:
+        last = 0.0
         for risk in batch:
             if self._min_gap:
                 now = time.monotonic()
-                wait = self._min_gap - (now - self._last_delivery)
+                wait = self._min_gap - (now - last)
                 if wait > 0:
                     time.sleep(wait)
-                self._last_delivery = time.monotonic()
+                last = time.monotonic()
             with contextlib.suppress(Exception):
                 # Fail-open: a delivery failure must not poison the queue.
                 self._sink.emit(risk)
