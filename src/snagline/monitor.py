@@ -377,6 +377,7 @@ class Monitor:
         from snagline.detectors.loop import LoopDetector
         from snagline.detectors.meltdown import MeltdownDetector
         from snagline.detectors.ml_ensemble import MLOrchestrator
+        from snagline.detectors.silent_abort import SilentAbortDetector
         from snagline.detectors.stagnation import StagnationDetector
         from snagline.detectors.token_runaway import TokenRunawayDetector
         from snagline.sinks.console import ConsoleSink
@@ -403,6 +404,8 @@ class Monitor:
             base.append(TokenRunawayDetector(config=cfg))
         if cfg.meltdown_enabled:
             base.append(MeltdownDetector(config=cfg))
+        if cfg.silent_abort_enabled:
+            base.append(SilentAbortDetector(config=cfg))
         if cfg.ml_ensemble_enabled:
             # Combine the base detectors into one orchestrated signal (step 3).
             detectors: list[Detector] = [MLOrchestrator(base, config=cfg)]
