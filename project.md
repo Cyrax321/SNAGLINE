@@ -211,7 +211,7 @@ snagline/
  │       │   ├── crewai_adapter.py     # built as adapters/crewai.py (duck-typed)
 │       │   ├── openai_adapter.py     # optional extra: snagline-agent[openai]
 │       │   ├── anthropic_adapter.py  # optional extra: snagline-agent[anthropic]
-│       │   ├── claude_code_adapter.py # optional; verify current hooks API first — see §6.7
+│       │   ├── claude_code_adapter.py # optional; verify current hooks API first: see §6.7
 │       │   └── continuum_adapter.py  # reads CONTINUUM Storage by sequence
 │       └── server/                   # optional sidecar mode for non-Python agents
 │           ├── __init__.py
@@ -347,7 +347,7 @@ class EpisodeFinalizer(Protocol):
     def finalize(self, episode_id: str) -> FailureRisk | None: ...
 
 class StatefulDetector(Protocol):
-    # JSON-compatible dicts only — never pickle (§1.4 privacy posture).
+    # JSON-compatible dicts only, never pickle (§1.4 privacy posture).
     def dump_state(self) -> dict[str, Any] | None: ...
     def load_state(self, state: dict[str, Any]) -> None: ...  # setup-time
 ```
@@ -409,7 +409,7 @@ class Monitor:
 ```
 
 **Snapshot / restore (issue #91).** `Monitor.snapshot(path)` writes a
-versioned JSON payload — snapshot-format constant, per-detector
+versioned JSON payload: snapshot-format constant, per-detector
 `dump_state()` output for every `StatefulDetector`, and `DedupSink`
 cooldowns under its default key function. Writes are atomic (tmp file +
 `os.replace`). `Monitor.restore(path)` is a setup-time operation with the
@@ -487,17 +487,17 @@ then `cusum = max(0, cusum + (x - mean)/std - k)`, alarm when
 minus their echo-state-network layer — that's the optional `ml` extra, not
 tier-1.
 
-### 5.4 Token-runaway detector (`detectors/token_runaway.py`)
+### 5.4 Token-runaway detector (`detectors/token_runaway.py`, issue #84)
 
 Long-horizon set, opt-in (`token_runaway_enabled=True`). Sustained-burn
 CUSUM over per-step token volume (`tokens_in + tokens_out`), same
 Welford+CUSUM machinery as §5.3, plus an optional hard envelope: one
 warning at `token_budget_warn_fraction` (default 0.8) of
 `episode_token_budget` and a single critical `budget_breach` risk at 100%.
-Trigger names (`token_runaway`, `budget_breach`) are API — downstream
+Trigger names (`token_runaway`, `budget_breach`) are API: downstream
 policy layers map them by string.
 
-### 5.5 Meltdown detector (`detectors/meltdown.py`)
+### 5.5 Meltdown detector (`detectors/meltdown.py`, issue #85)
 
 Sliding-window Shannon entropy over tool-call identities; flags both
 long-horizon collapse shapes (arXiv:2603.29231): rote collapse below
@@ -505,7 +505,7 @@ long-horizon collapse shapes (arXiv:2603.29231): rote collapse below
 Thresholds tuned against fixtures so healthy five-tool alternation
 (~2.32 bits) stays silent.
 
-### 5.6 Silent-abort detector (`detectors/silent_abort.py`)
+### 5.6 Silent-abort detector (`detectors/silent_abort.py`, issue #86)
 
 The completion check from the source paper, implemented as an
 `EpisodeFinalizer`: evaluated once at `Monitor.end_episode()`, fires when
