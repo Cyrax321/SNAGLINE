@@ -16,6 +16,7 @@ TriggerType = Literal[
     "latency_anomaly",
     "goal_drift",
     "ml_ensemble",
+    "stagnation",
 ]
 
 # Severity ordering is informational only; sinks decide what to do with it.

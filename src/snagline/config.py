@@ -85,6 +85,19 @@ class Config:
     ml_ensemble_enabled: bool = False
     ml_ensemble_score_threshold: float = 0.5  # emit a combined risk above this
 
+    # --- Stagnation detector (issue #87) --------------------------------------
+    # Opt-in novelty-rate tracker: flags an episode whose share of never-
+    # before-seen action signatures collapses, i.e. the agent is busy but
+    # discovering nothing. Distinct from the loop detector, which needs exact
+    # repeats: near-duplicate actions with slightly varied arguments produce
+    # fresh signatures and evade exact matching while still being stuck.
+    # Default off so the zero-dependency preset and the published bench
+    # numbers are untouched.
+    stagnation_enabled: bool = False
+    stagnation_window_size: int = 50  # steps per novelty window
+    stagnation_min_novelty: float = 0.05  # stale when fewer than this share new
+    stagnation_patience: int = 2  # consecutive stale windows before firing
+
     # Global
     fail_open: bool = True
 
