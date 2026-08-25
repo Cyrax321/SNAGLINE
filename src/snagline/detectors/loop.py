@@ -15,6 +15,7 @@ response text (project.md §1.4).
 from __future__ import annotations
 
 from collections import deque
+from typing import Any
 
 from snagline.config import Config
 from snagline.events import StepEvent
@@ -107,3 +108,18 @@ class LoopDetector:
     def reset(self, episode_id: str) -> None:
         self._windows.pop(episode_id, None)
         self._fired.pop(episode_id, None)
+
+    def dump_state(self) -> dict[str, Any]:
+        # _fired holds per-episode sets of escalated signatures (issue #94
+        # re-arm semantics); sort so the JSON snapshot is deterministic.
+        return {
+            "windows": {ep: list(w) for ep, w in self._windows.items()},
+            "fired": {ep: sorted(sigs) for ep, sigs in self._fired.items()},
+        }
+
+    def load_state(self, state: dict[str, Any]) -> None:
+        self._windows = {
+            ep: deque(sigs, maxlen=self.window_size)
+            for ep, sigs in state.get("windows", {}).items()
+        }
+        self._fired = {ep: set(sigs) for ep, sigs in state.get("fired", {}).items()}
