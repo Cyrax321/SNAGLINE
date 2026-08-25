@@ -13,6 +13,19 @@ dependency-free unless noted; the core is always zero-required-dependency.
 | Python auto-instrumentation | `snagline.auto` (OpenAI/Anthropic/LangChain) | Python | one import |
 | Framework adapters | `adapters.raw`, `langchain`, `langgraph`, `autogen`, `crewai`, `claude_code` | Python | wrap your loop |
 
+## Transport security
+
+| Path | Plaintext segment | TLS story |
+|------|-------------------|-----------|
+| In-process adapters / auto-instrumentation | none (no network) | not applicable |
+| HTTP sidecar, direct | client to loopback only | keep the default `127.0.0.1` bind; never expose 8787 off-host |
+| HTTP sidecar behind nginx or Caddy | proxy to sidecar over loopback | public TLS terminates at the proxy; copy-paste configs in [ATTACH_ANY_SYSTEM.md](ATTACH_ANY_SYSTEM.md#sidecar-tls-reverse-proxy-termination-issue-103) |
+| Webhook / Slack / PagerDuty sinks | none outbound | stdlib `urllib` speaks HTTPS to remote endpoints |
+
+In-process TLS for the sidecar itself is the documented future option
+(issue #103); it would remove even the loopback plaintext hop and enable
+mutual TLS, with zero new dependencies either way.
+
 ## Python auto-instrumentation (`snagline.auto`)
 
 Import-safe: a wrapper is a clean no-op when the SDK is absent, and handles
