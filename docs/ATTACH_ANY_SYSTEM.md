@@ -135,6 +135,165 @@ P0 items 1 to 3 are what turn this from "a library you wire in" into
 next highest-leverage move is P1 item 4 (pluggable state backend) and P1
 item 5 (alerting dedup/cooldown + Slack/PagerDuty sinks).
 
+## Sidecar TLS: reverse-proxy termination (issue #103)
+
+The sidecar (`snagline serve`) speaks plain HTTP and listens on
+`127.0.0.1:8787` by default. Loopback-only binding is safe on a shared host,
+but the moment telemetry crosses a network segment you do not fully trust
+(pod to pod, host to host, office to datacenter), the connection needs TLS.
+The supported production pattern is TLS termination at a reverse proxy:
+public traffic arrives at the proxy over HTTPS, the proxy strips TLS and
+forwards plaintext to the sidecar over loopback. Both configs below are
+copy-paste ready and introduce zero new Python dependencies.
+
+Assumptions used throughout: the sidecar runs on the same host as the proxy,
+on port 8787, with a bearer token set via `$SNAGLINE_SERVE_AUTH_TOKEN` (or
+`--auth-token`). Adjust the hostname and cert paths to yours.
+
+### nginx (stable, copy-paste)
+
+```nginx
+# /etc/nginx/sites-available/snagline
+
+# Standard WebSocket upgrade mapping (from the nginx proxy module docs).
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 443 ssl;
+    http2 on;                          # nginx >= 1.25.1; older: "listen 443 ssl http2;"
+    server_name snagline.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/snagline.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/snagline.example.com/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+
+    # Mirror the sidecar's --max-body-bytes (default 1000000). Unitless means
+    # bytes. Change both together: the edge should reject what the sidecar
+    # would reject so oversized batches die with 413 before reaching Python.
+    client_max_body_size 1000000;
+
+    location / {
+        proxy_pass http://127.0.0.1:8787;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Preserve the shared secret. nginx forwards Authorization unchanged
+        # by default; pinning it here makes that guarantee explicit and
+        # survives later refactors that add other proxy_set_header lines.
+        # The alternate X-Snagline-Token header also passes through untouched.
+        proxy_set_header Authorization $http_authorization;
+
+        # The sidecar exposes no WebSocket endpoints today; these two lines
+        # plus the map above keep the block correct if streaming endpoints
+        # are added later. Harmless for plain request/response POSTs.
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+
+        # Let a large batched POST drain slowly instead of being cut off at
+        # the 60s default.
+        proxy_read_timeout 300s;
+    }
+}
+```
+
+Enable it, then verify from outside the host:
+
+```bash
+sudo ln -s /etc/nginx/sites-available/snagline /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+
+curl -fsS https://snagline.example.com/health
+curl -fsS -X POST https://snagline.example.com/events \
+  -H "Authorization: Bearer $SNAGLINE_SERVE_AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"step_id":"1","episode_id":"run","timestamp":1735689600.0,"action_type":"tool_call","action_signature":"deadbeefdeadbeef"}'
+```
+
+The health probe returns `{"status": "ok"}` and the POST returns 202 with an
+`ingested` status. A missing or wrong token gets 401 exactly as it would
+against the sidecar directly; termination does not weaken auth because the
+proxy never inspects or strips the credential.
+
+### Caddy v2 (copy-paste)
+
+Caddy obtains and renews certificates automatically (ACME against Let's
+Encrypt or ZeroSSL), so TLS needs no configuration at all; the whole site
+block below is six lines:
+
+```caddy
+# /etc/caddy/Caddyfile
+snagline.example.com {
+	request_body {
+		max_size 1000000
+	}
+	reverse_proxy 127.0.0.1:8787
+}
+```
+
+- `reverse_proxy` forwards all request headers, `Authorization` included,
+  untouched, and proxies WebSockets and streaming responses (SSE) with no
+  extra configuration.
+- `request_body`'s `max_size` takes a byte count (unit suffixes like `MB`
+  also work); it mirrors the sidecar's `--max-body-bytes` default.
+- For a host that is not reachable from the public internet, swap automatic
+  ACME certificates for Caddy's own internal CA by adding `tls internal`
+  inside the site block.
+
+Reload with `caddy reload --config /etc/caddy/Caddyfile`, then run the same
+two `curl` checks as under nginx.
+
+### Threat model
+
+TLS termination solves wire confidentiality and integrity on every segment
+between the sending agent and the proxy host: passive observers cannot read
+event payloads or capture the bearer token, and the certificate proves the
+caller reached the intended endpoint. What it does not solve is the final
+hop: proxy to sidecar remains plaintext. On one trusted host across
+loopback, that residual exposure is usually acceptable. It is not acceptable
+when the proxy runs on a different machine than the sidecar, or when the
+shared host runs processes you do not control; in those cases wrap TLS in
+the sidecar process itself. That is the documented future option (issue
+#103): wrap `serve()`'s listening socket with a stdlib `ssl.SSLContext`
+exposed via `--certfile/--keyfile` flags. It would close the last plaintext
+hop and additionally allow mutual TLS, letting the sidecar authenticate
+clients by certificate without any external component. Both directions cost
+zero new dependencies: `ssl` is standard library, and a reverse proxy adds
+nothing to the Python environment, so the choice between them is purely
+operational.
+
+### Hardening checklist
+
+- **Rotate the bearer token on a schedule.** The token is read once at
+  startup, so rotation means a sidecar restart; plan for it. Pass the token
+  via `$SNAGLINE_SERVE_AUTH_TOKEN` rather than `--auth-token` so the secret
+  stays out of process listings and shell history.
+- **Keep the loopback bind.** The default `host="127.0.0.1"` exists so only
+  the proxy can reach the sidecar. Do not expose port 8787 off-host; if the
+  proxy must run on another machine, tunnel that segment (VPN/WireGuard)
+  until in-process TLS lands (issue #103).
+- **Keep the body-size caps in sync.** The sidecar rejects requests above
+  `--max-body-bytes` (default 1000000) with 413; mirror that number in
+  `client_max_body_size` (nginx) or `request_body max_size` (Caddy) so
+  oversized payloads are dropped at the edge instead of consuming sidecar
+  memory and CPU. The cap exists to bound per-request memory while still
+  admitting batched `StepEvent` arrays.
+- **Remember nothing sensitive is retained.** Events carry hashes, timings,
+  counts, and booleans, never prompt or response content. `GET /risks`
+  retains the most recent 1000 `FailureRisk` records (ids, scores, trigger
+  names); proxies' access logs record paths and status codes, not bodies.
+  Do not add `Authorization` (or any header logging) to your proxy log
+  format, and the deployment leaks nothing the library does not already
+  refuse to store.
+- **`GET /health` is intentionally unauthenticated** so liveness probes work
+  without secrets; it reveals reachability only.
+
 ## Progress log
 
 - **sidecar auth + hardening + 12-factor config + auto-instrumentation + PyPI
