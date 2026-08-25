@@ -66,16 +66,22 @@ def _step(index, sig, episode="ep-metrics", error=False):
 
 
 def _parse_samples(body: str) -> dict:
-    """Parse exposition lines into {(name, labels): value}, asserting shape."""
-    samples: dict = {}
+    """Parse exposition lines into {(name, labels): value}, asserting shape.
+
+    Also rejects duplicate time series (same name and labels twice), which
+    Prometheus itself refuses to ingest.
+    """
+    seen: list = []
     for line in body.splitlines():
         if not line or line.startswith("#"):
             continue
         assert SAMPLE_LINE_RE.match(line), f"bad exposition line: {line!r}"
         head, _, value = line.rpartition(" ")
         name, _, labels = head.partition("{")
-        samples[(name, labels.rstrip("}"))] = float(value)
-    return samples
+        seen.append((name, labels.rstrip("}"), float(value)))
+    keys = [(name, labels) for name, labels, _ in seen]
+    assert len(keys) == len(set(keys)), f"duplicate time series: {keys}"
+    return {(name, labels): value for name, labels, value in seen}
 
 
 def test_empty_monitor_serves_valid_prometheus():
