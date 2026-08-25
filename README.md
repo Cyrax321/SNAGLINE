@@ -245,8 +245,8 @@ snagline replay tests/fixtures/trajectories/healthy_run.jsonl --summary
 
 `benchmarks/detection_accuracy.py` is the honesty gate for every detection-
 accuracy claim (issue #82). It replays the labeled fixture corpus under
-`benchmarks/fixtures/` (62 episodes: four labeled failures per shipped
-trigger plus 30 healthy controls, including near-threshold cases) through a
+`benchmarks/fixtures/` (64 episodes: four labeled failures per shipped
+trigger plus 32 healthy controls, including near-threshold cases) through a
 default-configured `Monitor` with the opt-in long-horizon flags enabled, then
 reports per-trigger TP/FP/FN, precision, recall, F1, macro-F1, and a
 confusion summary. It exits nonzero if any healthy control fires, so CI can
