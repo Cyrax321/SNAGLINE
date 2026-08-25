@@ -130,6 +130,11 @@ monitor = Monitor.default(config=config)
 
 With `ml_ensemble_enabled`, `Monitor.default()` wraps the base detectors in a single `MLOrchestrator` instead of exposing them individually, so there is no double counting. Both detectors are documented in [docs/DETECTOR_GUIDE.md](docs/DETECTOR_GUIDE.md).
 
+Baselines go stale as your agent evolves. For scheduled refits, use
+`snagline baseline retrain`: it fits from the newest JSONL window and bumps a
+versioned store atomically (cron/systemd examples and the goal_drift caveats
+in [docs/RETRAIN_CADENCE.md](docs/RETRAIN_CADENCE.md)).
+
 ## Features
 
 | Capability | What it gives you |
