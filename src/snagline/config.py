@@ -88,6 +88,15 @@ class Config:
     # Global
     fail_open: bool = True
 
+    # --- Structured logging sink (issue #99) ---------------------------------
+    # Emission format for the logging sink (``sinks/logging_sink.py``):
+    # "text" keeps plain lines, "json" emits one compact JSON object per risk
+    # with exactly the keys ts, episode_id, step_id, trigger, severity, score,
+    # detail. Selectable via env ``SNAGLINE_LOG_FORMAT`` or a config-file
+    # ``log_format`` key; values other than "text"/"json" are undefined.
+    # Structure only: the emitted object never carries prompt/response content.
+    log_format: str = "text"
+
     # --- 12-factor configuration (project.md §5.4, ATTACH_ANY_SYSTEM P0) -----
     @classmethod
     def from_env_overrides(
