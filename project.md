@@ -719,7 +719,7 @@ project easily").
      sidecar server mode, `drift` extra — build in response to actual
      demand, not preemptively.
 
-### 13.1 Status of the sequencing (as of 2026-08-19)
+### 13.1 Status of the sequencing (as of 2026-08-25)
 
 - Steps 1-8 (v0.1 core: events/risk/Monitor, loop + error-cascade +
   latency detectors, console sink, `raw` adapter, `replay`, overhead
@@ -729,10 +729,14 @@ project easily").
   (semantic goal-drift) are **not yet built** — the deterministic
   `goal_drift` and `ml_ensemble` detectors in `detectors/` were shipped
   first as the simpler, dependency-free path (see §15).
-- Step 10: Autogen and CrewAI adapters are **done** (duck-typed, see §6.4).
-  `claude_code_adapter.py`, `continuum_adapter.py`/`continuum_sink.py`,
-  `openai_adapter.py`, `anthropic_adapter.py`, and the sidecar server mode
-  are **still pending**.
+- Step 10: Autogen, CrewAI, and Claude Code adapters are **done**
+  (duck-typed). Sidecar server mode is **done** (`server/http_server.py`).
+  OpenAI/Anthropic attach is **done** via auto-instrumentation
+  (`snagline/auto/openai.py`, `anthropic.py`, plus explicit wrappers per
+  §6.5). The horizon detector set (§5.4–5.6) and restart-survivable
+  snapshots (§4.6) are **done** on the `feat/horizon-detectors` branch.
+  Still pending: `continuum_adapter.py`/`continuum_sink.py` and the
+  `drift` extra.
 
 ---
 
@@ -763,10 +767,11 @@ reported either way.
 
 ---
 
-## 15. Status (as of 2026-08-19)
+## 15. Status (as of 2026-08-25)
 
 Implementation status against the spec above. All merged to `master` with
-green CI (ruff + mypy + pytest, py3.10-3.13; 169 tests passing, 1 skipped).
+green CI (ruff + mypy + pytest, py3.10-3.13; 253 tests passing, 1 skipped
+when the optional langchain extra is absent).
 
 ### Shipped
 
