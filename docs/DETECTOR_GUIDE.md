@@ -61,6 +61,7 @@ monitor._detectors.append(MyDetector())   # or: Monitor(default_detectors + [min
 - `detectors/loop.py` - sliding-window repetition count on `action_signature`
 - `detectors/error_cascade.py` - consecutive and windowed error counts
 - `detectors/latency_anomaly.py` - Welford baseline + CUSUM deviation per tool
+- `detectors/stagnation.py` - all-time novelty set plus a sliding novelty share
 - `detectors/goal_drift.py` - compares a live run to a persisted `BaselineProfile`
 - `detectors/ml_ensemble.py` - `MLOrchestrator` combining base detector scores
 
@@ -100,3 +101,35 @@ detectors agree. Pass `model=callable(scores) -> float` (e.g. a fitted
 scikit-learn pipeline from the `ml` extra) to replace the combiner. Enable it
 with `Config(ml_ensemble_enabled=True)`; `Monitor.default()` then wraps the
 base detectors in one orchestrator so there is no double counting.
+
+### `StagnationDetector` (issue #87)
+
+`StagnationDetector(config=cfg)` asks a question the loop detector cannot:
+not "is it repeating?" but "is it discovering anything?". It tracks the share
+of never-before-seen `action_signature` values in the last
+`stagnation_window_size` steps (default 50). When that novelty share stays
+below `stagnation_min_novelty` (default 0.05) for `stagnation_patience`
+(default 2) consecutive full-window observations, it emits exactly one risk
+(score 0.6, trigger `stagnation`). Novelty recovering resets the stale
+counter, so a later collapse fires again: one alert per stagnation period,
+never one per step.
+
+The two detectors are complementary by construction. Near-duplicate actions
+with slightly varied arguments produce fresh signatures each time and evade
+exact-match loop windows entirely; the all-time novelty set still collapses
+because the agent keeps drawing from the same small template space. The tests
+in `tests/detectors/test_stagnation.py` prove a sequence that trips
+stagnation while the loop detector stays silent.
+
+Memory, stated honestly: the per-episode `seen_all_time` set grows
+monotonically by design and only `reset(episode_id)` (called by
+`Monitor.end_episode()`) releases it. Signatures are full 64-character hex
+digests since issue #15; measured on CPython 3.14, retaining one costs about
+105 bytes plus roughly 70 bytes of amortized set overhead, so budget around
+175 bytes per unique action: a pathological all-unique 100k-step episode
+holds on the order of 17 MB. Typical episodes repeat heavily and cost far
+less. The sliding counter itself is bounded (`window_size` booleans per
+episode).
+
+Enable it with `Config(stagnation_enabled=True)`. It ships opt-in so the
+zero-dependency preset and the published bench numbers are untouched.
