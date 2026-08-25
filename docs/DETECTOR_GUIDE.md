@@ -94,6 +94,29 @@ zero-variance baseline uses a floored spread (5% of mean, min 1 ms) so tiny
 deviations are not treated as infinite z. Enable it with
 `Config(goal_drift_enabled=True, goal_drift_baseline=profile)`.
 
+### Auto-calibrated thresholds (`calibration="auto"`, issue #101)
+
+`Config(calibration="auto", calibration_baseline=profile)` (or
+`calibration_baseline_path="baseline.json"`) retunes the tier-1 detectors from
+the healthy profile instead of using worst-case hand-tuned constants:
+
+* Error-cascade thresholds become the smallest windowed/consecutive error
+  counts whose exceedance probability under the deployment's observed error
+  rate stays within `calibration_alpha` (default 0.001). The planning rate is
+  max(pooled rate, p99 of per-tool rates); tools with fewer than 20 samples
+  are excluded from the percentile.
+* The latency/CUSUM detector starts frozen at each tool's healthy mean and
+  floored spread when the profile holds at least `cusum_min_samples` samples
+  for it: episodes shorter than the old warm-up are monitorable from their
+  first step.
+
+Safety rails: derived counts clamp into `[2, hand-tuned default]` so auto can
+only ever be more sensitive than shipped behavior, and with no usable baseline
+every default stays exactly as today. Baseline loading and derivation are
+fail-open: any problem logs one warning and falls back. The loop detector
+keeps hand-tuned thresholds because profiles deliberately store no
+action-repetition evidence (no content, project.md §1.4).
+
 ### `MLOrchestrator`
 
 `MLOrchestrator(detectors, config, model=None)` combines base detector scores
