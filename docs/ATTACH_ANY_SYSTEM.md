@@ -123,8 +123,15 @@ enterprise-grade alerting. Concretely:
 ### P3 (trust and observability)
 
 10. Monitor self-metrics (Prometheus), health endpoint, structured logs.
-    **Done (partial):** `Monitor.metrics()` counters + `GET /metrics` sidecar
-    endpoint (#47). Prometheus export and structured logging remain.
+    **Done (mostly):** `Monitor.metrics()` counters (#47) and the `GET
+    /metrics` sidecar endpoint now speak Prometheus text exposition 0.0.4 by
+    default (#98): `snagline_events_total`,
+    `snagline_risks_total{trigger,severity}`, `snagline_episodes_active`, and
+    the `snagline_ingest_seconds` count/sum pair. The legacy JSON body stays
+    available via `?format=classic`, an `Accept: application/json` header,
+    or `SNAGLINE_METRICS_FORMAT=classic`. Scrape config: point Prometheus at
+    the sidecar with `metrics_path: /metrics` (same port and auth token as
+    the event endpoints). Structured logging remains.
 11. Integration matrix document plus a prominent "10-line custom adapter"
     path. **Done:** `docs/INTEGRATION_MATRIX.md` (#49).
 

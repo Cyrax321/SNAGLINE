@@ -252,7 +252,11 @@ def test_metrics_endpoint_reports_ingested_counts():
         )
         with urllib.request.urlopen(req, timeout=5) as resp:
             assert resp.status == 202
-        with urllib.request.urlopen(base + "/metrics", timeout=5) as resp:
+        # Issue #98 made prometheus the default /metrics body; the JSON
+        # counters this test exercises remain available via ?format=classic.
+        with urllib.request.urlopen(
+            base + "/metrics?format=classic", timeout=5
+        ) as resp:
             assert resp.status == 200
             body = json.loads(resp.read())
         assert body["events_ingested"] >= 1

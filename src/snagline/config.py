@@ -97,6 +97,13 @@ class Config:
     # Structure only: the emitted object never carries prompt/response content.
     log_format: str = "text"
 
+    # --- Sidecar /metrics exposition (issue #98) -----------------------------
+    # Format served by GET /metrics on the sidecar: "prometheus" serves text
+    # exposition version 0.0.4 (the default), "classic" serves the legacy JSON
+    # counters body. Per-request override via ?format=classic or
+    # ?format=prometheus; environment override SNAGLINE_METRICS_FORMAT.
+    metrics_format: str = "prometheus"
+
     # --- 12-factor configuration (project.md §5.4, ATTACH_ANY_SYSTEM P0) -----
     @classmethod
     def from_env_overrides(

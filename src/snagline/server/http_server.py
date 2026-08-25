@@ -7,7 +7,7 @@ shell script, a Claude Code hook) can POST ``StepEvent`` JSON to:
                                or a JSON array of StepEvent objects     (batched)
     POST /hooks/claude-code  body: a native Claude Code hook payload -> mapped + ingested
     GET  /health                                                     -> 200 OK
-    GET  /metrics                                                    -> self-observability counters
+    GET  /metrics                                                    -> Prometheus text exposition (v0.0.4)
 
 POST bodies are capped at ``max_body_bytes`` (default 1 MB); larger payloads
 get 413. This keeps the sidecar safe to expose and able to absorb buffered
@@ -23,6 +23,16 @@ probes -- everything else, GET and POST alike, is behind the token.
 ``GET /risks``; older ones are discarded so an unbounded sender cannot grow the
 sidecar's memory without limit.
 
+``GET /metrics`` speaks Prometheus text exposition version 0.0.4 by default
+(issue #98), rendered with plain string formatting and no client library:
+``snagline_events_total``, ``snagline_risks_total{trigger,severity}``,
+``snagline_episodes_active``, the ``snagline_ingest_seconds`` count/sum pair,
+and the raw ``Monitor.metrics()`` counters under ``snagline_monitor_*_total``.
+The legacy JSON counters body is still served with ``?format=classic``, for
+clients sending ``Accept: application/json``, or when the sidecar is started
+with ``SNAGLINE_METRICS_FORMAT=classic`` (config key ``metrics_format``);
+``?format=prometheus`` forces the new format back on per request.
+
 No framework, no third-party dependency -- this keeps the zero-dependency
 principle intact even for server mode. For high-throughput production use,
 front it with a real ASGI server / reverse proxy; that is the user's infra
@@ -37,16 +47,245 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import sys
-from collections import deque
+import threading
+import time
+from collections import OrderedDict, deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 from snagline.adapters.claude_code import HookTracker, ingest_payload
+from snagline.config import Config
 from snagline.events import StepEvent
 from snagline.monitor import Monitor
 
 logger = logging.getLogger("snagline")
+
+# Content type required for Prometheus text exposition format 0.0.4.
+PROMETHEUS_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
+# Supported values of the metrics_format config/env/request toggle.
+METRICS_FORMATS = ("prometheus", "classic")
+# Bound on distinct episode ids tracked for the episodes-active gauge. Episode
+# ids are identifiers, never content; the cap keeps memory bounded even if a
+# host streams unlimited unique ids through one long-lived sidecar process.
+_MAX_TRACKED_EPISODES = 10_000
+
+
+def _escape_label(value: str) -> str:
+    """Escape a Prometheus label value (backslash, quote, newline)."""
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
+def _format_sample_value(value: float | int) -> str:
+    """Render a sample value the way the exposition format expects."""
+    number = float(value)
+    if math.isnan(number):
+        return "NaN"
+    if math.isinf(number):
+        return "+Inf" if number > 0 else "-Inf"
+    return repr(float(value))
+
+
+def _resolve_metrics_format(explicit: str | None) -> str:
+    """Pick the startup-time default for GET /metrics.
+
+    Precedence: explicit argument, then SNAGLINE_METRICS_FORMAT via Config,
+    then the built-in Config default ("prometheus"). Unknown values are
+    logged and replaced by "prometheus": configuration must never take the
+    sidecar down (fail-open).
+    """
+    candidate = explicit
+    if candidate is None:
+        try:
+            candidate = Config.from_env_overrides().get("metrics_format")
+        except Exception:
+            logger.debug(
+                "snagline: env lookup for metrics_format failed", exc_info=True
+            )
+            candidate = None
+    if candidate is None:
+        candidate = Config().metrics_format
+    name = str(candidate).strip().lower()
+    if name in METRICS_FORMATS:
+        return name
+    logger.warning("snagline: unknown metrics format %r; serving prometheus", candidate)
+    return "prometheus"
+
+
+def _choose_metrics_format(
+    query: dict[str, list[str]], accept_header: str | None, configured: str
+) -> str:
+    """Resolve the format for one GET /metrics request.
+
+    An explicit ``?format=`` parameter wins. Without it, clients that send
+    ``Accept: application/json`` keep getting the legacy JSON body; everyone
+    else gets the configured default (prometheus since issue #98).
+    """
+    requested = (query.get("format") or [""])[-1].strip().lower()
+    if requested:
+        if requested in METRICS_FORMATS:
+            return requested
+        logger.warning(
+            "snagline: unknown ?format=%r; falling back to negotiation", requested
+        )
+    accept = (accept_header or "").lower()
+    if "application/json" in accept:
+        return "classic"
+    return configured
+
+
+class SidecarMetricsCollector:
+    """Process-lifetime sidecar counters, renderable as Prometheus text.
+
+    Counts risks per ``(trigger, severity)`` by acting as one extra sink on
+    the Monitor, plus HTTP-layer totals: events accepted, time spent inside
+    ``Monitor.ingest``, and distinct episode ids seen (bounded table with
+    least-recently-seen eviction, ids only, no content). Every entry point
+    swallows its own exceptions: like any sink, this must never take down
+    ingestion or serving.
+    """
+
+    def __init__(self, max_episodes: int = _MAX_TRACKED_EPISODES) -> None:
+        self._lock = threading.Lock()
+        self._risks: dict[tuple[str, str], int] = {}
+        self._events_total = 0
+        self._ingest_count = 0
+        self._ingest_sum = 0.0
+        # Episode id table: reseeing an id moves it to the end, so when the
+        # cap bites we forget the episode quiet for the longest time, which
+        # is the right approximation of "active" for a long-lived sidecar.
+        self._episodes: OrderedDict[str, None] = OrderedDict()
+        self._max_episodes = max(1, int(max_episodes))
+
+    def emit(self, risk: Any) -> None:
+        """AlertSink protocol entry point; counts one risk by label pair."""
+        try:
+            key = (str(risk.trigger), str(risk.severity))
+            with self._lock:
+                self._risks[key] = self._risks.get(key, 0) + 1
+        except Exception:
+            logger.debug("snagline: metrics collector emit failed", exc_info=True)
+
+    def record_ingest(self, episode_id: str | None, elapsed_seconds: float) -> None:
+        """Record one accepted event and its ingest wall time."""
+        try:
+            with self._lock:
+                self._events_total += 1
+                self._ingest_count += 1
+                self._ingest_sum += max(0.0, float(elapsed_seconds))
+                if episode_id is not None:
+                    key = str(episode_id)
+                    self._episodes.pop(key, None)
+                    self._episodes[key] = None
+                    while len(self._episodes) > self._max_episodes:
+                        self._episodes.popitem(last=False)
+        except Exception:
+            logger.debug("snagline: metrics record failed", exc_info=True)
+
+    def snapshot(self) -> dict[str, Any]:
+        """Return a consistent copy of the counters for rendering."""
+        with self._lock:
+            return {
+                "events_total": self._events_total,
+                "risks": sorted(self._risks.items()),
+                "episodes_active": len(self._episodes),
+                "ingest_count": self._ingest_count,
+                "ingest_sum": self._ingest_sum,
+            }
+
+    def render_prometheus(self, monitor_metrics: dict[str, int]) -> str:
+        """Render the full exposition body (version 0.0.4 text format).
+
+        ``monitor_metrics`` is the ``Monitor.metrics()`` snapshot; those four
+        counters are exposed under ``snagline_monitor_*_total`` names so the
+        sidecar view adds process-lifetime detail without renaming anything
+        the JSON endpoint already published.
+        """
+        snap = self.snapshot()
+        lines: list[str] = []
+        lines.append(
+            "# HELP snagline_events_total Steps ingested through this sidecar."
+        )
+        lines.append("# TYPE snagline_events_total counter")
+        lines.append(f"snagline_events_total {snap['events_total']}")
+        lines.append(
+            "# HELP snagline_risks_total Risks emitted by trigger and severity."
+        )
+        lines.append("# TYPE snagline_risks_total counter")
+        for (trigger, severity), count in snap["risks"]:
+            lines.append(
+                f'snagline_risks_total{{trigger="{_escape_label(trigger)}",'
+                f'severity="{_escape_label(severity)}"}} {count}'
+            )
+        lines.append(
+            "# HELP snagline_episodes_active Distinct episode ids seen since start."
+        )
+        lines.append("# TYPE snagline_episodes_active gauge")
+        lines.append(f"snagline_episodes_active {snap['episodes_active']}")
+        lines.append("# HELP snagline_ingest_seconds Wall time spent ingesting steps.")
+        lines.append("# TYPE snagline_ingest_seconds summary")
+        lines.append(f"snagline_ingest_seconds_count {snap['ingest_count']}")
+        lines.append(
+            f"snagline_ingest_seconds_sum {_format_sample_value(snap['ingest_sum'])}"
+        )
+        monitor_families = (
+            (
+                "events_ingested",
+                "snagline_monitor_events_ingested_total",
+                "Events ingested by the Monitor.",
+            ),
+            (
+                "risks_emitted",
+                "snagline_monitor_risks_emitted_total",
+                "Risks emitted by the Monitor.",
+            ),
+            (
+                "detector_errors",
+                "snagline_monitor_detector_errors_total",
+                "Detector exceptions swallowed (fail-open).",
+            ),
+            (
+                "sink_errors",
+                "snagline_monitor_sink_errors_total",
+                "Sink exceptions swallowed (fail-open).",
+            ),
+        )
+        for key, name, help_text in monitor_families:
+            lines.append(f"# HELP {name} {help_text}")
+            lines.append(f"# TYPE {name} counter")
+            lines.append(f"{name} {monitor_metrics.get(key, 0)}")
+        return "\n".join(lines) + "\n"
+
+
+def _attach_metrics_collector(monitor: Any, collector: SidecarMetricsCollector) -> None:
+    """Register ``collector`` as one extra sink so risks are counted per label.
+
+    The base Monitor has no public add-sink API yet, so prefer ``add_sink``
+    when it exists and fall back to appending to its sink list otherwise.
+    Guarded end to end: any failure leaves serving fully functional, only the
+    per-label risk counters stay empty. Monitor dispatch already treats sinks
+    as fail-open, matching project.md §1.2.
+    """
+    try:
+        add_sink = getattr(monitor, "add_sink", None)
+        if callable(add_sink):
+            add_sink(collector)
+            return
+        sinks = getattr(monitor, "_sinks", None)
+        if isinstance(sinks, list):
+            sinks.append(collector)
+        else:
+            logger.warning(
+                "snagline: cannot attach metrics collector to %s",
+                type(monitor).__name__,
+            )
+    except Exception:
+        logger.warning(
+            "snagline: attaching metrics collector failed; risk labels stay empty",
+            exc_info=True,
+        )
 
 
 def make_handler(
@@ -54,8 +293,14 @@ def make_handler(
     auth_token: str | None = None,
     max_body_bytes: int = 1_000_000,
     max_risks: int = 1000,
+    metrics_format: str | None = None,
 ) -> type[BaseHTTPRequestHandler]:
-    """Build a request-handler class bound to ``monitor``."""
+    """Build a request-handler class bound to ``monitor``.
+
+    ``metrics_format`` pins the default GET /metrics body; when omitted the
+    SNAGLINE_METRICS_FORMAT environment variable decides, then the built-in
+    "prometheus" default (see ``_resolve_metrics_format``).
+    """
     tracker = HookTracker()
 
     class _Handler(BaseHTTPRequestHandler):
@@ -65,6 +310,8 @@ def make_handler(
         snagline_risks: Any = None
         snagline_auth: str | None = None
         snagline_max_body: int = 1_000_000
+        snagline_collector: Any = None
+        snagline_metrics_format: str = "prometheus"
 
         def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
             # Route http.server's access log through logging, not stderr raw.
@@ -91,12 +338,35 @@ def make_handler(
             if not self._authorized():
                 self._respond(401, {"error": "unauthorized"})
                 return
-            if self.path == "/metrics":
-                self._respond(200, self.snagline_monitor.metrics())
-            elif self.path == "/risks":
+            split = urlsplit(self.path)
+            if split.path == "/metrics":
+                self._serve_metrics(parse_qs(split.query))
+            elif split.path == "/risks":
                 self._respond(200, {"risks": list(self.snagline_risks)})
             else:
                 self._respond(404, {"error": "not found"})
+
+        def _serve_metrics(self, query: dict[str, list[str]]) -> None:
+            """Serve either exposition format, failing open to an empty body.
+
+            Rendering happens under try/except because a scrape endpoint that
+            raises would break scrapers' confidence far more than an empty
+            (valid) body does.
+            """
+            fmt = _choose_metrics_format(
+                query, self.headers.get("Accept"), self.snagline_metrics_format
+            )
+            if fmt == "classic":
+                self._respond(200, self.snagline_monitor.metrics())
+                return
+            try:
+                body = self.snagline_collector.render_prometheus(
+                    self.snagline_monitor.metrics()
+                )
+            except Exception:
+                logger.exception("snagline: prometheus render failed")
+                body = ""
+            self._respond_text(200, body, PROMETHEUS_CONTENT_TYPE)
 
         def do_POST(self) -> None:  # noqa: N802 - http.server naming
             if not self._authorized():
@@ -162,7 +432,7 @@ def make_handler(
                     except (ValueError, TypeError):
                         self._respond(400, {"error": "invalid StepEvent in batch"})
                         return
-                    self.snagline_monitor.ingest(event)
+                    self._ingest_recorded(event)
                     count += 1
                 self._respond(202, {"status": "ingested", "count": count})
                 return
@@ -178,8 +448,24 @@ def make_handler(
                 return
             # Ingest itself is fail-open inside the Monitor; a bad event shape
             # above is the only client-visible error.
-            self.snagline_monitor.ingest(event)
+            self._ingest_recorded(event)
             self._respond(202, {"status": "ingested", "step_id": event.step_id})
+
+        def _ingest_recorded(self, event: StepEvent) -> None:
+            """Ingest one event while recording sidecar metrics around it.
+
+            The collector swallows its own exceptions, so bookkeeping can
+            never turn into a serving failure; the ingest call itself keeps
+            exactly the Monitor's own fail-open contract.
+            """
+            collector = self.snagline_collector
+            start = time.perf_counter()
+            try:
+                self.snagline_monitor.ingest(event)
+            finally:
+                if collector is not None:
+                    elapsed = time.perf_counter() - start
+                    collector.record_ingest(event.episode_id, elapsed)
 
         def _post_claude_hook(self) -> None:
             """Accept a native Claude Code hook payload (http hook type).
@@ -197,9 +483,14 @@ def make_handler(
             except (ValueError, json.JSONDecodeError):
                 self._respond(400, {"error": "invalid hook JSON"})
                 return
+            collector = self.snagline_collector
+            start = time.perf_counter()
             event = ingest_payload(
                 self.snagline_monitor, payload, self.snagline_tracker
             )
+            if collector is not None and event is not None:
+                elapsed = time.perf_counter() - start
+                collector.record_ingest(event.episode_id, elapsed)
             self._respond(
                 202,
                 {
@@ -220,6 +511,14 @@ def make_handler(
             self.end_headers()
             self.wfile.write(data)
 
+        def _respond_text(self, code: int, text: str, content_type: str) -> None:
+            data = text.encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
     _Handler.snagline_monitor = monitor
     _Handler.snagline_tracker = tracker
     # Bounded: POST /risks is an open-ended ingest point, so retain only the
@@ -227,6 +526,9 @@ def make_handler(
     _Handler.snagline_risks = deque(maxlen=max(1, max_risks))
     _Handler.snagline_auth = auth_token
     _Handler.snagline_max_body = max_body_bytes
+    _Handler.snagline_collector = SidecarMetricsCollector()
+    _attach_metrics_collector(monitor, _Handler.snagline_collector)
+    _Handler.snagline_metrics_format = _resolve_metrics_format(metrics_format)
     return _Handler
 
 
@@ -237,10 +539,12 @@ def make_server(
     auth_token: str | None = None,
     max_body_bytes: int = 1_000_000,
     max_risks: int = 1000,
+    metrics_format: str | None = None,
 ) -> ThreadingHTTPServer:
     """Construct a ready-to-``serve_forever()`` sidecar server."""
     return ThreadingHTTPServer(
-        (host, port), make_handler(monitor, auth_token, max_body_bytes, max_risks)
+        (host, port),
+        make_handler(monitor, auth_token, max_body_bytes, max_risks, metrics_format),
     )
 
 
@@ -251,9 +555,12 @@ def serve(
     auth_token: str | None = None,
     max_body_bytes: int = 1_000_000,
     max_risks: int = 1000,
+    metrics_format: str | None = None,
 ) -> None:
     """Run the sidecar server in the foreground until interrupted."""
-    server = make_server(monitor, host, port, auth_token, max_body_bytes, max_risks)
+    server = make_server(
+        monitor, host, port, auth_token, max_body_bytes, max_risks, metrics_format
+    )
     logger.info(
         "snagline sidecar listening on http://%s:%d (POST /events, GET /health)%s",
         host,
