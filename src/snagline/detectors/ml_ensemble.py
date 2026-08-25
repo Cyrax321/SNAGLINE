@@ -74,3 +74,35 @@ class MLOrchestrator:
     def reset(self, episode_id: str) -> None:
         for det in self._base:
             det.reset(episode_id)
+
+    def finalize(self, episode_id: str) -> FailureRisk | None:
+        # Passthrough for EpisodeFinalizer bases (issue #86): Monitor.end_episode
+        # only sees top-level detectors, so an orchestrated completion check
+        # would otherwise never be consulted. First non-None verdict wins; a
+        # finished episode yields at most one end-of-run judgment.
+        for det in self._base:
+            finalize = getattr(det, "finalize", None)
+            if callable(finalize):
+                risk = finalize(episode_id)
+                if risk is not None:
+                    return risk
+        return None
+
+    def dump_state(self) -> dict[str, Any] | None:
+        # Delegate so snapshot()/restore() reach through the wrapper (issue #91).
+        merged: dict[str, Any] = {}
+        for det in self._base:
+            dump = getattr(det, "dump_state", None)
+            state = dump() if callable(dump) else None
+            if state is not None:
+                merged[getattr(det, "name", type(det).__name__)] = state
+        return merged or None
+
+    def load_state(self, state: dict[str, Any]) -> None:
+        for det in self._base:
+            load = getattr(det, "load_state", None)
+            if not callable(load):
+                continue
+            sub = state.get(getattr(det, "name", type(det).__name__))
+            if sub is not None:
+                load(sub)
