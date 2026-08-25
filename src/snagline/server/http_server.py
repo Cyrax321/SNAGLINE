@@ -262,25 +262,14 @@ class SidecarMetricsCollector:
 def _attach_metrics_collector(monitor: Any, collector: SidecarMetricsCollector) -> None:
     """Register ``collector`` as one extra sink so risks are counted per label.
 
-    The base Monitor has no public add-sink API yet, so prefer ``add_sink``
-    when it exists and fall back to appending to its sink list otherwise.
+    Uses the public ``Monitor.add_sink`` (issue #122), so any Monitor that
+    honors the base-class contract works without reaching into privates.
     Guarded end to end: any failure leaves serving fully functional, only the
     per-label risk counters stay empty. Monitor dispatch already treats sinks
     as fail-open, matching project.md §1.2.
     """
     try:
-        add_sink = getattr(monitor, "add_sink", None)
-        if callable(add_sink):
-            add_sink(collector)
-            return
-        sinks = getattr(monitor, "_sinks", None)
-        if isinstance(sinks, list):
-            sinks.append(collector)
-        else:
-            logger.warning(
-                "snagline: cannot attach metrics collector to %s",
-                type(monitor).__name__,
-            )
+        monitor.add_sink(collector)
     except Exception:
         logger.warning(
             "snagline: attaching metrics collector failed; risk labels stay empty",

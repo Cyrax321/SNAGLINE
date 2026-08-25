@@ -136,6 +136,30 @@ class Monitor:
         with self._metrics_lock:
             return self._metrics.as_dict()
 
+    def add_sink(self, sink: AlertSink) -> None:
+        """Register one more sink at runtime (issue #122).
+
+        The sink joins dispatch under the same rules as construction: every
+        registered sink sees every dispatched risk, in registration order,
+        and its exceptions are swallowed exactly like any other sink's
+        (fail-open). Safe to call while ingests run from other threads;
+        dispatch tolerates a concurrent append.
+        """
+        self._sinks.append(sink)
+
+    def remove_sink(self, sink: AlertSink) -> bool:
+        """Unregister ``sink`` (issue #122); returns True when removed.
+
+        Matching follows ``list.remove`` semantics, so a sink registered
+        twice must be removed once per registration. Returns False when the
+        sink was never registered.
+        """
+        try:
+            self._sinks.remove(sink)
+        except ValueError:
+            return False
+        return True
+
     def _log_fault_once(self, key: str) -> None:
         """Log a fail-open fault, but only the first time we see this exact
         message (issue #14). Avoids dumping a traceback on every step when a
