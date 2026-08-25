@@ -44,3 +44,29 @@ jobs:
         run: |
           . .venv/bin/activate
           python -m pytest tests/ -q
+
+  test-ml:
+    # Exercises the optional ml extra so its tests always run somewhere;
+    # they skip gracefully in the zero-dependency legs above (issue #80).
+    name: Test (py3.12, ml extra)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install (core + ml extra + dev tooling)
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install -e ".[ml]"
+          pip install "pytest" "pytest-cov==7.1.0"
+
+      - name: Run tests with coverage
+        run: |
+          . .venv/bin/activate
+          python -m pytest tests/ -q
