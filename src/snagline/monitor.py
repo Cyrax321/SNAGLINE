@@ -234,6 +234,7 @@ class Monitor:
         from snagline.detectors.latency_anomaly import LatencyAnomalyDetector
         from snagline.detectors.loop import LoopDetector
         from snagline.detectors.ml_ensemble import MLOrchestrator
+        from snagline.detectors.stagnation import StagnationDetector
         from snagline.sinks.console import ConsoleSink
 
         cfg = config or Config()
@@ -242,6 +243,12 @@ class Monitor:
             ErrorCascadeDetector(config=cfg),
             LatencyAnomalyDetector(config=cfg),
         ]
+        # Stagnation is opt-in (issue #87): novelty-rate collapse detection,
+        # default-off so the zero-dependency preset and the published bench
+        # numbers are untouched. Appended to ``base`` so a concurrent
+        # MLOrchestrator wraps it like any other signal.
+        if cfg.stagnation_enabled:
+            base.append(StagnationDetector(config=cfg))
         # Goal-drift is opt-in: only when explicitly enabled and a baseline is
         # supplied, so the zero-dependency default is unchanged (step 2).
         if cfg.goal_drift_enabled and cfg.goal_drift_baseline is not None:
