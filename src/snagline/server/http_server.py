@@ -72,6 +72,16 @@ METRICS_FORMATS = ("prometheus", "classic")
 # host streams unlimited unique ids through one long-lived sidecar process.
 _MAX_TRACKED_EPISODES = 10_000
 
+# Over-cap POSTs are drained and discarded before the 413 goes out, but only
+# within this much above max_body_bytes (issue #121): reading the body lets a
+# streaming client finish sending and still read the status line instead of
+# dying on EPIPE/reset. Beyond that window the 413 is sent immediately so one
+# hostile sender cannot tie up a handler thread indefinitely.
+_MAX_OVERCAP_DRAIN_EXCESS = 65_536
+# Drain reads happen in fixed chunks, so peak memory stays at one chunk no
+# matter what Content-Length claims.
+_DRAIN_CHUNK_BYTES = 16_384
+
 
 def _escape_label(value: str) -> str:
     """Escape a Prometheus label value (backslash, quote, newline)."""
@@ -374,6 +384,10 @@ def make_handler(
                 return
             length = int(self.headers.get("Content-Length") or 0)
             if length > self.snagline_max_body:
+                # Consume the over-cap body first: closing with megabytes
+                # unread makes the peer see EPIPE/reset instead of the 413
+                # (issue #121).
+                self._discard_overcap_body(length)
                 self._respond(413, {"error": "payload too large"})
                 return
             if self.path == "/events":
@@ -498,6 +512,33 @@ def make_handler(
                     "step_id": event.step_id if event else None,
                 },
             )
+
+        def _discard_overcap_body(self, declared_length: int) -> None:
+            """Read and throw away an over-cap body before replying 413.
+
+            Bodies up to ``max_body_bytes + _MAX_OVERCAP_DRAIN_EXCESS`` are
+            drained fully so the sender can finish writing and still read the
+            response; anything larger is abandoned after that window (the 413
+            still goes out at once). Reads happen in fixed-size chunks, so
+            peak memory is bounded regardless of claimed Content-Length.
+            Fail-open: a client that hangs up mid-drain is logged and
+            forgotten, never turned into a serving error.
+            """
+            remaining = min(
+                declared_length,
+                self.snagline_max_body + _MAX_OVERCAP_DRAIN_EXCESS,
+            )
+            while remaining > 0:
+                try:
+                    chunk = self.rfile.read(min(remaining, _DRAIN_CHUNK_BYTES))
+                except OSError:
+                    logger.debug(
+                        "snagline: over-cap body drain interrupted", exc_info=True
+                    )
+                    return
+                if not chunk:
+                    return  # client hung up early; nothing more to discard
+                remaining -= len(chunk)
 
         def _read_body(self) -> bytes:
             length = int(self.headers.get("Content-Length") or 0)
