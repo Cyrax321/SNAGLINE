@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import types
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from typing import Any, Union, get_args, get_origin, get_type_hints
@@ -17,6 +18,20 @@ from typing import Any, Union, get_args, get_origin, get_type_hints
 from snagline.baseline import BaselineProfile
 
 logger = logging.getLogger("snagline")
+
+
+def _union_args(hint: Any) -> tuple[Any, ...] | None:
+    """Return the member tuple when ``hint`` is a union type, else None.
+
+    Covers both spellings across Python versions: PEP 604 ``X | Y``
+    (``types.UnionType``, whose get_origin differs between versions) and
+    ``typing.Union[X, Y]`` / ``Optional[X]``.
+    """
+    if isinstance(hint, types.UnionType):
+        return get_args(hint)
+    if get_origin(hint) is Union:
+        return get_args(hint)
+    return None
 
 
 def _coercible_hint(hint: Any) -> Any:
@@ -27,13 +42,12 @@ def _coercible_hint(hint: Any) -> Any:
     non-scalar optionals (object references such as a BaselineProfile) stay
     out of reach of string coercion.
     """
-    if get_origin(hint) is not Union:
+    args = _union_args(hint)
+    if args is None or len(args) != 2 or type(None) not in args:
         return hint
-    args = get_args(hint)
-    if len(args) == 2 and type(None) in args:
-        other = next(a for a in args if a is not type(None))
-        if other in (bool, int, float, str):
-            return other
+    other = next(a for a in args if a is not type(None))
+    if other in (bool, int, float, str):
+        return other
     return hint
 
 
