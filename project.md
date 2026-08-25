@@ -595,6 +595,13 @@ user's infra choice, not this library's concern.
 
 - **`console.py`** (default): writes `FailureRisk` as a JSON line to
   stderr. Zero dependency.
+- **`logging_sink.py`** (issue #99): emits one record per `FailureRisk` on the
+  `"snagline"` logger; its formatter renders a single compact JSON object per
+  line with exactly the keys ts, episode_id, step_id, trigger, severity,
+  score, detail (structure only, never content). Selected via
+  `Config.log_format` (`text` or `json`, env `SNAGLINE_LOG_FORMAT`). If
+  serialization raises it falls back to a plain structural line: fail-open,
+  never propagates. Zero dependency.
 - **`webhook.py`**: POSTs `FailureRisk` JSON via stdlib `urllib.request`,
   fire-and-forget with a short timeout, never blocks `ingest()`. Zero
   dependency.

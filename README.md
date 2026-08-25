@@ -305,6 +305,7 @@ Sinks consume `FailureRisk` and escalate it. Only `FailureRisk` fields are ever 
 |:--|:--|:--|:--|
 | **Console** (default) | `sinks/console.py` | (built-in) | Writes `FailureRisk` as a JSON line to stderr. Zero dependency. |
 | **Webhook** | `sinks/webhook.py` | (built-in) | POSTs `FailureRisk` JSON via stdlib `urllib.request`. Fire-and-forget with a short timeout (default 2s). Silently ignores a dead endpoint. |
+| **Logging** | `sinks/logging_sink.py` | (built-in) | Emits one compact JSON object per risk on the `snagline` logger for log aggregators (`Config.log_format`: `text` or `json`, env `SNAGLINE_LOG_FORMAT`). Fail-open with a plain-text fallback if serialization breaks. Zero dependency. |
 
 Custom sinks implement the `AlertSink` protocol:
 
