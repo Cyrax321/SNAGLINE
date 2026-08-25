@@ -14,7 +14,9 @@ episodes / threads concurrently.
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import threading
 from typing import Any
 
@@ -26,6 +28,14 @@ from snagline.sinks.base import AlertSink
 from snagline.state import StateBackend, default_state_backend
 
 logger = logging.getLogger("snagline")
+
+# Bump when the snapshot payload shape changes incompatibly (issue #91).
+SNAPSHOT_FORMAT_VERSION = 1
+
+
+def _detector_key(index: int, detector: Any) -> str:
+    """Stable per-position key for a detector inside a snapshot payload."""
+    return f"{index}:{getattr(detector, 'name', type(detector).__name__)}"
 
 
 class MonitorMetrics:
@@ -154,21 +164,39 @@ class Monitor:
         self.ingest(event)
 
     def end_episode(self, episode_id: str) -> None:
-        """Signal that ``episode_id`` has finished; clear its per-episode state.
+        """Signal that ``episode_id`` has finished; judge it, then clear state.
 
-        Calls ``reset(episode_id)`` on every detector so loop windows, CUSUM
-        baselines, and cascade counters for that episode are dropped, then asks
-        the state backend to release whatever it holds for that id. This is the
-        teardown hook adapters call when an agent run completes; without it,
-        per-episode state would accumulate for the life of the Monitor.
+        Two phases:
 
-        Backends are only asked to release if they implement it -- a backend
-        written against the narrower ``StateBackend`` protocol is unaffected.
+        1. *Judgment* -- detectors exposing ``finalize(episode_id)`` (the
+           ``EpisodeFinalizer`` duck-typed extension point, issue #86) are
+           called once; e.g. the silent-abort completion check can only decide
+           now that no output step ever came. Returned risks are dispatched
+           like any other.
+        2. *Teardown* -- every detector's ``reset(episode_id)`` drops
+           per-episode state, and the state backend releases the episode.
 
-        Fail-open: a detector's ``reset`` exception is logged, never propagated.
+        Fail-open throughout: a ``finalize`` or ``reset`` exception is logged,
+        never propagated (unless ``fail_open=False``). Dispatch happens
+        outside the episode lock, mirroring ``ingest``.
         """
+        finalized: list[FailureRisk] = []
         with self._state.episode_lock(episode_id):
             for detector in self._detectors:
+                finalize = getattr(detector, "finalize", None)
+                if callable(finalize):
+                    try:
+                        risk = finalize(episode_id)
+                    except Exception:
+                        self._log_fault_once(
+                            f"detector {getattr(detector, 'name', repr(detector))} "
+                            "finalize raised; ignoring (fail-open)"
+                        )
+                        if not self._fail_open:
+                            raise
+                    else:
+                        if risk is not None:
+                            finalized.append(risk)
                 try:
                     detector.reset(episode_id)
                 except Exception:
@@ -191,6 +219,120 @@ class Monitor:
                     )
                     if not self._fail_open:
                         raise
+        if finalized:
+            with self._metrics_lock:
+                self._metrics.risks_emitted += len(finalized)
+            for risk in finalized:
+                self._dispatch(risk)
+
+    # --- Restart-survivable state (issue #91) --------------------------------
+    #
+    # All per-episode detector state used to live only in instance memory, so
+    # a deploy or crash reset every window and CUSUM baseline mid-episode.
+    # Snapshots are plain stdlib JSON (never pickle) written atomically via
+    # tmp-file + os.replace. Restore is a *setup-time* operation: malformed
+    # payloads raise rather than fail open, because a monitor that silently
+    # starts blank is precisely the quiet misbehavior this feature exists to
+    # prevent. Runtime detection itself stays fail-open as always.
+
+    def snapshot_dict(self) -> dict[str, Any]:
+        """Return all restorable detector/sink state as a JSON-ready dict."""
+        detectors: dict[str, Any] = {}
+        for i, detector in enumerate(self._detectors):
+            dump = getattr(detector, "dump_state", None)
+            detectors[_detector_key(i, detector)] = dump() if callable(dump) else None
+        sinks: dict[str, Any] = {}
+        for i, sink in enumerate(self._sinks):
+            dump = getattr(sink, "dump_state", None)
+            sinks[f"{i}:{type(sink).__name__}"] = dump() if callable(dump) else None
+        return {
+            "format_version": SNAPSHOT_FORMAT_VERSION,
+            "detectors": detectors,
+            "sinks": sinks,
+        }
+
+    def snapshot(self, path: str) -> None:
+        """Atomically write a JSON snapshot of all detector/sink state."""
+        payload = json.dumps(self.snapshot_dict(), indent=2, sort_keys=True)
+        tmp = f"{path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(payload)
+        os.replace(tmp, path)
+
+    def restore_dict(self, data: dict[str, Any], strict_names: bool = False) -> None:
+        """Restore detector/sink state produced by ``snapshot_dict``.
+
+        ``strict_names=True`` additionally requires the current detector
+        composition to match the snapshot exactly (order included); the
+        default is tolerant: matching entries are applied by key, missing
+        detectors are skipped with a warning, and states without a home are
+        ignored with a warning.
+        """
+        version = data.get("format_version")
+        if version != SNAPSHOT_FORMAT_VERSION:
+            raise ValueError(
+                f"snapshot format_version {version!r} incompatible with "
+                f"{SNAPSHOT_FORMAT_VERSION}"
+            )
+        dumped_detectors: dict[str, Any] = data.get("detectors") or {}
+        consumed: set[str] = set()
+        for i, detector in enumerate(self._detectors):
+            load = getattr(detector, "load_state", None)
+            if not callable(load):
+                continue
+            key = _detector_key(i, detector)
+            matched_key: str | None = None
+            entry = dumped_detectors.get(key)
+            if entry is not None:
+                matched_key = key
+            else:
+                # Fallback: same-name state recorded at a different position.
+                name = getattr(detector, "name", None)
+                if name is not None:
+                    for k, v in dumped_detectors.items():
+                        if (
+                            k not in consumed
+                            and k.endswith(f":{name}")
+                            and v is not None
+                        ):
+                            entry = v
+                            matched_key = k
+                            break
+            if entry is None or matched_key is None:
+                continue
+            load(entry)
+            consumed.add(matched_key)
+        orphaned = {
+            k
+            for k, v in dumped_detectors.items()
+            if v is not None and k not in consumed
+        }
+        if orphaned:
+            logger.warning(
+                "snagline: snapshot carried state for %d unknown detector "
+                "slot(s); ignored",
+                len(orphaned),
+            )
+        if strict_names:
+            expected = [k.split(":", 1)[1] for k in sorted(dumped_detectors)]
+            current = [getattr(d, "name", type(d).__name__) for d in self._detectors]
+            if expected != current:
+                raise ValueError(
+                    "snapshot detector composition mismatch: "
+                    f"snapshot={expected} monitor={current}"
+                )
+        dumped_sinks: dict[str, Any] = data.get("sinks") or {}
+        for i, sink in enumerate(self._sinks):
+            load = getattr(sink, "load_state", None)
+            key = f"{i}:{type(sink).__name__}"
+            if callable(load) and dumped_sinks.get(key) is not None:
+                load(dumped_sinks[key])
+
+    def restore(self, path: str, strict_names: bool = False) -> None:
+        """Load a JSON snapshot written by :meth:`snapshot`."""
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        self.restore_dict(data, strict_names=strict_names)
 
     @classmethod
     def default(
@@ -209,7 +351,10 @@ class Monitor:
         from snagline.detectors.goal_drift import GoalDriftDetector
         from snagline.detectors.latency_anomaly import LatencyAnomalyDetector
         from snagline.detectors.loop import LoopDetector
+        from snagline.detectors.meltdown import MeltdownDetector
         from snagline.detectors.ml_ensemble import MLOrchestrator
+        from snagline.detectors.silent_abort import SilentAbortDetector
+        from snagline.detectors.token_runaway import TokenRunawayDetector
         from snagline.sinks.console import ConsoleSink
 
         cfg = config or Config()
@@ -222,6 +367,14 @@ class Monitor:
         # supplied, so the zero-dependency default is unchanged (step 2).
         if cfg.goal_drift_enabled and cfg.goal_drift_baseline is not None:
             base.append(GoalDriftDetector(baseline=cfg.goal_drift_baseline, config=cfg))
+        # Horizon detectors are opt-in too (issues #84/#85/#86): each needs
+        # telemetry or validation the zero-config preset does not promise.
+        if cfg.token_runaway_enabled:
+            base.append(TokenRunawayDetector(config=cfg))
+        if cfg.meltdown_enabled:
+            base.append(MeltdownDetector(config=cfg))
+        if cfg.silent_abort_enabled:
+            base.append(SilentAbortDetector(config=cfg))
         if cfg.ml_ensemble_enabled:
             # Combine the base detectors into one orchestrated signal (step 3).
             detectors: list[Detector] = [MLOrchestrator(base, config=cfg)]
