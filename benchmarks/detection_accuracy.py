@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
@@ -68,12 +69,23 @@ HARNESS_TOKEN_BUDGET = 50_000
 
 def harness_config() -> Config:
     """Monitor.default() configuration plus the flags the labels require."""
-    return Config(
+    cfg = Config(
         token_runaway_enabled=True,
         episode_token_budget=HARNESS_TOKEN_BUDGET,
         meltdown_enabled=True,
         silent_abort_enabled=True,
     )
+    # Opt-in auto-calibration sweep (issue #101): SNAGLINE_CALIBRATION=auto
+    # flips the harness onto calibrated thresholds without touching the
+    # fixtures, labels, or scoring. SNAGLINE_CALIBRATION_BASELINE_PATH points
+    # at a saved BaselineProfile JSON (fit it from known-healthy traffic).
+    # Unset, the harness behaves exactly as before (hand-tuned thresholds).
+    if os.environ.get("SNAGLINE_CALIBRATION", "").strip().lower() == "auto":
+        cfg.calibration = "auto"
+        path = os.environ.get("SNAGLINE_CALIBRATION_BASELINE_PATH", "").strip()
+        if path:
+            cfg.calibration_baseline_path = path
+    return cfg
 
 
 class RiskCollector:
