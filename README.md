@@ -246,6 +246,26 @@ snagline replay tests/fixtures/trajectories/healthy_run.jsonl --summary
 # replayed 24 steps; 0 risk(s) emitted   -> no false positives
 ```
 
+### Detection Accuracy Harness
+
+`benchmarks/detection_accuracy.py` is the honesty gate for every detection-
+accuracy claim (issue #82). It replays the labeled fixture corpus under
+`benchmarks/fixtures/` (62 episodes: four labeled failures per shipped
+trigger plus 30 healthy controls, including near-threshold cases) through a
+default-configured `Monitor` with the opt-in long-horizon flags enabled, then
+reports per-trigger TP/FP/FN, precision, recall, F1, macro-F1, and a
+confusion summary. It exits nonzero if any healthy control fires, so CI can
+consume it as a false-positive gate:
+
+```bash
+python benchmarks/detection_accuracy.py --fixtures benchmarks/fixtures --format table
+```
+
+The corpus is generated deterministically by
+`benchmarks/fixtures/generate_fixtures.py` and committed as files. Published
+precision/recall numbers land in this section after review; none are claimed
+before then.
+
 ## Framework Integration
 
 SNAGLINE plugs into agent frameworks without becoming one. Six adapters ship in `src/snagline/adapters/`, all optional installs so the core stays zero-dependency:
