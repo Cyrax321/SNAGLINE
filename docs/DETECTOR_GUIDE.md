@@ -63,16 +63,19 @@ monitor._detectors.append(MyDetector())   # or: Monitor(default_detectors + [min
 - `detectors/latency_anomaly.py` - Welford baseline + CUSUM deviation per tool
 - `detectors/goal_drift.py` - compares a live run to a persisted `BaselineProfile`
 - `detectors/ml_ensemble.py` - `MLOrchestrator` combining base detector scores
+- `detectors/token_runaway.py` - token-volume CUSUM + per-episode budget envelope
+- `detectors/meltdown.py` - sliding-window entropy collapse/thrash detection
+- `detectors/silent_abort.py` - end-of-episode completion check via `finalize`
 
 Each has a matching test in `tests/detectors/` showing the synthetic-sequence
 pattern (injected failure fires; healthy sequence stays silent). Copy that
 test shape for your own detector.
 
-## Optional detectors: baseline, goal-drift, and ensemble
+## Optional detectors: baseline, goal-drift, ensemble, and horizon set
 
 `LoopDetector`, `ErrorCascadeDetector`, and `LatencyAnomalyDetector` ship in
-`Monitor.default()`. Two further detectors are opt-in behind config flags so the
-zero-dependency preset is unchanged.
+`Monitor.default()`. The detectors below are opt-in behind config flags so the
+zero-dependency preset (and its published bench numbers) are unchanged.
 
 ### `BaselineProfile` and the `baseline` command
 
@@ -99,4 +102,47 @@ into one stronger risk. The default combiner is a transparent noisy-OR
 detectors agree. Pass `model=callable(scores) -> float` (e.g. a fitted
 scikit-learn pipeline from the `ml` extra) to replace the combiner. Enable it
 with `Config(ml_ensemble_enabled=True)`; `Monitor.default()` then wraps the
-base detectors in one orchestrator so there is no double counting.
+base detectors in one orchestrator so there is no double counting. The
+orchestrator forwards `finalize`, `dump_state`, and `load_state` to its bases,
+so orchestrated completion checks and snapshots keep working.
+
+## The horizon detectors (long-run set, issues #84/#85/#86)
+
+Three opt-in detectors aimed at multi-day episodes. All are stdlib-only and
+O(1) amortized per step.
+
+### `TokenRunawayDetector` (`token_runaway_enabled=True`)
+
+Sustained-burn CUSUM over per-step token volume (`tokens_in + tokens_out`),
+plus an optional hard envelope: one warning at
+`token_budget_warn_fraction` (default 80%) of `episode_token_budget` and a
+single critical `budget_breach` risk at 100%. Trigger names (`token_runaway`,
+`budget_breach`) are API: downstream policy layers map them by string.
+
+### `MeltdownDetector` (`meltdown_enabled=True`)
+
+Sliding-window Shannon entropy over tool-call identities, flagging both
+collapse shapes documented for long-horizon agents (arXiv:2603.29231):
+rote collapse below `meltdown_low_entropy` bits and churn above
+`meltdown_high_entropy` bits. Thresholds were tuned against fixtures so
+healthy five-tool alternation (~2.32 bits) stays silent.
+
+### `SilentAbortDetector` (`silent_abort_enabled=True`)
+
+The completion check from arXiv:2608.02464: evaluated once at
+`Monitor.end_episode()`, it fires when an episode's last step was an
+error-free bare tool call instead of an output step. To judge at episode end,
+a detector implements the duck-typed `finalize(episode_id)` method
+(`detectors.base.EpisodeFinalizer`); `end_episode` discovers it by attribute,
+so ordinary detectors are unaffected and fail-open applies as always.
+
+## Restart-survivable state: snapshot/restore (issue #91)
+
+Detectors that implement the duck-typed `dump_state()` / `load_state(state)`
+pair (`detectors.base.StatefulDetector`; JSON-compatible data only, never
+pickle) participate in `Monitor.snapshot(path)` / `Monitor.restore(path)`.
+Snapshots are written atomically (tmp + `os.replace`). Restore is a
+setup-time operation: a version or strict-composition mismatch raises rather
+than failing open -- a monitor that silently starts blank is exactly the quiet
+misbehavior this exists to prevent. All shipped detectors implement it, and
+`DedupSink` persists cooldowns when used with its default key function.
