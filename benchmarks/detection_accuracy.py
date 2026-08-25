@@ -11,7 +11,7 @@ labels:
   ``end_episode`` finalize pass). Repeat emissions of one trigger on one
   episode count once.
 * Per trigger the harness reports TP / FP / FN, precision, recall, and F1,
-  plus macro-F1 over all triggers with any support and a confusion summary
+  plus macro-F1 over the shipped triggers with any support and a confusion summary
   listing which trigger fired on another trigger's data.
 * Episodes with ``label: null`` are healthy controls: anything they emit is a
   false positive, and they can never contribute a false negative.

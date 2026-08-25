@@ -324,8 +324,9 @@ def healthy_warmup_jitter(ep: str, rng: random.Random) -> list[dict]:
 def healthy_warmout_wide_jitter(ep: str, rng: random.Random) -> list[dict]:
     """Wide warmup spread inflates sigma0 so ordinary variation stays quiet.
 
-    Warmup [350,480,390,460,370]: mu0=410, sample std ~= 93.5 (> floors);
-    post-freeze [420,400,430] all produce negative increments.
+    Warmup [350,480,390,460,370]: mu0=410, sample std ~= 57.0 (> floors);
+    post-freeze [420,400,430] all produce negative increments
+    (-0.33, -0.68, -0.15).
     """
     b = _Builder(ep, rng)
     for ms in (350.0, 480.0, 390.0, 460.0, 370.0):
@@ -503,6 +504,10 @@ HEALTHY_BUILDERS = [
     healthy_near_threshold_entropy,
     healthy_steady_tokens,
     healthy_isolated_errors,
+    # Appended at the end so existing episode ids stay stable: ids derive
+    # from list position.
+    lambda ep, rng: healthy_plain(ep, rng, 17),
+    lambda ep, rng: healthy_plain(ep, rng, 8),
 ]
 
 
