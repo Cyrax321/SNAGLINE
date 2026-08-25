@@ -251,7 +251,7 @@ def test_escape_label_handles_backslash_quote_newline():
     assert _escape_label("plain") == "plain"
 
 
-def test_episode_table_evicts_oldest_at_cap():
+def test_episode_table_evicts_least_recently_seen_at_cap():
     collector = SidecarMetricsCollector(max_episodes=2)
     collector.record_ingest("ep-a", 0.001)
     collector.record_ingest("ep-b", 0.001)

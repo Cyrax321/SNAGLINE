@@ -141,9 +141,10 @@ class SidecarMetricsCollector:
 
     Counts risks per ``(trigger, severity)`` by acting as one extra sink on
     the Monitor, plus HTTP-layer totals: events accepted, time spent inside
-    ``Monitor.ingest``, and distinct episode ids seen (bounded FIFO table,
-    ids only, no content). Every entry point swallows its own exceptions:
-    like any sink, this must never take down ingestion or serving.
+    ``Monitor.ingest``, and distinct episode ids seen (bounded table with
+    least-recently-seen eviction, ids only, no content). Every entry point
+    swallows its own exceptions: like any sink, this must never take down
+    ingestion or serving.
     """
 
     def __init__(self, max_episodes: int = _MAX_TRACKED_EPISODES) -> None:
@@ -152,7 +153,9 @@ class SidecarMetricsCollector:
         self._events_total = 0
         self._ingest_count = 0
         self._ingest_sum = 0.0
-        # Insertion-ordered id set with FIFO eviction at max_episodes.
+        # Episode id table: reseeing an id moves it to the end, so when the
+        # cap bites we forget the episode quiet for the longest time, which
+        # is the right approximation of "active" for a long-lived sidecar.
         self._episodes: OrderedDict[str, None] = OrderedDict()
         self._max_episodes = max(1, int(max_episodes))
 
