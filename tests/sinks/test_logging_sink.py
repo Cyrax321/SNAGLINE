@@ -17,6 +17,7 @@ from snagline.events import StepEvent, make_signature
 from snagline.monitor import Monitor
 from snagline.risk import FailureRisk
 from snagline.sinks import LoggingSink
+from snagline.sinks.logging_sink import JsonRiskFormatter
 
 EXACT_KEYS = {"ts", "episode_id", "step_id", "trigger", "severity", "score", "detail"}
 SORTED_KEYS = ["detail", "episode_id", "score", "severity", "step_id", "trigger", "ts"]
@@ -186,6 +187,55 @@ def test_sink_exported_from_sinks_package():
     finally:
         lg.removeHandler(cap)
     assert json.loads(cap.records[0].getMessage())["episode_id"] == "ep-99"
+
+
+def _plain_record() -> logging.LogRecord:
+    return logging.LogRecord(
+        name="snagline",
+        level=logging.WARNING,
+        pathname=__file__,
+        lineno=1,
+        msg="%s",
+        args=("ordinary log line",),
+        exc_info=None,
+    )
+
+
+def _risk_record() -> logging.LogRecord:
+    record = _plain_record()
+    record.snagline_risk = _risk()  # type: ignore[attr-defined]
+    return record
+
+
+def test_formatter_record_path_renders_json_for_risk_records():
+    # Handler-side entry point documented on JsonRiskFormatter: records
+    # carrying ``snagline_risk`` render as the same compact JSON line.
+    payload = json.loads(JsonRiskFormatter().format(_risk_record()))
+    assert set(payload.keys()) == EXACT_KEYS
+    assert payload["episode_id"] == "ep-99"
+    assert payload["trigger"] == "loop"
+
+
+def test_formatter_leaves_plain_records_on_default_formatting():
+    # Records without an attached risk must pass through default formatting
+    # untouched, so sharing one handler across sources stays safe.
+    assert JsonRiskFormatter().format(_plain_record()) == "ordinary log line"
+
+
+def test_custom_formatter_injection_controls_output():
+    class _Prefixed(JsonRiskFormatter):
+        def render(self, risk: FailureRisk) -> str:
+            return "PREFIX " + super().render(risk)
+
+    lg, cap = _capture_logger()
+    try:
+        sink = LoggingSink(logger=lg, formatter=_Prefixed())
+        sink.emit(_risk())
+    finally:
+        lg.removeHandler(cap)
+    line = cap.records[0].getMessage()
+    assert line.startswith("PREFIX {")
+    assert json.loads(line[len("PREFIX") :].strip())["step_id"] == "step-7"
 
 
 # --- Healthy vs failing streams through a real Monitor -----------------------
