@@ -86,12 +86,14 @@ detector's behavior is exactly the plain path above.
   `fn` maps a signature string to its normalized form.
 - **Cycle** (`Config(loop_cycle_enabled=True)`): A,B,A,B,... periodicity that
   never repeats one action often enough to trip `repeat_threshold`. After
-  each step an ascending candidate-period scan (O(window)) looks for the
-  minimal period p with `loop_cycle_min_period <= p <= loop_cycle_max_period`
-  (default 2..6) that makes the recent `loop_cycle_window_size` window
-  exactly periodic; it fires once when the window holds at least two full
-  periods and re-arms when periodicity breaks. Uniform repetition is ignored
-  here on purpose: single-action loops belong to the plain loop/stall modes.
+  each step an ascending scan (O(window)) finds the window content's minimal
+  period p; it fires once when p lies inside the configured band
+  (`loop_cycle_min_period` to `loop_cycle_max_period`, default 2..6) and the
+  recent `loop_cycle_window_size` window holds at least two full periods,
+  then re-arms when periodicity breaks. Filtering on the true minimum means a
+  custom band genuinely suppresses faster loops instead of re-flagging them
+  through a multiple, and uniform repetition (minimal period 1) is always
+  ignored: single-action loops belong to the plain loop/stall modes.
   Trigger: `cycle`.
 - **Stall** (`Config(loop_stall_enabled=True)`): N consecutive identical
   signatures with no progress fires after `loop_stall_steps` (default 25).

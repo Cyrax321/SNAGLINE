@@ -18,10 +18,12 @@ with stock settings this detector behaves exactly as it did before #89:
   The normalizer is a documented heuristic (see ``default_normalizer``) and
   replaceable per instance via the ``normalizer`` constructor hook.
 - cycle (``loop_cycle_enabled``): A,B,A,B,... periodicity that never repeats
-  one action often enough to trip ``repeat_threshold``. Fires ``cycle`` when
-  the recent window is exactly periodic under some minimal period p with
-  ``loop_cycle_min_period <= p <= loop_cycle_max_period`` and the window
-  holds at least two full periods.
+  one action often enough to trip ``repeat_threshold``. After each step an
+  ascending scan finds the window content's minimal period p; it fires
+  ``cycle`` once when p lies inside
+  ``[loop_cycle_min_period, loop_cycle_max_period]`` (so configuring a band
+  genuinely suppresses faster loops rather than re-flagging them through a
+  multiple) and the window holds at least two full periods.
 - stall (``loop_stall_enabled``): one action repeated N consecutive steps
   with no progress, firing ``stall`` after ``loop_stall_steps`` (default
   25). Wall-clock deltas never reset the streak: zero-delta steps count
@@ -268,25 +270,24 @@ class LoopDetector:
         )
 
     def _minimal_period(self, w: deque) -> int | None:
-        """Smallest candidate period making the whole window exactly periodic.
+        """True minimal period of the window content, if verifiable in band.
 
-        Ascending scan over ``[loop_cycle_min_period, loop_cycle_max_period]``,
-        O(window) per step. Returns None when fewer than two full periods fit
-        in the window yet, when the window is uniform (single-action
-        repetition belongs to the plain loop and stall modes, not cycles), or
-        when no candidate period fits.
+        Ascending scan from 1: the first candidate p whose repetition holds
+        across the whole window is the content's minimal period, so a
+        configured band filters on that true minimum. A period-2 loop with
+        ``loop_cycle_min_period=3`` therefore stays silent instead of being
+        re-flagged as a period-4 or period-6 multiple. Returns None when the
+        minimal period sits outside the band (uniform windows have minimal
+        period 1, below any useful band: single-action repetition belongs to
+        the plain loop and stall modes), or when fewer than two full periods
+        of the minimal period fit in the window yet.
         """
         n = len(w)
-        if n < 2 * self.loop_cycle_min_period:
-            return None
-        first = w[0]
-        if all(s == first for s in w):
-            return None
-        for p in range(self.loop_cycle_min_period, self.loop_cycle_max_period + 1):
+        for p in range(1, self.loop_cycle_max_period + 1):
             if n < 2 * p:
-                break  # longer candidates only need more history than we have
+                return None  # larger candidates only need more history
             if all(w[i] == w[i + p] for i in range(n - p)):
-                return p
+                return p if p >= self.loop_cycle_min_period else None
         return None
 
     def _observe_stall(self, event: StepEvent) -> FailureRisk | None:

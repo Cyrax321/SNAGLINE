@@ -75,6 +75,38 @@ def test_cycle_healthy_varied_sequence_stays_silent():
     assert _feed(d, sigs) == [], "varied traffic must not trip the cycle scan"
 
 
+def test_cycle_band_suppresses_faster_true_period():
+    """A custom band filters on the window's TRUE minimal period: with
+    min=3 a period-2 loop must stay silent, not re-fire as a multiple."""
+    cfg = Config(
+        loop_cycle_enabled=True,
+        loop_cycle_window_size=6,
+        loop_cycle_min_period=3,
+        loop_cycle_max_period=4,
+    )
+    d = LoopDetector(config=cfg)
+    out = [d.observe(_event(i, s)) for i, s in enumerate(["x", "y"] * 3)]
+    cycles = [r.trigger for r in out if r is not None]
+    assert "cycle" not in cycles, (
+        f"true period 2 below configured min must not fire as cycle: {cycles}"
+    )
+    # Documented coexistence: the shared plain path still reports the raw
+    # repetition; only the cycle trigger must stay silent.
+
+
+def test_cycle_band_accepts_in_band_true_period():
+    cfg = Config(
+        loop_cycle_enabled=True,
+        loop_cycle_window_size=6,
+        loop_cycle_min_period=3,
+        loop_cycle_max_period=4,
+    )
+    d = LoopDetector(config=cfg)
+    fires = _feed(d, ["m", "n", "o", "m", "n", "o"])
+    assert len(fires) == 1 and fires[0][1].trigger == "cycle"
+    assert "period-3" in fires[0][1].detail
+
+
 def test_uniform_repetition_is_not_a_cycle():
     """One signature repeated is loop/stall territory, never trigger 'cycle'."""
     d = LoopDetector(config=_cycle_config(6))
