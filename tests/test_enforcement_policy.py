@@ -640,6 +640,24 @@ def test_halt_webhook_nonpositive_timeout_raises():
         Monitor([], [], policy="halt_webhook", halt_url="http://x/", halt_timeout_s=0)
 
 
+def test_halt_webhook_rejects_non_http_scheme():
+    # Control-plane endpoint: urllib would happily try file://, ftp://, etc.;
+    # only http(s) is a legitimate halt transport.
+    for bad in ("file:///etc/passwd", "ftp://host/halt", "/etc/passwd"):
+        with pytest.raises(ValueError):
+            Monitor([], [], policy="halt_webhook", halt_url=bad)
+
+
+def test_min_severity_for_halt_range_validated():
+    for bad in (-0.1, 1.1, 42):
+        with pytest.raises(ValueError):
+            Monitor([], [], min_severity_for_halt=bad)
+    # The domain edges themselves are legal.
+    for edge in (0.0, 1.0):
+        monitor = Monitor([], [], min_severity_for_halt=edge)
+        assert monitor._min_severity_for_halt == edge
+
+
 def test_monitor_default_wires_policy_from_config(halt_endpoint):
     monitor = Monitor.default(
         config=Config(policy="halt_webhook", halt_url=halt_endpoint.url),

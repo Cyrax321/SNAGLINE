@@ -23,6 +23,7 @@ import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 from snagline.calibration import (
     CalibrationPlan,
@@ -228,6 +229,18 @@ class Monitor:
                 raise ValueError("policy='halt_webhook' requires halt_url")
             if halt_timeout_s <= 0:
                 raise ValueError("halt_timeout_s must be positive")
+            # Control-plane endpoint: restrict to http(s). urllib would happily
+            # attempt other schemes (file://, ftp://); a typo or injection in
+            # operator config must fail loudly here, not probe odd handlers.
+            scheme = urlsplit(str(halt_url)).scheme.strip().lower()
+            if scheme not in ("http", "https"):
+                raise ValueError(
+                    f"halt_url must be an http(s) endpoint; got scheme {scheme!r}"
+                )
+        # Risk scores live in [0, 1]; a threshold outside that range would
+        # silently disable or permanently enable halting.
+        if not 0.0 <= float(min_severity_for_halt) <= 1.0:
+            raise ValueError("min_severity_for_halt must be within [0, 1]")
         self._policy = normalized
         self._on_risk = on_risk
         self._halt_url = halt_url
