@@ -69,6 +69,40 @@ def test_build_sinks_cooldown_wraps():
     assert isinstance(sinks[0], DedupSink)
 
 
+def test_watch_composes_single_dedup_layer(monkeypatch, tmp_path):
+    """Regression for #152: ``watch`` must not re-wrap ``_build_sinks`` output
+    in a second DedupSink. The builder is the single wrap choke point, so
+    watch and serve compose identically: exactly one layer around the console
+    sink."""
+    import snagline.cli as cli
+
+    traj = tmp_path / "t.jsonl"
+    _write_healthy_trajectory(traj)
+
+    captured = {}
+    real_default = cli.Monitor.default
+
+    class SpyMonitor(cli.Monitor):
+        @classmethod
+        def default(cls, *a, **kw):
+            captured["sinks"] = kw.get("sinks")
+            return real_default(*a, **kw)
+
+    monkeypatch.setattr(cli, "Monitor", SpyMonitor)
+
+    assert main(["watch", "--file", str(traj), "--cooldown-seconds", "60"]) == 0
+
+    sinks = captured["sinks"]
+    assert sinks is not None, "watch must construct its Monitor with explicit sinks"
+    assert len(sinks) == 1
+    assert isinstance(sinks[0], DedupSink)
+    # Exactly ONE layer: the wrapped sink is the console escalation itself,
+    # not another DedupSink.
+    from snagline.sinks.console import ConsoleSink
+
+    assert isinstance(sinks[0]._sink, ConsoleSink)
+
+
 def test_main_watch_slack_missing_url_exits_2():
     assert main(["watch", "--sink", "slack"]) == 2
 
