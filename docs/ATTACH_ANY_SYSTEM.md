@@ -82,8 +82,9 @@ enterprise-grade alerting. Concretely:
    `StepEvent`, add auth (HMAC or bearer) and TLS verification, and document
    the schema.
    - **Done:** bearer/token auth (#31), body-size cap + batched `POST /events`
-     (#32), 12-factor config + CLI wiring (#36). TLS termination is delegated
-     to a reverse proxy (not in-process) - documented as such.
+     (#32), 12-factor config + CLI wiring (#36). TLS terminates at a
+     reverse proxy (configs below) or in-process via `--certfile/--keyfile`
+     (issue #120).
 2. **Add Python auto-instrumentation.** Wrap OpenAI/Anthropic clients and
    LangChain automatically so a user adds one line (`import snagline.auto`)
    instead of editing every call. This is the real "attach to any system"
@@ -154,7 +155,9 @@ but the moment telemetry crosses a network segment you do not fully trust
 The supported production pattern is TLS termination at a reverse proxy:
 public traffic arrives at the proxy over HTTPS, the proxy strips TLS and
 forwards plaintext to the sidecar over loopback. Both configs below are
-copy-paste ready and introduce zero new Python dependencies.
+copy-paste ready and introduce zero new Python dependencies. If you cannot
+run a proxy on the same host, the sidecar can also terminate TLS itself;
+see the threat model below for the trade-off and the invocation.
 
 Assumptions used throughout: the sidecar runs on the same host as the proxy,
 on port 8787, with a bearer token set via `$SNAGLINE_SERVE_AUTH_TOKEN` (or
@@ -268,15 +271,34 @@ caller reached the intended endpoint. What it does not solve is the final
 hop: proxy to sidecar remains plaintext. On one trusted host across
 loopback, that residual exposure is usually acceptable. It is not acceptable
 when the proxy runs on a different machine than the sidecar, or when the
-shared host runs processes you do not control; in those cases wrap TLS in
-the sidecar process itself. That is the documented future option (issue
-#103): wrap `serve()`'s listening socket with a stdlib `ssl.SSLContext`
-exposed via `--certfile/--keyfile` flags. It would close the last plaintext
-hop and additionally allow mutual TLS, letting the sidecar authenticate
-clients by certificate without any external component. Both directions cost
-zero new dependencies: `ssl` is standard library, and a reverse proxy adds
-nothing to the Python environment, so the choice between them is purely
-operational.
+shared host runs processes you do not control; in those cases terminate TLS
+in the sidecar process itself. That is built in as of issue #120: pass
+`--certfile`/`--keyfile` and `serve()` wraps its listening socket with a
+stdlib `ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)`, closing the last plaintext
+hop:
+
+```bash
+# Any PEM pair works; to generate a throwaway self-signed one:
+#   openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+#     -subj "/CN=snagline.internal" -keyout key.pem -out cert.pem
+SNAGLINE_SERVE_AUTH_TOKEN=... snagline serve \
+  --host 127.0.0.1 --port 8787 \
+  --certfile /etc/snagline/cert.pem \
+  --keyfile /etc/snagline/key.pem
+
+# Acceptance check against a self-signed pair (-k). With a real certificate,
+# use --cacert so the chain is actually verified instead of skipped:
+curl -k https://127.0.0.1:8787/health
+```
+
+Auth semantics are unchanged over TLS: `Authorization: Bearer` and
+`X-Snagline-Token` stay required on everything except `GET /health`, exactly
+as on plain HTTP. What in-process termination does not add today is mutual
+TLS (authenticating senders by client certificate); stdlib `ssl` can do it
+with no new dependencies, so exposing a client-CA knob is a natural follow-up.
+Both directions cost zero new dependencies: `ssl` is standard library, and a
+reverse proxy adds nothing to the Python environment, so the choice between
+them is purely operational.
 
 ### Hardening checklist
 
@@ -286,8 +308,9 @@ operational.
   stays out of process listings and shell history.
 - **Keep the loopback bind.** The default `host="127.0.0.1"` exists so only
   the proxy can reach the sidecar. Do not expose port 8787 off-host; if the
-  proxy must run on another machine, tunnel that segment (VPN/WireGuard)
-  until in-process TLS lands (issue #103).
+  proxy must run on another machine, either tunnel that segment
+  (VPN/WireGuard) or terminate TLS in the sidecar itself with
+  `--certfile/--keyfile` (see the threat model above).
 - **Keep the body-size caps in sync.** The sidecar rejects requests above
   `--max-body-bytes` (default 1000000) with 413; mirror that number in
   `client_max_body_size` (nginx) or `request_body max_size` (Caddy) so

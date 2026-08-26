@@ -18,13 +18,16 @@ dependency-free unless noted; the core is always zero-required-dependency.
 | Path | Plaintext segment | TLS story |
 |------|-------------------|-----------|
 | In-process adapters / auto-instrumentation | none (no network) | not applicable |
-| HTTP sidecar, direct | client to loopback only | keep the default `127.0.0.1` bind; never expose 8787 off-host |
+| HTTP sidecar, direct | client to loopback only | keep the default `127.0.0.1` bind; or terminate TLS in-process with `snagline serve --certfile/--keyfile` (issue #120) |
 | HTTP sidecar behind nginx or Caddy | proxy to sidecar over loopback | public TLS terminates at the proxy; copy-paste configs in [ATTACH_ANY_SYSTEM.md](ATTACH_ANY_SYSTEM.md#sidecar-tls-reverse-proxy-termination-issue-103) |
 | Webhook / Slack / PagerDuty sinks | none outbound | stdlib `urllib` speaks HTTPS to remote endpoints |
 
-In-process TLS for the sidecar itself is the documented future option
-(issue #103); it would remove even the loopback plaintext hop and enable
-mutual TLS, with zero new dependencies either way.
+In-process TLS also ships (issue #120): `snagline serve --certfile <pem>
+--keyfile <pem>` wraps the listener in stdlib `ssl`, so the sidecar itself
+can speak HTTPS and remove even the loopback plaintext hop. Copy-paste
+invocation in [ATTACH_ANY_SYSTEM.md](ATTACH_ANY_SYSTEM.md#sidecar-tls-reverse-proxy-termination-issue-103).
+Mutual TLS via a client CA is a possible follow-up; zero new dependencies
+either way.
 
 ## Python auto-instrumentation (`snagline.auto`)
 
