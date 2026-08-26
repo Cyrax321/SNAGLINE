@@ -6,8 +6,15 @@ shell script, a Claude Code hook) can POST ``StepEvent`` JSON to:
     POST /events             body: a StepEvent as a JSON object      -> monitor.ingest()
                                or a JSON array of StepEvent objects     (batched)
     POST /hooks/claude-code  body: a native Claude Code hook payload -> mapped + ingested
+    POST /episodes/end       body: {"episode_id": "<id>"}            -> monitor.end_episode()
     GET  /health                                                     -> 200 OK
     GET  /metrics                                                    -> Prometheus text exposition (v0.0.4)
+
+A host that knows an episode is over can signal it with ``POST
+/episodes/end`` carrying ``{"episode_id": "..."}`` (issue #123): the sidecar
+forwards to ``Monitor.end_episode()`` and drops the id from the
+``snagline_episodes_active`` gauge immediately, so long-lived processes stop
+counting finished episodes without waiting for cap eviction.
 
 POST bodies are capped at ``max_body_bytes`` (default 1 MB); larger payloads
 get 413. This keeps the sidecar safe to expose and able to absorb buffered
@@ -202,6 +209,23 @@ class SidecarMetricsCollector:
         except Exception:
             logger.debug("snagline: metrics record failed", exc_info=True)
 
+    def end_episode(self, episode_id: str) -> None:
+        """Forget one episode id so the gauge reflects completion at once.
+
+        Without this an ended episode keeps occupying a table slot until cap
+        eviction forgets it (issue #123). Idempotent by design: ending an
+        unknown or already-ended id is a no-op, never an error. Guarded like
+        every other entry point: bookkeeping must never take serving down.
+        """
+        try:
+            key = str(episode_id)
+            with self._lock:
+                self._episodes.pop(key, None)
+        except Exception:
+            logger.debug(
+                "snagline: metrics collector end_episode failed", exc_info=True
+            )
+
     def snapshot(self) -> dict[str, Any]:
         """Return a consistent copy of the counters for rendering."""
         with self._lock:
@@ -238,7 +262,8 @@ class SidecarMetricsCollector:
                 f'severity="{_escape_label(severity)}"}} {count}'
             )
         lines.append(
-            "# HELP snagline_episodes_active Distinct episode ids seen since start."
+            "# HELP snagline_episodes_active Distinct episode ids seen since start;"
+            " ids removed again on POST /episodes/end."
         )
         lines.append("# TYPE snagline_episodes_active gauge")
         lines.append(f"snagline_episodes_active {snap['episodes_active']}")
@@ -397,6 +422,8 @@ def make_handler(
                 self._post_events()
             elif self.path == "/hooks/claude-code":
                 self._post_claude_hook()
+            elif self.path == "/episodes/end":
+                self._post_episodes_end()
             elif self.path == "/risks":
                 self._post_risks()
             else:
@@ -468,6 +495,43 @@ def make_handler(
             # above is the only client-visible error.
             self._ingest_recorded(event)
             self._respond(202, {"status": "ingested", "step_id": event.step_id})
+
+        def _post_episodes_end(self) -> None:
+            """Accept an end-of-episode signal (issue #123).
+
+            Body is ``{"episode_id": "<id>"}``. The id is forwarded to
+            ``Monitor.end_episode`` (detector finalization plus state
+            teardown) and removed from the metrics episodes table so the
+            gauge stops counting it immediately. Ids only: the body is never
+            logged or retained. Fail-open end to end -- malformed bodies get
+            400, monitor failures are logged and swallowed, and the client
+            always gets a clean response because this endpoint must never be
+            the one that takes the sidecar down.
+            """
+            body = self._read_body()
+            try:
+                payload = json.loads(body.decode("utf-8"))
+            except (ValueError, json.JSONDecodeError):
+                self._respond(400, {"error": "invalid end-episode JSON"})
+                return
+            episode_id = (
+                payload.get("episode_id") if isinstance(payload, dict) else None
+            )
+            if not isinstance(episode_id, str) or not episode_id:
+                self._respond(400, {"error": "episode_id must be a non-empty string"})
+                return
+            try:
+                self.snagline_monitor.end_episode(episode_id)
+            except Exception:
+                # Monitor dispatch is fail-open internally already; this guard
+                # covers misconfigured monitors (fail_open=False) so a bad
+                # signal can still never escape into the server plumbing.
+                logger.exception("snagline: end_episode dispatch failed")
+            finally:
+                collector = self.snagline_collector
+                if collector is not None:
+                    collector.end_episode(episode_id)
+            self._respond(200, {"status": "ended", "episode_id": episode_id})
 
         def _ingest_recorded(self, event: StepEvent) -> None:
             """Ingest one event while recording sidecar metrics around it.
