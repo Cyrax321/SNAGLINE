@@ -407,10 +407,15 @@ def make_handler(
                 # kernel send RST and the sender can lose the 401 response
                 # entirely (same rationale as the over-cap drain, #121;
                 # observed over TLS where close timing shifts the race).
-                self._discard_overcap_body(int(self.headers.get("Content-Length") or 0))
+                declared = self._parse_content_length()
+                if declared is None:
+                    return
+                self._discard_overcap_body(declared)
                 self._respond(401, {"error": "unauthorized"})
                 return
-            length = int(self.headers.get("Content-Length") or 0)
+            length = self._parse_content_length()
+            if length is None:
+                return
             if length > self.snagline_max_body:
                 # Consume the over-cap body first: closing with megabytes
                 # unread makes the peer see EPIPE/reset instead of the 413
@@ -427,7 +432,7 @@ def make_handler(
             elif self.path == "/risks":
                 self._post_risks()
             else:
-                self._discard_overcap_body(int(self.headers.get("Content-Length") or 0))
+                self._discard_overcap_body(length)
                 self._respond(404, {"error": "not found"})
 
         def _post_risks(self) -> None:
@@ -439,6 +444,8 @@ def make_handler(
             malformed body is acknowledged (202) so the sender never retries.
             """
             body = self._read_body()
+            if body is None:
+                return
             try:
                 risk = json.loads(body.decode("utf-8"))
                 if not isinstance(risk, dict):
@@ -458,6 +465,8 @@ def make_handler(
 
         def _post_events(self) -> None:
             body = self._read_body()
+            if body is None:
+                return
             try:
                 obj = json.loads(body.decode("utf-8"))
             except (ValueError, json.JSONDecodeError):
@@ -509,6 +518,8 @@ def make_handler(
             the one that takes the sidecar down.
             """
             body = self._read_body()
+            if body is None:
+                return
             try:
                 payload = json.loads(body.decode("utf-8"))
             except (ValueError, json.JSONDecodeError):
@@ -558,6 +569,8 @@ def make_handler(
             retries noise.
             """
             body = self._read_body()
+            if body is None:
+                return
             try:
                 payload = json.loads(body.decode("utf-8"))
                 if not isinstance(payload, dict):
@@ -580,6 +593,33 @@ def make_handler(
                     "step_id": event.step_id if event else None,
                 },
             )
+
+        def _parse_content_length(self) -> int | None:
+            """Parse Content-Length, or None if malformed (already answered 400).
+
+            An absent Content-Length header is treated as length 0: the body
+            is silently empty, which is acceptable for these telemetry-only
+            endpoints. A present but non-numeric or negative value is answered
+            with 400 {"error": "invalid Content-Length"} and the caller
+            must return without reading any body bytes. Shared by ``do_POST``
+            and ``_read_body`` so every entry point fails the same way.
+            """
+            raw = self.headers.get("Content-Length")
+            if raw is None:
+                return 0
+            text = raw.strip() if isinstance(raw, str) else str(raw).strip()
+            if text == "":
+                self._respond(400, {"error": "invalid Content-Length"})
+                return None
+            try:
+                length = int(text)
+            except (ValueError, TypeError):
+                self._respond(400, {"error": "invalid Content-Length"})
+                return None
+            if length < 0:
+                self._respond(400, {"error": "invalid Content-Length"})
+                return None
+            return length
 
         def _discard_overcap_body(self, declared_length: int) -> None:
             """Read and throw away an over-cap body before replying 413.
@@ -608,8 +648,17 @@ def make_handler(
                     return  # client hung up early; nothing more to discard
                 remaining -= len(chunk)
 
-        def _read_body(self) -> bytes:
-            length = int(self.headers.get("Content-Length") or 0)
+        def _read_body(self) -> bytes | None:
+            """Read the request body, or None if Content-Length was malformed.
+
+            On malformed Content-Length the helper has already sent the 400
+            response; the caller must return immediately without sending
+            another response, otherwise the connection would see two status
+            lines.
+            """
+            length = self._parse_content_length()
+            if length is None:
+                return None
             return self.rfile.read(length)
 
         def _respond(self, code: int, payload: dict) -> None:
