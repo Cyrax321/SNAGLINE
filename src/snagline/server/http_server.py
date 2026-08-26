@@ -19,6 +19,12 @@ token via ``Authorization: Bearer <token>`` or ``X-Snagline-Token: <token>``;
 missing or wrong tokens get 401. ``GET /health`` stays open for liveness
 probes -- everything else, GET and POST alike, is behind the token.
 
+The listener can terminate TLS itself (issue #120): pass ``certfile=`` and
+``keyfile=`` (or a ready-made ``ssl_context=``) and the listening socket is
+wrapped with stdlib ``ssl``, so the sidecar speaks ``https://`` on the same
+endpoints with identical auth semantics. Without these arguments the listener
+stays plain HTTP, byte-for-byte the behavior described above.
+
 ``POST /risks`` retains the most recent ``max_risks`` risks (default 1000) for
 ``GET /risks``; older ones are discarded so an unbounded sender cannot grow the
 sidecar's memory without limit.
@@ -48,6 +54,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import ssl
 import sys
 import threading
 import time
@@ -562,6 +569,34 @@ def make_handler(
     return _Handler
 
 
+def _resolve_ssl_context(
+    ssl_context: ssl.SSLContext | None,
+    certfile: str | None,
+    keyfile: str | None,
+) -> ssl.SSLContext | None:
+    """Return the server-side TLS context for the listener, or None.
+
+    An explicit ``ssl_context`` wins; otherwise ``certfile`` (with optional
+    ``keyfile``) is loaded into a fresh ``ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)``.
+    Contradictory or incomplete arguments raise ``ValueError`` at startup:
+    silently ignoring half a TLS configuration would bind plaintext while the
+    operator believes the listener is encrypted.
+    """
+    if ssl_context is not None:
+        if certfile is not None or keyfile is not None:
+            raise ValueError(
+                "pass either ssl_context or certfile/keyfile to serve(), not both"
+            )
+        return ssl_context
+    if certfile is None:
+        if keyfile is not None:
+            raise ValueError("keyfile requires certfile")
+        return None
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(certfile, keyfile)
+    return context
+
+
 def make_server(
     monitor: Monitor,
     host: str = "127.0.0.1",
@@ -570,12 +605,24 @@ def make_server(
     max_body_bytes: int = 1_000_000,
     max_risks: int = 1000,
     metrics_format: str | None = None,
+    ssl_context: ssl.SSLContext | None = None,
+    certfile: str | None = None,
+    keyfile: str | None = None,
 ) -> ThreadingHTTPServer:
-    """Construct a ready-to-``serve_forever()`` sidecar server."""
-    return ThreadingHTTPServer(
+    """Construct a ready-to-``serve_forever()`` sidecar server.
+
+    With ``ssl_context`` or ``certfile``/``keyfile`` the listening socket is
+    wrapped server-side via stdlib ``ssl`` (issue #120): the sidecar speaks
+    HTTPS directly. Without them the server is plain HTTP, exactly as before.
+    """
+    tls_context = _resolve_ssl_context(ssl_context, certfile, keyfile)
+    server = ThreadingHTTPServer(
         (host, port),
         make_handler(monitor, auth_token, max_body_bytes, max_risks, metrics_format),
     )
+    if tls_context is not None:
+        server.socket = tls_context.wrap_socket(server.socket, server_side=True)
+    return server
 
 
 def serve(
@@ -586,13 +633,27 @@ def serve(
     max_body_bytes: int = 1_000_000,
     max_risks: int = 1000,
     metrics_format: str | None = None,
+    ssl_context: ssl.SSLContext | None = None,
+    certfile: str | None = None,
+    keyfile: str | None = None,
 ) -> None:
     """Run the sidecar server in the foreground until interrupted."""
+    tls_enabled = ssl_context is not None or certfile is not None
     server = make_server(
-        monitor, host, port, auth_token, max_body_bytes, max_risks, metrics_format
+        monitor,
+        host,
+        port,
+        auth_token,
+        max_body_bytes,
+        max_risks,
+        metrics_format,
+        ssl_context,
+        certfile,
+        keyfile,
     )
     logger.info(
-        "snagline sidecar listening on http://%s:%d (POST /events, GET /health)%s",
+        "snagline sidecar listening on %s://%s:%d (POST /events, GET /health)%s",
+        "https" if tls_enabled else "http",
         host,
         port,
         "" if auth_token else " -- no auth token set, all endpoints are open",
