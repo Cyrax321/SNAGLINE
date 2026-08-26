@@ -12,6 +12,7 @@ from __future__ import annotations
 import glob
 import json
 import logging
+import os
 
 from snagline.config import Config
 from snagline.events import StepEvent
@@ -184,7 +185,7 @@ def test_replay_fingerprints_unchanged_when_options_unset() -> None:
         "injected_loop.jsonl": [("loop", "22", 0.5)],
     }
     for path in sorted(glob.glob("tests/fixtures/trajectories/*.jsonl")):
-        name = path.rsplit("/", 1)[-1]
+        name = os.path.basename(path)
         sink = CapturingSink()
         monitor = Monitor.default(config=Config(), sinks=[sink])
         episode = None
