@@ -226,3 +226,17 @@ def test_loop_detector_default_counts_invisible_when_scaling_off() -> None:
     # Counts maintained but never consulted when scale_steps == 0.
     assert det._counts.get("ep1") == len(events)
     assert all(w.maxlen == 12 for w in det._windows.values())
+
+
+def test_near_duplicate_mode_counts_events_once_per_family() -> None:
+    """Regression (gitar finding, PR #167): plain and near-duplicate paths
+    share one observe() call per event, so each window family must keep its
+    own event counter; a shared one would count every event twice and scale
+    windows twice as fast.
+    """
+    cfg = Config(loop_near_duplicate_enabled=True, window_scale_steps=10)
+    det = LoopDetector(config=cfg)
+    for i in range(25):
+        det.observe(_event(f"s{i}", float(i), "loopA" if i % 2 else f"u{i}"))
+    assert det._counts["ep1"] == 25  # advanced once per event, not twice
+    assert det._near_counts["ep1"] == 25

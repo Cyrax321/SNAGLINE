@@ -349,7 +349,8 @@ class Monitor:
 
         * ``idle_gap`` (score 0.8) when a gap between consecutive ingests
           reaches ``idle_warn_seconds``;
-        * ``wall_clock_budget`` warning (score 0.8) at ``warn_fraction`` of
+        * ``wall_clock_budget`` warning (score 0.7, keeping it inside the
+          "warning" severity band) at ``warn_fraction`` of
           ``max_episode_wall_seconds``, then a breach (score 1.0) at the limit;
           a single delta that jumps straight past the limit fires only the
           breach (mirrors TokenRunawayDetector's envelope ordering).

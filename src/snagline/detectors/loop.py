@@ -128,7 +128,12 @@ class LoopDetector:
         # capped at max_window. Per-episode event counts feed the scale factor.
         self._scale_steps = cfg.window_scale_steps
         self._max_window = cfg.max_window
+        # One event counter PER window family: observe() advances the plain
+        # and near-duplicate paths on the same event when hardening modes are
+        # on, so a shared counter would count each event twice and scale
+        # windows twice as fast (gitar review finding on PR #167).
         self._counts: dict[str, int] = {}
+        self._near_counts: dict[str, int] = {}
         self._cycle_counts: dict[str, int] = {}
         self._any_mode = (
             self.loop_near_duplicate_enabled
@@ -234,7 +239,7 @@ class LoopDetector:
         key = _normalized_key(self._normalize, event.action_signature)
         w = next_window(
             self._near_windows,
-            self._counts,
+            self._near_counts,
             event.episode_id,
             self.window_size,
             self._scale_steps,
@@ -350,6 +355,7 @@ class LoopDetector:
         self._counts.pop(episode_id, None)
         self._fired.pop(episode_id, None)
         self._near_windows.pop(episode_id, None)
+        self._near_counts.pop(episode_id, None)
         self._near_fired.pop(episode_id, None)
         self._cycle_windows.pop(episode_id, None)
         self._cycle_counts.pop(episode_id, None)
@@ -369,6 +375,7 @@ class LoopDetector:
             "counts": dict(self._counts),
             "fired": {ep: sorted(sigs) for ep, sigs in self._fired.items()},
             "near_windows": {ep: list(w) for ep, w in self._near_windows.items()},
+            "near_counts": dict(self._near_counts),
             "near_fired": {ep: sorted(sigs) for ep, sigs in self._near_fired.items()},
             "cycle_windows": {ep: list(w) for ep, w in self._cycle_windows.items()},
             "cycle_counts": dict(self._cycle_counts),
@@ -394,6 +401,9 @@ class LoopDetector:
         }
         self._near_fired = {
             ep: set(sigs) for ep, sigs in state.get("near_fired", {}).items()
+        }
+        self._near_counts = {
+            ep: int(n) for ep, n in state.get("near_counts", {}).items()
         }
         self._cycle_windows = {
             ep: deque(sigs, maxlen=self.loop_cycle_window_size)
