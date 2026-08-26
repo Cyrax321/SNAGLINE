@@ -93,6 +93,27 @@ def _validated_log_format(value: str) -> str:
     return normalized
 
 
+# Closed value set for ``Config.policy`` (issue #93). Like log_format, an
+# unknown policy is a configuration error and fails loudly at construction or
+# resolve time: a typo'd enforcement setting must not silently degrade to
+# observation at exactly the moment someone relies on it.
+ENFORCEMENT_POLICIES: tuple[str, ...] = ("observe", "callback", "halt_webhook")
+
+
+def validate_policy(value: str) -> str:
+    """Normalize and validate a ``policy`` value; raise when invalid.
+
+    Case and surrounding whitespace are forgiven; anything outside
+    ``ENFORCEMENT_POLICIES`` raises ``ValueError`` (same precedent as
+    log_format, issue #119).
+    """
+    normalized = value.strip().lower() if isinstance(value, str) else value
+    if normalized not in ENFORCEMENT_POLICIES:
+        allowed = ", ".join(repr(v) for v in ENFORCEMENT_POLICIES)
+        raise ValueError(f"policy must be one of {allowed}; got {value!r}")
+    return normalized
+
+
 @dataclass
 class Config:
     # Loop detector
@@ -278,10 +299,29 @@ class Config:
     # ?format=prometheus; environment override SNAGLINE_METRICS_FORMAT.
     metrics_format: str = "prometheus"
 
+    # --- Enforcement policy (issue #93) ---------------------------------------
+    # Optional escalation layer that runs AFTER the sinks on every dispatched
+    # risk (documented ordering: detectors -> sinks -> policy). "observe" (the
+    # default) is today's detection-only behavior with zero overhead;
+    # "callback" invokes a host-supplied callable wrapped fail-open; and
+    # "halt_webhook" POSTs the FailureRisk JSON to halt_url and surfaces the
+    # response directive as Monitor.last_directive, failing open to continue
+    # on timeout/error. The callable for callback mode cannot come from env
+    # vars or files; pass on_risk= to Monitor directly.
+    policy: str = "observe"
+    halt_url: str | None = None  # required when policy == "halt_webhook"
+    # Webhook budget: how long one halt consultation may delay its own thread
+    # before the directive defaults to continue. 250ms per issue #93.
+    halt_timeout_s: float = 0.25
+    # Only risks scoring at or above this pay the webhook cost; below it the
+    # risk still reaches sinks/callback as usual but no halt round-trip happens.
+    min_severity_for_halt: float = 0.8
+
     def __post_init__(self) -> None:
-        # Issue #119: an invalid log_format is a configuration error and must
-        # fail loudly here instead of being silently ignored downstream.
+        # Issue #119: invalid closed-set values are configuration errors and
+        # must fail loudly here instead of being silently ignored downstream.
         self.log_format = _validated_log_format(self.log_format)
+        self.policy = validate_policy(self.policy)
 
     # --- 12-factor configuration (project.md §5.4, ATTACH_ANY_SYSTEM P0) -----
     @classmethod
@@ -379,4 +419,5 @@ class Config:
         # setattr bypasses __post_init__, so re-validate the fields that carry
         # a closed value set after env layering (issue #119).
         cfg.log_format = _validated_log_format(cfg.log_format)
+        cfg.policy = validate_policy(cfg.policy)
         return cfg

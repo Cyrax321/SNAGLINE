@@ -12,6 +12,7 @@ build step - and errors clearly rather than silently doing nothing.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
 import sys
@@ -333,6 +334,27 @@ def _build_parser() -> argparse.ArgumentParser:
         default=0.0,
         help="Suppress repeated alerts of the same key for this many seconds "
         "(issue #4). 0 disables (default).",
+    )
+    p_serve.add_argument(
+        "--halt-forward",
+        default=None,
+        help="Enable the halt_webhook enforcement policy (issue #93): risks "
+        "with score >= --min-severity-for-halt are POSTed to this URL and the "
+        'response {"action": "continue"|"pause", "reason": ...} is surfaced '
+        "as the sidecar monitor's last_directive. Timeout or error fails open "
+        "to continue. Hold this endpoint tight: it controls pause decisions.",
+    )
+    p_serve.add_argument(
+        "--halt-timeout",
+        type=float,
+        default=None,
+        help="Halt webhook round-trip budget in seconds [default: 0.25].",
+    )
+    p_serve.add_argument(
+        "--min-severity-for-halt",
+        type=float,
+        default=None,
+        help="Minimum risk score that pays the halt-webhook cost [default: 0.8].",
     )
 
     p_hook = sub.add_parser(
@@ -731,6 +753,17 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     from snagline.server.http_server import serve
 
     cfg = _build_config(args)
+    # Enforcement wiring (issue #93): --halt-forward turns the resolved config
+    # into halt_webhook mode. dataclasses.replace re-runs Config.__post_init__,
+    # so an invalid value fails loudly here instead of at first ingest.
+    if args.halt_forward:
+        cfg = dataclasses.replace(
+            cfg, policy="halt_webhook", halt_url=args.halt_forward
+        )
+    if args.halt_timeout is not None:
+        cfg = dataclasses.replace(cfg, halt_timeout_s=args.halt_timeout)
+    if args.min_severity_for_halt is not None:
+        cfg = dataclasses.replace(cfg, min_severity_for_halt=args.min_severity_for_halt)
     try:
         sinks = _build_sinks(args, cfg)
     except SystemExit as exc:
@@ -753,6 +786,14 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         "(POST /events, GET /health)",
         file=sys.stderr,
     )
+    if cfg.policy == "halt_webhook":
+        print(
+            f"snagline serve: halt forwarding enabled -> {cfg.halt_url} "
+            f"(timeout {cfg.halt_timeout_s}s, min severity "
+            f"{cfg.min_severity_for_halt}); directives land on "
+            "Monitor.last_directive (issue #93)",
+            file=sys.stderr,
+        )
     if not auth_token:
         print(
             "snagline serve: no --auth-token / $SNAGLINE_SERVE_AUTH_TOKEN set; "
