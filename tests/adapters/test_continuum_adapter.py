@@ -108,6 +108,7 @@ def make_action(
     key: str = "k1",
     action_type: str = "send_email",
     name: str = "ACTION_RECORDED",
+    timestamp: Any | None = None,
 ) -> FakeEntry:
     return FakeEntry(
         seq,
@@ -120,6 +121,7 @@ def make_action(
             "external_id": "ext-1",
             "action": {"status": status},
         },
+        timestamp=timestamp,
     )
 
 
@@ -182,35 +184,76 @@ def test_poll_translates_full_lifecycle() -> None:
     assert storage.read_calls[1]["after"] == 7
 
 
-def test_latency_reaches_completion_event() -> None:
-    ticks = iter([100.0, 101.5])
-    storage = FakeStorage([make_action(1, "started"), make_action(2, "completed")])
+def dt(epoch: float) -> Any:
+    return datetime.fromtimestamp(epoch, tz=timezone.utc)
 
-    class ClockMonitor(RecordingMonitor):
-        pass
 
+def test_latency_paired_from_ledger_times() -> None:
+    """Claim and completion carry real ledger timestamps 1.5s apart."""
+    storage = FakeStorage(
+        [
+            make_action(1, "started", timestamp=dt(1000.0)),
+            make_action(2, "completed", timestamp=dt(1001.5)),
+        ]
+    )
+    monitor = RecordingMonitor()
+    adapter = ContinuumAdapter(monitor, storage, "run-1", start_at_tail=False)
+    adapter.poll()
+    assert adapter._pending_claims == {}  # terminal status closes the pairing
+    assert monitor.events[1].latency_ms == pytest.approx(1500.0)
+    assert monitor.events[0].latency_ms is None
+
+
+def test_step_timestamps_come_from_the_ledger_not_the_wall_clock() -> None:
+    """Replay must reproduce when steps actually happened (review fix)."""
+    storage = FakeStorage([make_perception(1), make_branch(2)])
+    for e in storage.entries:
+        e.timestamp = dt(1700000000.0 + e.sequence)
+    monitor = RecordingMonitor()
+    ContinuumAdapter(monitor, storage, "run-1", start_at_tail=False).poll()
+    assert monitor.events[0].timestamp == pytest.approx(1700000001.0)
+    assert monitor.events[1].timestamp == pytest.approx(1700000002.0)
+
+
+def test_unusable_entry_timestamp_falls_back_to_clock() -> None:
+    storage = FakeStorage([make_perception(1)])
+    storage.entries[0].timestamp = "not-a-time"
+    ticks = iter([555.0])
     monitor = RecordingMonitor()
     adapter = ContinuumAdapter(
         monitor, storage, "run-1", start_at_tail=False, clock=lambda: next(ticks)
     )
     adapter.poll()
-    assert monitor.events[1].latency_ms == pytest.approx(1500.0)
-    assert monitor.events[0].latency_ms is None
+    assert monitor.events[0].timestamp == 555.0
+
+
+def test_pending_claims_bounded_by_eviction(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never-terminating actions are evicted oldest-first (review fix)."""
+    import snagline.adapters.continuum_adapter as mod
+
+    monkeypatch.setattr(mod, "_MAX_PENDING_CLAIMS", 2)
+    entries = [make_action(i, "started", key=f"k{i}") for i in range(1, 5)]
+    storage = FakeStorage(entries)
+    monitor = RecordingMonitor()
+    adapter = ContinuumAdapter(monitor, storage, "run-1", start_at_tail=False)
+    adapter.poll()
+    assert set(adapter._pending_claims) == {"k3", "k4"}  # oldest two evicted
+    # an evicted key can no longer pair; a late terminal yields latency None
+    storage.entries.append(make_action(5, "completed", key="k1"))
+    adapter.poll()
+    assert monitor.events[-1].latency_ms is None
 
 
 def test_repeat_claim_keeps_original_start() -> None:
-    ticks = iter([10.0, 11.0, 12.0])
     storage = FakeStorage(
         [
-            make_action(1, "started"),
-            make_action(2, "started"),
-            make_action(3, "completed"),
+            make_action(1, "started", timestamp=dt(10.0)),
+            make_action(2, "started", timestamp=dt(11.0)),
+            make_action(3, "completed", timestamp=dt(12.0)),
         ]
     )
     monitor = RecordingMonitor()
-    adapter = ContinuumAdapter(
-        monitor, storage, "run-1", start_at_tail=False, clock=lambda: next(ticks)
-    )
+    adapter = ContinuumAdapter(monitor, storage, "run-1", start_at_tail=False)
     adapter.poll()
     # retry at t=11 must NOT reset the t=10 start: total 2000ms, not 1000ms
     assert monitor.events[-1].latency_ms == pytest.approx(2000.0)
@@ -328,6 +371,7 @@ def test_datetime_timestamps_accepted() -> None:
     storage = FakeStorage([entry])
     monitor = RecordingMonitor()
     assert ContinuumAdapter(monitor, storage, "run-1", start_at_tail=False).poll() == 1
+    assert monitor.events[0].timestamp == entry.timestamp.timestamp()
 
 
 def test_modules_import_without_continuum(monkeypatch: pytest.MonkeyPatch) -> None:

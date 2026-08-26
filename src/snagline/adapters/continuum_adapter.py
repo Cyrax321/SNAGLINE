@@ -68,6 +68,11 @@ logger = logging.getLogger("snagline")
 
 __all__ = ["ContinuumAdapter"]
 
+#: Bound on the claim->terminal latency window map: actions that never reach a
+#: terminal status (crashed run, dropped tail) are evicted oldest-first so a
+#: long poll_forever cannot grow memory without limit.
+_MAX_PENDING_CLAIMS = 10_000
+
 #: Entry types that map onto an agent step; everything else is skipped.
 _PERCEPTION = "PERCEPTION_OBSERVED"
 _BRANCH = "BRANCH_RESOLVED"
@@ -76,14 +81,18 @@ _ACTION_RECONCILED = "ACTION_RECONCILED"
 _ACTION_COMPENSATED = "ACTION_COMPENSATED"
 
 
-def _to_epoch(timestamp: Any) -> float:
-    """Accept a datetime (CONTINUUM's Event.timestamp) or a numeric epoch."""
+def _to_epoch(timestamp: Any) -> float | None:
+    """Accept a datetime (CONTINUUM's Event.timestamp) or a numeric epoch.
+
+    Returns None when unusable so callers can fall back to their own clock:
+    ledger times are the truth about when a step happened, the local clock is
+    only a last resort.
+    """
     if isinstance(timestamp, datetime):
         return timestamp.timestamp()
-    try:
+    if isinstance(timestamp, (int, float)) and not isinstance(timestamp, bool):
         return float(timestamp)
-    except (TypeError, ValueError):
-        return time.time()
+    return None
 
 
 def _as_dict(payload: Any) -> Mapping[str, Any]:
@@ -219,12 +228,20 @@ class ContinuumAdapter:
         payload = _as_dict(getattr(entry, "payload", None))
         name = str(entry_type).rsplit(".", 1)[-1] if entry_type is not None else ""
 
+        # The ledger's own timestamp is when the step happened; the local clock
+        # is only a fallback for malformed entries. Review finding (PR #164):
+        # wall-clock-at-translation made latency pairing meaningless because a
+        # poll batch translates claim and completion microseconds apart.
+        event_time = _to_epoch(getattr(entry, "timestamp", None))
+        if event_time is None:
+            event_time = self._clock()
+
         if name == _PERCEPTION:
-            event = self._perception(sequence, payload)
+            event = self._perception(event_time, sequence, payload)
         elif name == _BRANCH:
-            event = self._branch(sequence, payload)
+            event = self._branch(event_time, sequence, payload)
         elif name in (_ACTION_RECORDED, _ACTION_RECONCILED, _ACTION_COMPENSATED):
-            event = self._action(name, sequence, payload)
+            event = self._action(name, event_time, sequence, payload)
         else:
             return None
         if event is not None and sequence is not None:
@@ -247,7 +264,9 @@ class ContinuumAdapter:
             return
         self._cursor = max(tail, 0) if self._cursor < 0 else 0
 
-    def _perception(self, sequence: Any, payload: Mapping[str, Any]) -> StepEvent:
+    def _perception(
+        self, event_time: float, sequence: Any, payload: Mapping[str, Any]
+    ) -> StepEvent:
         source = _str(payload.get("source"))
         observation_id = _str(payload.get("observation_id")) or ""
         trust = _str(payload.get("trust_level")) or ""
@@ -257,7 +276,7 @@ class ContinuumAdapter:
         return StepEvent(
             step_id=str(sequence),
             episode_id=self._run_id,
-            timestamp=self._clock(),
+            timestamp=event_time,
             action_type="observation",
             action_signature=sig,
             tool_name=source,
@@ -270,7 +289,9 @@ class ContinuumAdapter:
             },
         )
 
-    def _branch(self, sequence: Any, payload: Mapping[str, Any]) -> StepEvent:
+    def _branch(
+        self, event_time: float, sequence: Any, payload: Mapping[str, Any]
+    ) -> StepEvent:
         requires_review = bool(payload.get("requires_review", False))
         branch = _as_dict(payload.get("branch"))
         branch_name = _str(branch.get("name")) or _str(branch.get("branch_id")) or ""
@@ -283,7 +304,7 @@ class ContinuumAdapter:
         return StepEvent(
             step_id=str(sequence),
             episode_id=self._run_id,
-            timestamp=self._clock(),
+            timestamp=event_time,
             action_type="plan_step",
             action_signature=sig,
             tool_name=_str(branch_name),
@@ -296,18 +317,24 @@ class ContinuumAdapter:
         )
 
     def _action(
-        self, name: str, sequence: Any, payload: Mapping[str, Any]
+        self, name: str, event_time: float, sequence: Any, payload: Mapping[str, Any]
     ) -> StepEvent:
         status = _str(payload.get("status")) or ""
         tool_name = _str(payload.get("action_type"))
         key = _str(payload.get("key")) or _str(payload.get("action_id")) or ""
-        now = self._clock()
+        now = event_time
         latency: float | None = None
         if status == "started":
             # A fresh claim opens the latency window; a repeat claim for a key
             # we already track keeps the original start (retry, not restart).
             self._pending_claims.setdefault(key, now)
+            while len(self._pending_claims) > _MAX_PENDING_CLAIMS:
+                # Insertion order makes the first key the oldest claim. Evict
+                # it so a never-terminating action cannot grow this forever.
+                self._pending_claims.pop(next(iter(self._pending_claims)))
         elif key in self._pending_claims:
+            # Terminal record: close the window using LEDGER times on both
+            # sides, so the number is the real claim-to-terminal duration.
             latency = max(0.0, (now - self._pending_claims.pop(key)) * 1000.0)
         action_type = {
             _ACTION_RECONCILED: "action_reconciled",
