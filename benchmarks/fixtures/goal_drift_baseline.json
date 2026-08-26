@@ -1,0 +1,39 @@
+{
+  "tools": {
+    "read_file": {
+      "count": 40,
+      "error_count": 0,
+      "error_rate": 0.0,
+      "latency_count": 40,
+      "max_latency": 50.0,
+      "mean_latency": 50.0,
+      "min_latency": 50.0,
+      "std_latency": 0.0,
+      "tool_name": "read_file"
+    },
+    "run_sql": {
+      "count": 40,
+      "error_count": 0,
+      "error_rate": 0.0,
+      "latency_count": 40,
+      "max_latency": 80.0,
+      "mean_latency": 80.0,
+      "min_latency": 80.0,
+      "std_latency": 0.0,
+      "tool_name": "run_sql"
+    },
+    "search_web": {
+      "count": 40,
+      "error_count": 0,
+      "error_rate": 0.0,
+      "latency_count": 40,
+      "max_latency": 100.0,
+      "mean_latency": 100.0,
+      "min_latency": 100.0,
+      "std_latency": 0.0,
+      "tool_name": "search_web"
+    }
+  },
+  "total_steps": 120,
+  "version": 1
+}
