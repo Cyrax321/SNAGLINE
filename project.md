@@ -302,8 +302,9 @@ def make_signature(action_type: str, tool_name: str | None, *stable_parts: str) 
       minimum needed to detect repetition, not the full payload, to keep
       signatures meaningful and short.
     """
-    raw = "||".join([action_type, tool_name or "", *stable_parts])
-    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+    parts = [action_type, tool_name or "", *stable_parts]
+    raw = json.dumps(parts, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(raw.encode()).hexdigest()
 ```
 
 ### 4.3 `risk.py`
