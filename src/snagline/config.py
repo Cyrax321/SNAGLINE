@@ -71,6 +71,28 @@ def _load_toml(text: str) -> dict[str, Any]:
     return tomllib.loads(text)
 
 
+# Valid values for ``Config.log_format`` (issue #119). Anything else is a
+# configuration error and fails loudly at construction/resolve time instead
+# of being silently accepted and left undefined downstream.
+LOG_FORMATS: tuple[str, ...] = ("text", "json")
+
+
+def _validated_log_format(value: str) -> str:
+    """Normalize and validate a ``log_format`` value; raise when invalid.
+
+    Surrounding whitespace and case are forgiven (" JSON " means "json") so
+    operators are not punished for spelling, but anything outside
+    ``LOG_FORMATS`` raises ``ValueError`` (issue #119): an undefined value used
+    to be silently accepted, which hid typos until exactly the moment someone
+    relied on the knob.
+    """
+    normalized = value.strip().lower() if isinstance(value, str) else value
+    if normalized not in LOG_FORMATS:
+        allowed = ", ".join(repr(v) for v in LOG_FORMATS)
+        raise ValueError(f"log_format must be one of {allowed}; got {value!r}")
+    return normalized
+
+
 @dataclass
 class Config:
     # Loop detector
@@ -214,7 +236,10 @@ class Config:
     # "text" keeps plain lines, "json" emits one compact JSON object per risk
     # with exactly the keys ts, episode_id, step_id, trigger, severity, score,
     # detail. Selectable via env ``SNAGLINE_LOG_FORMAT`` or a config-file
-    # ``log_format`` key; values other than "text"/"json" are undefined.
+    # ``log_format`` key. Values outside {"text", "json"} raise ValueError at
+    # construction/resolve time (issue #119); when "json" is selected,
+    # Monitor.default() and the CLI install LoggingSink next to ConsoleSink
+    # so SNAGLINE_LOG_FORMAT=json needs zero code changes.
     # Structure only: the emitted object never carries prompt/response content.
     log_format: str = "text"
 
@@ -224,6 +249,11 @@ class Config:
     # counters body. Per-request override via ?format=classic or
     # ?format=prometheus; environment override SNAGLINE_METRICS_FORMAT.
     metrics_format: str = "prometheus"
+
+    def __post_init__(self) -> None:
+        # Issue #119: an invalid log_format is a configuration error and must
+        # fail loudly here instead of being silently ignored downstream.
+        self.log_format = _validated_log_format(self.log_format)
 
     # --- 12-factor configuration (project.md §5.4, ATTACH_ANY_SYSTEM P0) -----
     @classmethod
@@ -318,4 +348,7 @@ class Config:
             environ=environ, prefix=prefix
         ).items():
             setattr(cfg, name, value)
+        # setattr bypasses __post_init__, so re-validate the fields that carry
+        # a closed value set after env layering (issue #119).
+        cfg.log_format = _validated_log_format(cfg.log_format)
         return cfg

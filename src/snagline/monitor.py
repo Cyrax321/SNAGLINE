@@ -409,7 +409,16 @@ class Monitor:
 
         Wires up the three tier-1 detectors that ship in this build
         (loop, error-cascade, and the latency-anomaly/CUSUM detector) and,
-        unless ``sinks`` is given, the console sink.
+        unless ``sinks`` is given, the console sink. With
+        ``config.log_format == "json"`` (env ``SNAGLINE_LOG_FORMAT=json``),
+        LoggingSink is installed next to ConsoleSink so risk emission is also
+        machine-readable JSON lines on the ``snagline`` logger (issues #99 and
+        #119). Explicitly passed ``sinks`` lists are honored verbatim.
+
+        With no ``config``, the effective ``Config`` is resolved through the
+        12-factor layering (defaults < config file < ``SNAGLINE_*`` env vars,
+        via ``Config.resolve()``), so ``SNAGLINE_LOG_FORMAT=json`` works with
+        zero code changes. Pass an explicit ``Config`` to pin every knob.
         """
         from snagline.detectors.error_cascade import ErrorCascadeDetector
         from snagline.detectors.goal_drift import GoalDriftDetector
@@ -422,8 +431,12 @@ class Monitor:
         from snagline.detectors.stagnation import StagnationDetector
         from snagline.detectors.token_runaway import TokenRunawayDetector
         from snagline.sinks.console import ConsoleSink
+        from snagline.sinks.logging_sink import LoggingSink
 
-        cfg = config or Config()
+        # No explicit config: resolve the 12-factor layering so bare
+        # Monitor.default() callers (examples, hooks) honor SNAGLINE_* env
+        # vars exactly like the CLI does (issue #119 acceptance).
+        cfg = config or Config.resolve()
         # Auto-calibration (issue #101): opt-in via calibration="auto" plus a
         # healthy BaselineProfile; None keeps every hand-tuned constant.
         cal = _auto_calibration_plan(cfg)
@@ -486,7 +499,16 @@ class Monitor:
             detectors: list[Detector] = [MLOrchestrator(base, config=cfg)]
         else:
             detectors = list(base)
-        chosen_sinks: list[AlertSink] = sinks if sinks is not None else [ConsoleSink()]
+        if sinks is not None:
+            chosen_sinks: list[AlertSink] = list(sinks)
+        else:
+            # Default composition (issues #99/#119): console stays the human
+            # channel; log_format="json" adds LoggingSink NEXT TO it (the
+            # agreed "alongside console" semantics) so SNAGLINE_LOG_FORMAT=json
+            # makes risks machine-readable with zero code changes.
+            chosen_sinks = [ConsoleSink()]
+            if cfg.log_format == "json":
+                chosen_sinks.append(LoggingSink())
         monitor = cls(detectors, chosen_sinks, fail_open=cfg.fail_open)
         # Set after construction so subclasses with a fixed __init__ signature
         # (e.g. test doubles) still work; base Monitor.__init__ also sets it.

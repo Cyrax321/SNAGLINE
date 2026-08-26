@@ -194,6 +194,81 @@ detectors = [
 ]
 ```
 
+### Environment variables and config keys
+
+Every scalar field of `Config` doubles as a 12-factor environment variable:
+take the key name, uppercase it, prefix it with `SNAGLINE_` (so
+`loop_window_size` becomes `SNAGLINE_LOOP_WINDOW_SIZE`; lookup is
+case-insensitive). Layering, lowest to highest: built-in defaults, then an
+optional JSON/TOML file passed as `--config <path>`, then environment
+variables. `Config.resolve()` applies that ordering everywhere: `Monitor.default()`,
+`snagline watch`, `snagline replay`, and `snagline serve` all go through it.
+Booleans accept `1/true/yes/on/t`. Unknown keys and values that fail to
+coerce are ignored with a logged warning; the one exception is
+`SNAGLINE_LOG_FORMAT`, whose closed value set fails loudly at startup.
+The two object-typed fields (`goal_drift_baseline`, `calibration_baseline`)
+cannot come from files or the environment; pass those objects in code, or use
+the path variant below.
+
+| Environment variable | Config key | Default | Meaning |
+|---|---|---|---|
+| `SNAGLINE_LOOP_WINDOW_SIZE` | `loop_window_size` | 12 | Loop detector sliding window (steps) |
+| `SNAGLINE_LOOP_REPEAT_THRESHOLD` | `loop_repeat_threshold` | 3 | Repeats within the window that fire a loop risk |
+| `SNAGLINE_CASCADE_WINDOW_SIZE` | `cascade_window_size` | 10 | Error-cascade window (steps) |
+| `SNAGLINE_CASCADE_ERROR_THRESHOLD` | `cascade_error_threshold` | 3 | Errors in window that fire a cascade |
+| `SNAGLINE_CASCADE_CONSECUTIVE_THRESHOLD` | `cascade_consecutive_threshold` | 3 | Consecutive errors that fire a cascade |
+| `SNAGLINE_CASCADE_COUNT_NON_TOOL_ERRORS` | `cascade_count_non_tool_errors` | False | Count non-tool errors toward cascades |
+| `SNAGLINE_CUSUM_K` | `cusum_k` | 0.5 | CUSUM slack parameter |
+| `SNAGLINE_CUSUM_H` | `cusum_h` | 5.0 | CUSUM alarm threshold |
+| `SNAGLINE_CUSUM_MIN_SAMPLES` | `cusum_min_samples` | 5 | Latency warm-up samples before alarming |
+| `SNAGLINE_CUSUM_SIGMA_FLOOR_ABS` | `cusum_sigma_floor_abs` | 1.0 | Absolute floor on baseline std (ms) |
+| `SNAGLINE_CUSUM_SIGMA_FLOOR_REL` | `cusum_sigma_floor_rel` | 0.05 | Relative floor on baseline std (share of mean) |
+| `SNAGLINE_GOAL_DRIFT_ENABLED` | `goal_drift_enabled` | False | Enable GoalDriftDetector |
+| `SNAGLINE_GOAL_DRIFT_ERROR_TOLERANCE` | `goal_drift_error_tolerance` | 0.1 | Allowed error-rate rise over baseline |
+| `SNAGLINE_GOAL_DRIFT_LATENCY_K` | `goal_drift_latency_k` | 3.0 | Sigmas above baseline mean counting as drift |
+| `SNAGLINE_GOAL_DRIFT_MIN_SAMPLES` | `goal_drift_min_samples` | 10 | Live steps before scoring an episode |
+| `SNAGLINE_GOAL_DRIFT_SCORE_THRESHOLD` | `goal_drift_score_threshold` | 0.5 | Emit a goal-drift risk above this score |
+| `SNAGLINE_ML_ENSEMBLE_ENABLED` | `ml_ensemble_enabled` | False | Wrap detectors in MLOrchestrator (noisy-OR) |
+| `SNAGLINE_ML_ENSEMBLE_SCORE_THRESHOLD` | `ml_ensemble_score_threshold` | 0.5 | Emit a combined risk above this score |
+| `SNAGLINE_LOOP_NEAR_DUPLICATE_ENABLED` | `loop_near_duplicate_enabled` | False | Loop hardening: collapse volatile ids before hashing |
+| `SNAGLINE_LOOP_CYCLE_ENABLED` | `loop_cycle_enabled` | False | Loop hardening: periodic A,B,A,B cycle scan |
+| `SNAGLINE_LOOP_CYCLE_WINDOW_SIZE` | `loop_cycle_window_size` | 12 | Window scanned for cycles |
+| `SNAGLINE_LOOP_CYCLE_MIN_PERIOD` | `loop_cycle_min_period` | 2 | Shortest repeating period considered |
+| `SNAGLINE_LOOP_CYCLE_MAX_PERIOD` | `loop_cycle_max_period` | 6 | Longest repeating period considered |
+| `SNAGLINE_LOOP_STALL_ENABLED` | `loop_stall_enabled` | False | Loop hardening: identical-signature stall detection |
+| `SNAGLINE_LOOP_STALL_STEPS` | `loop_stall_steps` | 25 | Consecutive identical steps before firing |
+| `SNAGLINE_STAGNATION_ENABLED` | `stagnation_enabled` | False | Enable StagnationDetector (novelty-rate collapse) |
+| `SNAGLINE_STAGNATION_WINDOW_SIZE` | `stagnation_window_size` | 50 | Novelty window (steps) |
+| `SNAGLINE_STAGNATION_MIN_NOVELTY` | `stagnation_min_novelty` | 0.05 | Stale when fewer than this share of steps are new |
+| `SNAGLINE_STAGNATION_PATIENCE` | `stagnation_patience` | 2 | Consecutive stale windows before firing |
+| `SNAGLINE_TOKEN_RUNAWAY_ENABLED` | `token_runaway_enabled` | False | Enable TokenRunawayDetector (needs token telemetry) |
+| `SNAGLINE_TOKEN_CUSUM_K` | `token_cusum_k` | 0.5 | Token-burn CUSUM slack |
+| `SNAGLINE_TOKEN_CUSUM_H` | `token_cusum_h` | 5.0 | Token-burn CUSUM alarm threshold |
+| `SNAGLINE_TOKEN_MIN_SAMPLES` | `token_min_samples` | 20 | Warm-up before sustained-burn alarms |
+| `SNAGLINE_EPISODE_TOKEN_BUDGET` | `episode_token_budget` | *(unset)* | Per-episode token budget; unset disables the envelope |
+| `SNAGLINE_TOKEN_BUDGET_WARN_FRACTION` | `token_budget_warn_fraction` | 0.8 | Warn at this fraction of the budget |
+| `SNAGLINE_MELTDOWN_ENABLED` | `meltdown_enabled` | False | Enable MeltdownDetector (tool entropy collapse/churn) |
+| `SNAGLINE_MELTDOWN_WINDOW_SIZE` | `meltdown_window_size` | 20 | Entropy window (tool calls) |
+| `SNAGLINE_MELTDOWN_LOW_ENTROPY` | `meltdown_low_entropy` | 0.4 | Below this many bits the window is rote collapse |
+| `SNAGLINE_MELTDOWN_HIGH_ENTROPY` | `meltdown_high_entropy` | 2.8 | Above this many bits the window is thrash |
+| `SNAGLINE_MELTDOWN_REARM_STEPS` | `meltdown_rearm_steps` | 10 | In-band steps before re-arming |
+| `SNAGLINE_SILENT_ABORT_ENABLED` | `silent_abort_enabled` | False | Silent-abort check at end of episode |
+| `SNAGLINE_CALIBRATION` | `calibration` | manual | manual, or auto to derive thresholds from a baseline |
+| `SNAGLINE_CALIBRATION_ALPHA` | `calibration_alpha` | 0.001 | False-alarm probability budget per window evaluation |
+| `SNAGLINE_CALIBRATION_BASELINE_PATH` | `calibration_baseline_path` | *(unset)* | Path to a saved BaselineProfile for auto calibration |
+| `SNAGLINE_FAIL_OPEN` | `fail_open` | True | Swallow detector/sink exceptions instead of propagating |
+| `SNAGLINE_LOG_FORMAT` | `log_format` | text | text or json; json installs LoggingSink next to ConsoleSink |
+| `SNAGLINE_METRICS_FORMAT` | `metrics_format` | prometheus | Sidecar GET /metrics body: prometheus or classic |
+
+A handful of variables sit outside `Config` because they are consumed
+directly by one component each:
+
+| Environment variable | Used by | Meaning |
+|---|---|---|
+| `SNAGLINE_SERVE_AUTH_TOKEN` | `snagline serve` | Bearer token fallback when `--auth-token` is not passed |
+| `SNAGLINE_STATE_BACKEND` | snapshot/state backend | `memory` (default) or `redis` |
+| `SNAGLINE_STATE_REDIS_URL` | redis state backend | Redis URL when the backend is `redis` |
+
 ## Empirical Verification
 
 SNAGLINE is verified not just with unit tests, but against real LLM agents, live protocol boundaries, and real HTTP pipelines.
@@ -372,7 +447,7 @@ Sinks consume `FailureRisk` and escalate it. Only `FailureRisk` fields are ever 
 |:--|:--|:--|:--|
 | **Console** (default) | `sinks/console.py` | (built-in) | Writes `FailureRisk` as a JSON line to stderr. Zero dependency. |
 | **Webhook** | `sinks/webhook.py` | (built-in) | POSTs `FailureRisk` JSON via stdlib `urllib.request`. Fire-and-forget with a short timeout (default 2s). Silently ignores a dead endpoint. |
-| **Logging** | `sinks/logging_sink.py` | (built-in) | Emits one compact JSON object per risk on the `snagline` logger for log aggregators (`Config.log_format`: `text` or `json`, env `SNAGLINE_LOG_FORMAT`). Fail-open with a plain-text fallback if serialization breaks. Zero dependency. |
+| **Logging** | `sinks/logging_sink.py` | (built-in) | Emits one compact JSON object per risk on the `snagline` logger for log aggregators (`Config.log_format`: `text` or `json`, env `SNAGLINE_LOG_FORMAT`). Wired end to end: with `json`, `Monitor.default()` and every CLI run path install it next to ConsoleSink. Fail-open with a plain-text fallback if serialization breaks. Zero dependency. |
 
 Custom sinks implement the `AlertSink` protocol:
 

@@ -106,7 +106,26 @@ def _maybe_dedup(sinks: list[AlertSink], cooldown_seconds: float) -> list[AlertS
     return [DedupSink(s, cooldown_seconds=cooldown_seconds) for s in sinks]
 
 
-def _build_sinks(args: argparse.Namespace) -> list[AlertSink]:
+def _console_sinks(cfg: Config) -> list[AlertSink]:
+    """Console escalation plus LoggingSink when ``log_format == "json"``.
+
+    Issue #99 settled composition as emission "alongside console"; issue #119
+    wires the knob end to end so ``SNAGLINE_LOG_FORMAT=json`` makes risks
+    machine-readable with zero code changes, everywhere the console sink is
+    the default choice. Explicit non-console ``--sink`` selections replace the
+    console pair entirely and stay untouched.
+    """
+    from snagline.sinks.console import ConsoleSink
+
+    pair: list[AlertSink] = [ConsoleSink()]
+    if cfg.log_format == "json":
+        from snagline.sinks.logging_sink import LoggingSink
+
+        pair.append(LoggingSink())
+    return pair
+
+
+def _build_sinks(args: argparse.Namespace, cfg: Config) -> list[AlertSink]:
     """Resolve the escalation sinks from --sink / --slack-url / --pagerduty-key.
 
     Unknown/invalid combinations fail closed with a clear stderr message and a
@@ -141,9 +160,7 @@ def _build_sinks(args: argparse.Namespace) -> list[AlertSink]:
             )
         )
     else:
-        from snagline.sinks.console import ConsoleSink
-
-        sinks.append(ConsoleSink())
+        sinks.extend(_console_sinks(cfg))
     return _maybe_dedup(sinks, args.cooldown_seconds)
 
 
@@ -415,12 +432,15 @@ def _iter_lines(path: str | None, follow: bool) -> Iterator[str]:
 
 
 def _cmd_watch(args: argparse.Namespace) -> int:
+    # Resolve the effective config once (config file -> SNAGLINE_* env) so
+    # log_format and every other knob layer identically across subcommands.
+    cfg = _build_config(args)
     try:
-        sinks = _build_sinks(args)
+        sinks = _build_sinks(args, cfg)
     except SystemExit as exc:
         return int(exc.code or 2)
     monitor = Monitor.default(
-        config=_build_config(args),
+        config=cfg,
         sinks=_maybe_dedup(sinks, args.cooldown_seconds),
     )
     episode = args.episode_id or (args.file or "stdin")
@@ -695,8 +715,9 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
 def _cmd_serve(args: argparse.Namespace) -> int:
     from snagline.server.http_server import serve
 
+    cfg = _build_config(args)
     try:
-        sinks = _build_sinks(args)
+        sinks = _build_sinks(args, cfg)
     except SystemExit as exc:
         return int(exc.code or 2)
     # Prefer the flag, fall back to the environment so the secret need not
@@ -714,7 +735,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         )
     with suppress(KeyboardInterrupt):
         serve(
-            Monitor.default(config=_build_config(args), sinks=sinks),
+            Monitor.default(config=cfg, sinks=sinks),
             host=args.host,
             port=args.port,
             auth_token=auth_token,
@@ -788,14 +809,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "replay":
-        sinks: list[AlertSink] = []
         counter = _CountingSink()
+        cfg = _build_config(args)
+        sinks: list[AlertSink] = []
         if not args.quiet:
-            from snagline.sinks.console import ConsoleSink
-
-            sinks.append(ConsoleSink())
+            # Same composition as Monitor.default(): console plus, for
+            # log_format="json", LoggingSink alongside it (issues #99/#119).
+            sinks.extend(_console_sinks(cfg))
         sinks.append(counter)
-        monitor = Monitor.default(config=_build_config(args), sinks=sinks)
+        monitor = Monitor.default(config=cfg, sinks=sinks)
         steps = replay(args.trajectory, monitor=monitor)
         if args.summary:
             print(
