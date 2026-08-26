@@ -467,6 +467,26 @@ class Monitor:
         # supplied, so the zero-dependency default is unchanged (step 2).
         if cfg.goal_drift_enabled and cfg.goal_drift_baseline is not None:
             base.append(GoalDriftDetector(baseline=cfg.goal_drift_baseline, config=cfg))
+        # Semantic goal-drift is opt-in (issue #81): needs the optional
+        # ``drift`` extra AND a semantically fitted BaselineProfile (the
+        # embedding_centroid must be set). Guarded import and the lazy model
+        # load keep the zero-dependency preset byte-identical; any failure
+        # degrades fail-open to an inert detector or, when the import itself
+        # fails, to the common “drift extra missing” path inside the detector.
+        if cfg.semantic_drift_enabled and cfg.goal_drift_baseline is not None:
+            try:
+                from snagline.drift.goal_drift import SemanticGoalDriftDetector
+
+                base.append(
+                    SemanticGoalDriftDetector(
+                        baseline=cfg.goal_drift_baseline, config=cfg
+                    )
+                )
+            except Exception:
+                logger.debug(
+                    "snagline: drift extra unavailable; semantic goal-drift stays off",
+                    exc_info=True,
+                )
         # Horizon detectors are opt-in too (issues #84/#85/#86): each needs
         # telemetry or validation the zero-config preset does not promise.
         if cfg.token_runaway_enabled:

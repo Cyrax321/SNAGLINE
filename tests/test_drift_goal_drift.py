@@ -18,7 +18,15 @@ import pytest
 
 from snagline.baseline import BaselineProfile, save_baseline
 from snagline.config import Config
+from snagline.detectors.ml_ensemble import MLOrchestrator
+from snagline.drift.goal_drift import (
+    SemanticGoalDriftDetector,
+    _cosine,
+    _event_label,
+    fit_semantic_baseline,
+)
 from snagline.events import StepEvent
+from snagline.monitor import Monitor
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -104,7 +112,6 @@ def test_profile_from_dict_rejects_non_numeric_centroids():
 
 
 def test_semantic_drift_keys_coerce_from_environment():
-    from snagline.config import Config
 
     cfg = Config.from_env(
         {
@@ -121,7 +128,6 @@ def test_semantic_drift_keys_coerce_from_environment():
 
 
 def test_semantic_drift_defaults_keep_preset_off():
-    from snagline.config import Config
 
     cfg = Config()
     assert cfg.semantic_drift_enabled is False
@@ -161,7 +167,6 @@ def _detector(
     embedder=None,
     **overrides,
 ) -> object:
-    from snagline.drift.goal_drift import SemanticGoalDriftDetector
 
     cfg = Config(**{"semantic_drift_model": "fake-model", **overrides})
     return SemanticGoalDriftDetector(
@@ -172,7 +177,6 @@ def _detector(
 
 
 def _semantic_baseline(n: int = 30) -> object:
-    from snagline.drift.goal_drift import fit_semantic_baseline
 
     return fit_semantic_baseline(
         _healthy(n), _map_embedder(HEALTHY_VECS), model="fake-model"
@@ -184,7 +188,6 @@ def _semantic_baseline(n: int = 30) -> object:
 
 
 def test_cosine_hand_computed_values():
-    from snagline.drift.goal_drift import _cosine
 
     assert _cosine([1.0, 0.0], [0.0, 1.0]) == pytest.approx(0.0)
     # Orthogonal-ish pair [1,0] vs [1,1]: dot 1, norms 1 and sqrt(2).
@@ -196,7 +199,6 @@ def test_cosine_hand_computed_values():
 
 
 def test_event_label_is_structural_and_ignores_content_fields():
-    from snagline.drift.goal_drift import _event_label
 
     base = _ev(0, "search")
     with_meta = StepEvent(
@@ -225,7 +227,6 @@ def test_event_label_is_structural_and_ignores_content_fields():
 
 
 def test_fit_metadata_neutrality_identical_centroids():
-    from snagline.drift.goal_drift import fit_semantic_baseline
 
     plain = _healthy(10)
     tagged = [
@@ -247,7 +248,6 @@ def test_fit_metadata_neutrality_identical_centroids():
 
 
 def test_fit_hand_computed_mean_and_provenance():
-    from snagline.drift.goal_drift import fit_semantic_baseline
 
     events = [_ev(0, "search", "fit"), _ev(1, "wipe_disk", "fit")]
     profile = fit_semantic_baseline(events, _map_embedder(ALL_VECS), model="m1")
@@ -261,7 +261,6 @@ def test_fit_hand_computed_mean_and_provenance():
 
 
 def test_fit_rejects_dimension_changes():
-    from snagline.drift.goal_drift import fit_semantic_baseline
 
     def unstable(event: StepEvent) -> list[float]:
         return [1.0, 0.0] if event.timestamp < 1 else [1.0, 2.0, 3.0]
@@ -367,7 +366,6 @@ def test_model_load_failure_latches_inert_after_exactly_one_attempt(caplog):
 
 def test_default_loader_missing_extra_is_inert_with_pip_hint(monkeypatch, caplog):
     monkeypatch.setitem(sys.modules, "sentence_transformers", None)
-    from snagline.drift.goal_drift import SemanticGoalDriftDetector
 
     det = SemanticGoalDriftDetector(
         _semantic_baseline(), config=Config(semantic_drift_model="any")
@@ -397,7 +395,6 @@ def test_explicit_embedder_never_touches_sentence_transformers(monkeypatch):
 
 
 def test_dump_state_round_trip_preserves_episode_state():
-    from snagline.drift.goal_drift import SemanticGoalDriftDetector
 
     det = _detector(_semantic_baseline(), semantic_drift_min_samples=10)
     for ev in _healthy(12, episode="snap"):
@@ -427,3 +424,131 @@ def test_reset_clears_episode_state():
         det.observe(ev)
     det.reset("gone")
     assert det.dump_state() == {"episodes": {}}
+
+
+# ---------------------------------------------------------------------------
+# Monitor wiring: opt-in guard proves zero-dep preset untouched
+
+
+def test_monitor_default_has_no_semantic_detector_without_flag():
+
+    mon = Monitor.default(config=Config())
+    names = sorted(d.name for d in mon._detectors)
+    assert "semantic_goal_drift" not in names
+    # Canonical preset from the guard test in test_ml_extra_guard.py:
+    # error_cascade, latency_anomaly, loop and nothing else.
+    assert names == ["error_cascade", "latency_anomaly", "loop"]
+
+
+def test_monitor_default_with_semantic_flag_and_fitted_baseline_adds_detector():
+
+    cfg = Config(
+        semantic_drift_enabled=True,
+        goal_drift_baseline=_semantic_baseline(),
+    )
+    mon = Monitor.default(config=cfg)
+    assert any(d.name == "semantic_goal_drift" for d in mon._detectors)
+
+
+def test_monitor_flag_without_semantic_baseline_stays_inert_but_alive():
+
+    # Baseline fitted structurally only: no centroid, so semantic side
+    # constructs but stays inert (logs once, never fires).
+
+    empty_sem = BaselineProfile()
+    for ev in _healthy(30, episode="seed"):
+        empty_sem.add_event(ev)
+    cfg = Config(semantic_drift_enabled=True, goal_drift_baseline=empty_sem)
+    mon = Monitor.default(config=cfg)
+    for ev in _healthy(40, episode="alive"):
+        mon.ingest(ev)
+    mon.end_episode("alive")
+
+
+def test_monitor_with_poisoned_transformers_stays_alive(monkeypatch, caplog):
+
+    monkeypatch.setitem(sys.modules, "sentence_transformers", None)
+    cfg = Config(
+        semantic_drift_enabled=True,
+        goal_drift_baseline=_semantic_baseline(),
+    )
+    with caplog.at_level(logging.WARNING, logger="snagline"):
+        mon = Monitor.default(config=cfg)
+        for ev in _healthy(20, episode="safe"):
+            mon.ingest(ev)
+        mon.end_episode("safe")
+    # Each missing extra is a WARNING from the lazy loader inside observe,
+    # not an exception at wiring time.
+    assert any(
+        "drift" in r.message for r in caplog.records if r.levelno >= logging.WARNING
+    )
+
+
+def test_dimension_mismatch_in_monitor_path_is_fail_open(caplog):
+    # A fitted centroid with dim 3 followed by a 2-dim embedder: monitor
+    # must keep running and the stream must stay silent on the bad shots.
+
+    baseline = BaselineProfile()
+    baseline.embedding_centroid = [1.0, 0.0, 0.0]
+    baseline.embedding_count = 1
+    baseline.embedding_model = "fake"
+    cfg = Config(semantic_drift_enabled=True, goal_drift_baseline=baseline)
+    mon = Monitor.default(config=cfg)
+    # Replace its semantic detector's embedder with a 2-dim one (setup for
+    # the mismatch path): find it inside monitor.
+    sem = next(d for d in mon._detectors if d.name == "semantic_goal_drift")
+    sem._embedder = _map_embedder({"search": [0.0, 1.0]})  # type: ignore[attr-defined]
+    sem._resolved = True  # type: ignore[attr-defined]
+    with caplog.at_level(logging.WARNING, logger="snagline"):
+        for i in range(20):
+            mon.ingest(_ev(i, "search", "dim"))
+    assert any("dimension" in r.message for r in caplog.records)
+
+
+def test_semantic_signal_feeds_noisy_or_when_ml_ensemble_wraps_it():
+    # Mirrors test_ml_esn_ensemble.py but for the semantic side: direct
+    # detector fires goal_drift, the same detector inside an MLOrchestrator
+    # fires ml_ensemble (trigger rewrite) while a healthy stream stays quiet.
+    # Each case is both sides of the detector contract.
+
+    healthy = _healthy(12, episode="h")
+    det = _detector(_semantic_baseline(), semantic_drift_min_samples=10)
+    for ev in healthy:
+        assert det.observe(ev) is None
+    healthy = _healthy(12, episode="h2")
+    wrapped_cfg = Config(
+        ml_ensemble_enabled=True,
+        ml_ensemble_score_threshold=0.5,
+        semantic_drift_min_samples=10,
+    )
+    direct = _detector(
+        _semantic_baseline(),
+        semantic_drift_min_samples=10,
+    )
+    orchestrated = MLOrchestrator(
+        [
+            SemanticGoalDriftDetector(
+                _semantic_baseline(),
+                config=wrapped_cfg,
+                embedder=_map_embedder(ALL_VECS),
+            )
+        ],
+        config=wrapped_cfg,
+    )
+
+    # Healthy stays silent through orchestrator too.
+    for ev in _healthy(30, episode="oh"):
+        assert orchestrated.observe(ev) is None
+    # Sustained drift: direct fires goal_drift, orchestrated fires ml_ensemble.
+    direct_fired = None
+    orch_fired = None
+    for j in range(30):
+        r = direct.observe(_ev(j, "wipe_disk", "dh"))
+        if r is not None and direct_fired is None:
+            direct_fired = r
+        ro = orchestrated.observe(_ev(j, "wipe_disk", "dh"))
+        if ro is not None and orch_fired is None:
+            orch_fired = ro
+    # Hand-checked expectation: both fire, trigger rewrites through noisy-OR.
+    assert direct_fired is not None and direct_fired.trigger == "goal_drift"
+    assert orch_fired is not None and orch_fired.trigger == "ml_ensemble"
