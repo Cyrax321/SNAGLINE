@@ -20,6 +20,13 @@ is retained -- only the one-way ``action_signature`` hash, tool name, latency
 CrewAI step objects vary by version; we read common attributes (``tool``,
 ``tool_input``, ``output``/``text``, ``error``) and fall back to a dict view, so
 the adapter stays loosely coupled to a specific CrewAI release.
+
+The optional ``clock=`` defaults to :func:`time.perf_counter`: monotonic and
+high-resolution on every platform. ``time.time`` advances in ~15.6 ms ticks on
+Windows and quantized sub-tick latencies to zero (issue #155). Note that
+``perf_counter`` has no meaningful epoch: event timestamps produced with it
+are only comparable within one process; detectors consume them solely as
+in-process latency differences.
 """
 
 from __future__ import annotations
@@ -163,7 +170,10 @@ class _CrewAIStepCallback:
         self._monitor = monitor
         self._episode_id = episode_id
         self._agent_name = agent_name
-        self._clock = clock or time.time
+        # perf_counter, not time.time: time.time ticks at ~15.6 ms on Windows,
+        # quantizing sub-tick latencies to zero (issue #155). perf_counter has
+        # no meaningful epoch; detectors only consume in-process differences.
+        self._clock = clock or time.perf_counter
         self._counter = itertools.count()
 
     def __call__(self, step: Any) -> None:
@@ -219,7 +229,9 @@ def observe_crewai_step(
         episode_id=episode_id,
         step_id=step_id or "manual",
         agent_name=agent_name,
-        clock=clock or time.time,
+        # Same rationale as SnaglineAutogenHandler: sub-tick latency fidelity
+        # on Windows requires a monotonic high-resolution default (issue #155).
+        clock=clock or time.perf_counter,
         side_effect=side_effect,
     )
     monitor.ingest(event)
