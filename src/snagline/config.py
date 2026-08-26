@@ -10,13 +10,45 @@ from __future__ import annotations
 import json
 import logging
 import os
+import types
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
-from typing import Any, get_type_hints
+from typing import Any, Union, get_args, get_origin, get_type_hints
 
 from snagline.baseline import BaselineProfile
 
 logger = logging.getLogger("snagline")
+
+
+def _union_args(hint: Any) -> tuple[Any, ...] | None:
+    """Return the member tuple when ``hint`` is a union type, else None.
+
+    Covers both spellings across Python versions: PEP 604 ``X | Y``
+    (``types.UnionType``, whose get_origin differs between versions) and
+    ``typing.Union[X, Y]`` / ``Optional[X]``.
+    """
+    if isinstance(hint, types.UnionType):
+        return get_args(hint)
+    if get_origin(hint) is Union:
+        return get_args(hint)
+    return None
+
+
+def _coercible_hint(hint: Any) -> Any:
+    """Unwrap ``X | None`` to ``X`` when X is an env-coercible scalar.
+
+    Lets optional scalar fields (for example the calibration baseline path,
+    issue #101) be set from environment variables like plain scalars, while
+    non-scalar optionals (object references such as a BaselineProfile) stay
+    out of reach of string coercion.
+    """
+    args = _union_args(hint)
+    if args is None or len(args) != 2 or type(None) not in args:
+        return hint
+    other = next(a for a in args if a is not type(None))
+    if other in (bool, int, float, str):
+        return other
+    return hint
 
 
 def _coerce(hint: type, value: str) -> Any:
@@ -142,6 +174,25 @@ class Config:
     # arXiv:2608.02464 that caught 7/7 organic failures-of-omission there.
     silent_abort_enabled: bool = False
 
+    # --- Opt-in auto-calibration from a fitted BaselineProfile (issue #101) --
+    # calibration="auto" derives error-cascade thresholds and the CUSUM latency
+    # reference from a healthy-run profile (see snagline.calibration) instead
+    # of using the hand-tuned constants above. Without a usable profile the
+    # hand-tuned defaults apply unchanged (never worse than today). Derived
+    # cascade counts are clamp-limited to [2, hand-tuned default] so auto can
+    # only ever become more sensitive than shipped behavior.
+    calibration: str = "manual"  # "manual" | "auto"
+    # False-alarm probability budget per window evaluation used when deriving
+    # cascade thresholds. Small on purpose: tier-1 detectors evaluate every
+    # step, so one window is implicitly tested many times per episode.
+    calibration_alpha: float = 0.001
+    # Healthy reference for calibration. Pass the fitted object directly, or
+    # point calibration_baseline_path at a file written by save_baseline() /
+    # `snagline baseline --save`. The object field cannot come from JSON/TOML
+    # config files or the environment; use the path variant there.
+    calibration_baseline: BaselineProfile | None = None
+    calibration_baseline_path: str | None = None
+
     # Global
     fail_open: bool = True
 
@@ -188,7 +239,7 @@ class Config:
             name = key[len(prefix) :].lower()
             if name not in hints:
                 continue
-            hint = hints[name]
+            hint = _coercible_hint(hints[name])
             if hint in (bool, int, float, str):
                 try:
                     overrides[name] = _coerce(hint, value)

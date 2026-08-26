@@ -22,37 +22,46 @@ from snagline.events import StepEvent
 
 @dataclass
 class ToolBaseline:
-    """Per-tool healthy-run statistics."""
+    """Per-tool healthy-run statistics.
+
+    ``count`` covers every observed tool_call; ``latency_count`` is the subset
+    that carried ``latency_ms``. Keeping them separate lets error rates be
+    measured even on streams whose steps report no timing (auto-calibration,
+    issue #101), without skewing the latency moments.
+    """
 
     tool_name: str
     count: int = 0
+    latency_count: int = 0
     latency_sum: float = 0.0
     latency_sum_sq: float = 0.0
     error_count: int = 0
     min_latency: float | None = None
     max_latency: float | None = None
 
-    def add(self, latency_ms: float, error: bool) -> None:
+    def add(self, latency_ms: float | None, error: bool) -> None:
         self.count += 1
-        self.latency_sum += latency_ms
-        self.latency_sum_sq += latency_ms * latency_ms
-        if self.min_latency is None or latency_ms < self.min_latency:
-            self.min_latency = latency_ms
-        if self.max_latency is None or latency_ms > self.max_latency:
-            self.max_latency = latency_ms
+        if latency_ms is not None:
+            self.latency_count += 1
+            self.latency_sum += latency_ms
+            self.latency_sum_sq += latency_ms * latency_ms
+            if self.min_latency is None or latency_ms < self.min_latency:
+                self.min_latency = latency_ms
+            if self.max_latency is None or latency_ms > self.max_latency:
+                self.max_latency = latency_ms
         if error:
             self.error_count += 1
 
     @property
     def mean_latency(self) -> float:
-        return self.latency_sum / self.count if self.count else 0.0
+        return self.latency_sum / self.latency_count if self.latency_count else 0.0
 
     @property
     def std_latency(self) -> float:
-        if self.count < 2:
+        if self.latency_count < 2:
             return 0.0
-        var = (self.latency_sum_sq - self.latency_sum**2 / self.count) / (
-            self.count - 1
+        var = (self.latency_sum_sq - self.latency_sum**2 / self.latency_count) / (
+            self.latency_count - 1
         )
         return max(0.0, var) ** 0.5
 
@@ -64,6 +73,7 @@ class ToolBaseline:
         return {
             "tool_name": self.tool_name,
             "count": self.count,
+            "latency_count": self.latency_count,
             "mean_latency": self.mean_latency,
             "std_latency": self.std_latency,
             "min_latency": self.min_latency,
@@ -76,11 +86,15 @@ class ToolBaseline:
     def from_dict(cls, data: dict) -> ToolBaseline:
         tb = cls(tool_name=data["tool_name"])
         tb.count = data["count"]
-        tb.latency_sum = data.get("mean_latency", 0.0) * tb.count
+        # Profiles written before latency_count existed counted only
+        # latency-bearing calls, which was also the error-rate denominator;
+        # defaulting latency_count to count reproduces those statistics.
+        tb.latency_count = int(data.get("latency_count", tb.count))
+        tb.latency_sum = data.get("mean_latency", 0.0) * tb.latency_count
         tb.latency_sum_sq = (
-            data.get("std_latency", 0.0) ** 2 * max(1, tb.count - 1)
-            + tb.latency_sum**2 / tb.count
-            if tb.count
+            data.get("std_latency", 0.0) ** 2 * max(1, tb.latency_count - 1)
+            + tb.latency_sum**2 / tb.latency_count
+            if tb.latency_count
             else 0.0
         )
         tb.error_count = data.get("error_count", 0)
@@ -98,7 +112,7 @@ class BaselineProfile:
 
     def add_event(self, event: StepEvent) -> None:
         self.total_steps += 1
-        if event.action_type == "tool_call" and event.latency_ms is not None:
+        if event.action_type == "tool_call":
             name = event.tool_name or "default"
             tb = self.tools.get(name)
             if tb is None:
