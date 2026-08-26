@@ -142,23 +142,42 @@ def test_error_callbacks_carry_latency_ms():
     # Issue #17: error callbacks (tool/llm/chain) must compute latency_ms from
     # the captured start time, just like the success callbacks, so the CUSUM
     # detector can analyze latency for failed operations too.
-    import time
+    #
+    # A scripted fake clock keeps this deterministic on every platform:
+    # time.monotonic ticks at roughly 15.6 ms on Windows, so the previous
+    # 10 ms sleep measured as latency 0.0 and failed the positive-latency
+    # assertion intermittently there (first windows-latest CI leg). Read
+    # order per operation: on_*_start captures one reading, the error
+    # callback reads twice more (once in _latency_from, once for the event
+    # timestamp), so nine scripted readings cover all three operations; any
+    # unexpected extra read raises StopIteration and fails loudly instead
+    # of drifting.
+    reads = iter(
+        [
+            10.0,
+            10.5,
+            11.0,  # tool pair: 500 ms
+            20.0,
+            20.25,
+            21.0,  # chat model pair: 250 ms
+            30.0,
+            35.0,
+            36.0,  # chain pair: 5000 ms
+        ]
+    )
 
     mon = _monitor()
-    h = SnaglineCallbackHandler(mon, "ep-lat", clock=time.monotonic)
+    h = SnaglineCallbackHandler(mon, "ep-lat", clock=lambda: next(reads))
 
     h.on_tool_start({"name": "search"}, "query=cat", run_id="e1")
-    time.sleep(0.01)
     h.on_tool_error(RuntimeError("timeout"), run_id="e1")
     h.on_chat_model_start({"name": "chat"}, [["user", "hi"]], run_id="e2")
-    time.sleep(0.01)
     h.on_llm_error(RuntimeError("model down"), run_id="e2")
     h.on_chain_start({"name": "planner"}, {"input": 1}, run_id="e3")
-    time.sleep(0.01)
     h.on_chain_error(ValueError("bad plan"), run_id="e3")
 
     errors = [e for e in mon.events if e.error]
     assert len(errors) == 3
-    for e in errors:
-        assert e.latency_ms is not None
-        assert e.latency_ms > 0
+    # Exact deltas from the scripted clock (values chosen to be binary
+    # exact), stronger than the former > 0.
+    assert [e.latency_ms for e in errors] == [500.0, 250.0, 5000.0]
