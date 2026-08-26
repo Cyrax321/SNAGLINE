@@ -453,7 +453,10 @@ def _cmd_watch(args: argparse.Namespace) -> int:
         return int(exc.code or 2)
     monitor = Monitor.default(
         config=cfg,
-        sinks=_maybe_dedup(sinks, args.cooldown_seconds),
+        # _build_sinks is the single DedupSink choke point (issue #152):
+        # re-wrapping here composed DedupSink(DedupSink(inner)) and made watch
+        # diverge from serve, which passes _build_sinks through untouched.
+        sinks=sinks,
     )
     episode = args.episode_id or (args.file or "stdin")
     steps = 0
