@@ -719,7 +719,7 @@ project easily").
      sidecar server mode, `drift` extra — build in response to actual
      demand, not preemptively.
 
-### 13.1 Status of the sequencing (as of 2026-08-25)
+### 13.1 Status of the sequencing (as of 2026-08-26)
 
 - Steps 1-8 (v0.1 core: events/risk/Monitor, loop + error-cascade +
   latency detectors, console sink, `raw` adapter, `replay`, overhead
@@ -767,10 +767,10 @@ reported either way.
 
 ---
 
-## 15. Status (as of 2026-08-25)
+## 15. Status (as of 2026-08-26)
 
 Implementation status against the spec above. All merged to `master` with
-green CI (ruff + mypy + pytest, py3.10-3.13; 253 tests passing, 1 skipped
+green CI (ruff + mypy + pytest, py3.10-3.13; 385 tests passing, 1 skipped
 when the optional langchain extra is absent).
 
 ### Shipped
