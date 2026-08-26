@@ -108,6 +108,7 @@ def _map_step(
     step_id: str,
     agent_name: str | None,
     clock: Callable[[], float],
+    side_effect: bool = False,
 ) -> StepEvent:
     d = _to_dict(step)
     tool_name = _extract_tool_name(d)
@@ -141,6 +142,7 @@ def _map_step(
         latency_ms=latency,
         error=error,
         metadata={"agent_name": agent_name, "adapter": "crewai"},
+        side_effect=side_effect,
     )
 
 
@@ -203,11 +205,14 @@ def observe_crewai_step(
     agent_name: str | None = None,
     clock: Callable[[], float] | None = None,
     step_id: str | None = None,
+    side_effect: bool = False,
 ) -> StepEvent:
     """Manually map a single CrewAI step object to a ``StepEvent`` and ingest it.
 
     Useful when you manage the agent loop yourself and want the same mapping the
-    callback uses, without registering ``step_callback``.
+    callback uses, without registering ``step_callback``. ``side_effect=True``
+    marks the step as a non-idempotent action (issue #88); set it only from
+    your own knowledge of the tool, never heuristically.
     """
     event = _map_step(
         step,
@@ -215,6 +220,7 @@ def observe_crewai_step(
         step_id=step_id or "manual",
         agent_name=agent_name,
         clock=clock or time.time,
+        side_effect=side_effect,
     )
     monitor.ingest(event)
     return event

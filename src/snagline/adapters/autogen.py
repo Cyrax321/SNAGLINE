@@ -115,6 +115,7 @@ class SnaglineAutogenHandler:
         args: str,
         error: bool,
         latency_ms: float | None = None,
+        side_effect: bool = False,
     ) -> StepEvent:
         sig = make_signature(action_type, tool_name, args)
         event = StepEvent(
@@ -127,6 +128,7 @@ class SnaglineAutogenHandler:
             latency_ms=latency_ms,
             error=error,
             metadata={"agent_name": self._agent_name, "adapter": "autogen"},
+            side_effect=side_effect,
         )
         self._monitor.ingest(event)
         return event

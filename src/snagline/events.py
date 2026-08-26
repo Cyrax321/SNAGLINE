@@ -25,6 +25,12 @@ class StepEvent:
     Everything else is optional and improves detector quality but nothing in
     core requires it. ``metadata`` is explicitly NEVER read by detectors and
     must not be forwarded by sinks (see project.md §11).
+
+    ``side_effect`` (issue #88) marks a step whose action is known to be
+    non-idempotent (a payment, a send, a deploy). It is a plain boolean the
+    host sets deliberately: adapters only forward it and never derive it,
+    because guessing wrong either hides duplicate charges or flags harmless
+    reads. Detectors may read this boolean (it is a flag, not content).
     """
 
     step_id: str
@@ -44,6 +50,7 @@ class StepEvent:
     metadata: dict = field(
         default_factory=dict
     )  # adapter-specific; detectors never read this
+    side_effect: bool = False  # host-declared non-idempotent action (issue #88)
 
 
 @dataclass(frozen=True, slots=True)

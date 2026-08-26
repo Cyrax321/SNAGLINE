@@ -62,6 +62,8 @@ monitor._detectors.append(MyDetector())   # or: Monitor(default_detectors + [min
 - `detectors/error_cascade.py` - consecutive and windowed error counts
 - `detectors/latency_anomaly.py` - Welford baseline + CUSUM deviation per tool
 - `detectors/stagnation.py` - all-time novelty set plus a sliding novelty share
+- `detectors/side_effect_guard.py` - per-episode duplicate count of
+  host-declared non-idempotent actions
 - `detectors/goal_drift.py` - compares a live run to a persisted `BaselineProfile`
 - `detectors/ml_ensemble.py` - `MLOrchestrator` combining base detector scores
 - `detectors/token_runaway.py` - token-volume CUSUM + per-episode budget envelope
@@ -200,6 +202,48 @@ episode).
 
 Enable it with `Config(stagnation_enabled=True)`. It ships opt-in so the
 zero-dependency preset and the published bench numbers are untouched.
+
+### `SideEffectGuardDetector` (`side_effect_guard_enabled=True`, issue #88)
+
+`SideEffectGuardDetector(config=cfg)` watches steps the *host* marked as
+non-idempotent (`StepEvent.side_effect=True`: a payment, a send, a deploy)
+and fires on the second identical occurrence within one episode: same
+`(tool_name, action_signature)` pair counted per `episode_id`. With the
+default `side_effect_allowed_repeats=1` a repeated charge escalates
+immediately at score 0.9, which routes as critical severity. Trigger:
+`side_effect_duplicate`. That string is API: CONTINUUM's policy table maps
+it to ABORT plus immediate reconcile.
+
+Deliberately stricter than `LoopDetector`, and different in three ways:
+
+1. **Scope:** the loop detector watches a sliding window of arbitrary
+   signatures for wasted-work repetition; this guard watches only
+   host-declared side-effect steps, where repetition is itself the incident.
+2. **Threshold:** the loop detector needs `repeat_threshold` hits (default 3)
+   inside its window before saying anything; here one repeat is already the
+   finding.
+3. **Edge:** the loop detector re-arms when its window drains; this guard
+   fires exactly once per `(episode_id, tool_name, action_signature)` key and
+   stays quiet for the rest of the episode. A repeated payment must not
+   alert-spam while the agent keeps making it worse; recovery is
+   `end_episode()` territory. Different-argument retries produce different
+   signatures and never fire here (that shape belongs to the loop/stall
+   modes).
+
+How hosts mark steps: adapters forward the flag mechanically and never
+invent it. Today you can pass it to the raw adapter's `step(...,
+side_effect=True)`, `observe_openai_call(...)`, `observe_anthropic_call(...)`,
+or `observe_crewai_step(...)`. Framework callback paths (LangChain hooks,
+Autogen events, LangGraph nodes, Claude Code hook payloads) have no
+caller-supplied flag source, so their events carry the schema default
+(`False`) and legacy payloads written before #88 load unchanged.
+
+Privacy and cost, as everywhere: the detector reads the boolean, the tool
+name, and the one-way signature digest, nothing else, and never touches
+`StepEvent.metadata`. Non-marked steps cost one attribute check; marked
+steps do one dict upsert. Per-episode memory grows with distinct marked
+actions, never with repeats: replaying one charge a thousand times still
+costs a single counter entry, and `reset(episode_id)` releases all of it.
 
 ## The horizon detectors (long-run set, issues #84/#85/#86)
 

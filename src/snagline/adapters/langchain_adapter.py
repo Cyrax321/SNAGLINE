@@ -69,6 +69,7 @@ class SnaglineCallbackHandler(BaseCallbackHandler):
         error_type: str | None = None,
         tokens_in: int | None = None,
         tokens_out: int | None = None,
+        side_effect: bool = False,
     ) -> StepEvent:
         sig = make_signature(action_type, tool_name, str(args))
         event = StepEvent(
@@ -84,6 +85,7 @@ class SnaglineCallbackHandler(BaseCallbackHandler):
             tokens_in=tokens_in,
             tokens_out=tokens_out,
             metadata={},
+            side_effect=side_effect,
         )
         self._monitor.ingest(event)
         return event
