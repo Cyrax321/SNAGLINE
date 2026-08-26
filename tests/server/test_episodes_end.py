@@ -35,24 +35,30 @@ class _RecordingMonitor:
         self.ended: list[str] = []
 
     def add_sink(self, sink: object) -> None:
+        """Accept a sink registration without doing anything."""
         pass
 
     def ingest(self, event: object) -> None:
+        """Accept an event without detecting anything."""
         pass
 
     def end_episode(self, episode_id: str) -> None:
+        """Record that this id was ended."""
         self.ended.append(str(episode_id))
 
     def metrics(self) -> dict:
+        """Return an empty counter snapshot."""
         return {}
 
 
 class _ExplodingMonitor(_RecordingMonitor):
     def end_episode(self, episode_id: str) -> None:
+        """Always raises: simulates a misconfigured Monitor."""
         raise RuntimeError("boom: monitor misconfigured")
 
 
 def _start(monitor: object | None = None, auth_token: str | None = None):
+    """Start a sidecar on an ephemeral port; returns (server, port)."""
     server = make_server(
         monitor or Monitor([], []),  # type: ignore[arg-type]
         host="127.0.0.1",
@@ -93,6 +99,7 @@ def _request(
 
 
 def _post_event(port: int, episode_id: str) -> bytes:
+    """POST one minimal StepEvent with the given episode id."""
     event = {"step_id": "0", "episode_id": episode_id, **_EVENT_FIELDS}
     return _request(port, "POST", "/events", json.dumps(event).encode())
 
