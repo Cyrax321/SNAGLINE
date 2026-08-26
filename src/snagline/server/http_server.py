@@ -377,6 +377,12 @@ def make_handler(
 
         def do_POST(self) -> None:  # noqa: N802 - http.server naming
             if not self._authorized():
+                # Drain the declared body before replying: closing a
+                # connection that still has unread inbound data makes the
+                # kernel send RST and the sender can lose the 401 response
+                # entirely (same rationale as the over-cap drain, #121;
+                # observed over TLS where close timing shifts the race).
+                self._discard_overcap_body(int(self.headers.get("Content-Length") or 0))
                 self._respond(401, {"error": "unauthorized"})
                 return
             length = int(self.headers.get("Content-Length") or 0)
@@ -394,6 +400,7 @@ def make_handler(
             elif self.path == "/risks":
                 self._post_risks()
             else:
+                self._discard_overcap_body(int(self.headers.get("Content-Length") or 0))
                 self._respond(404, {"error": "not found"})
 
         def _post_risks(self) -> None:
