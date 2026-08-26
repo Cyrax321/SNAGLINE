@@ -377,11 +377,15 @@ def test_watch_follow_teardown_reaps_the_child_on_a_healthy_run(tmp_path, childr
     """Issue #69 regression, healthy path, runs on every platform.
 
     The follow-mode watcher dispatches its loop risk to a live localhost
-    sink endpoint (first accepted connection = deterministic readiness,
-    no sleeps). A malformed sentinel line then proves the child finished
-    counting all four events before ``_graceful_stop`` ever runs. The child
-    must end fully reaped: poll() non-None, no ProcessLookupError, and the
-    module-level children fixture leaves zero lingering processes.
+    sink endpoint. Delivery is proven deadline-based: the test polls
+    ``server.bodies`` for the expected loop-trigger payload and proceeds
+    only once the POST has landed (issue #156 -- the former readiness
+    signal, the first accepted connection, raced the actual body landing,
+    which lost intermittently on windows-latest). A malformed sentinel line
+    then proves the child finished counting all four events before
+    ``_graceful_stop`` ever runs. The child must end fully reaped: poll()
+    non-None, no ProcessLookupError, and the module-level children fixture
+    leaves zero lingering processes.
     """
     path = tmp_path / "healthy.jsonl"
     path.write_text("\n".join(json.dumps(_base_event(i)) for i in range(4)) + "\n")
@@ -392,9 +396,18 @@ def test_watch_follow_teardown_reaps_the_child_on_a_healthy_run(tmp_path, childr
             path, f"http://127.0.0.1:{server.port}/sink", children
         )
         catcher = _StderrCatcher(proc, _MALFORMED_MARKER)
-        assert server.wait_for_connection(30), (
-            "watcher never dispatched a risk to the local sink endpoint"
-        )
+        # Contract under test: the loop risk is delivered END-TO-END through
+        # watch --follow to an HTTP sink. Poll for the delivered payload with
+        # a generous deadline instead of trusting connection-level readiness;
+        # teardown must not begin until delivery is observed (issue #156).
+        deadline = time.monotonic() + 30.0
+        while not any(b'"trigger": "loop"' in body for body in server.bodies):
+            if time.monotonic() >= deadline:
+                pytest.fail(
+                    "watcher never delivered the loop risk to the sink "
+                    f"endpoint within 30s; bodies={server.bodies!r}"
+                )
+            time.sleep(0.05)
         # Sentinel: once the CLI logs this line it has already counted every
         # seeded event and is back in the follow poll loop, so stopping it
         # now cannot truncate the run into an exit-code race.
