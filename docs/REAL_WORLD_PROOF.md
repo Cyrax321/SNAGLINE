@@ -1,21 +1,21 @@
 # Real-World Validation: SNAGLINE on a Live LLM
 
 > **Purpose.** This document is the permanent, reproducible record that SNAGLINE
-> works — not just in unit tests, but against a **real language model driving
+> works, not just in unit tests, but against a **real language model driving
 > real tools**, with its full detection pipeline shipping real alerts over real
 > HTTP to a sidecar. Everything below was observed on a live run; the exact
 > risk JSON and sidecar logs are reproduced verbatim so anyone can verify.
 
 ---
 
-## 1. TL;DR — what this proves
+## 1. TL;DR: what this proves
 
 | Claim | Evidence |
 |-------|----------|
 | The pipeline works end-to-end on a **real LLM** | A genuine LangChain `create_agent` run with `openai/gpt-oss-20b:free` (OpenRouter) |
-| **Loop** detection fires on real model behavior | `loop` — `action repeated 3x in last 12 steps` (the model literally repeated a tool call) |
-| **Error cascade** detection fires on a real failing tool | `error_cascade` — `3 consecutive errors` from a real `URLError` |
-| **Latency anomaly** detection fires on real model slowness | 8× `latency_anomaly` — chat generations spiking to 20–151s vs a ~15s baseline |
+| **Loop** detection fires on real model behavior | `loop`, `action repeated 3x in last 12 steps` (the model literally repeated a tool call) |
+| **Error cascade** detection fires on a real failing tool | `error_cascade`, `3 consecutive errors` from a real `URLError` |
+| **Latency anomaly** detection fires on real model slowness | 8× `latency_anomaly`: chat generations spiking to 20–151s vs a ~15s baseline |
 | The **WebhookSink → HTTP sidecar** path works | Sidecar received every risk live via `POST /risks` |
 | It survives a **~5-minute sustained** run | 11 real risks captured across the window |
 
@@ -56,11 +56,11 @@ Components exercised in the live test:
 - **Core** (`src/snagline/`): `events.py` (`StepEvent`, `make_signature`),
   `risk.py` (`FailureRisk`), `monitor.py` (`Monitor`, fail-open),
   `config.py`, `detectors/{loop,error_cascade,latency_anomaly}.py`.
-- **Adapter**: `adapters/langchain_adapter.py` — `SnaglineCallbackHandler`
+- **Adapter**: `adapters/langchain_adapter.py`, `SnaglineCallbackHandler`
   (subclasses LangChain `BaseCallbackHandler`; works through `create_agent`).
 - **Sinks**: `sinks/console.py` (`ConsoleSink`), `sinks/webhook.py`
   (`WebhookSink`, stdlib `urllib`, fire-and-forget).
-- **Server**: `server/http_server.py` — stdlib `ThreadingHTTPServer` sidecar with
+- **Server**: `server/http_server.py`: stdlib `ThreadingHTTPServer` sidecar with
   `POST /events`, `POST /hooks/claude-code`, **`POST /risks`**, `GET /health`,
   `GET /risks`.
 - **CLI**: `snagline serve`, `snagline replay`, `snagline watch`, `snagline hook`.
@@ -81,7 +81,7 @@ Components exercised in the live test:
    (Commits leading to `070617b`.)
 2. **Integration tests** prove each detector fires and that a clean run is
    silent (`tests/test_integration.py`, `tests/adapters/`). CI runs the suite on
-   Python 3.10/3.11/3.12 — all green.
+   Python 3.10/3.11/3.12, all green.
 3. **Found and fixed the top-3 real bugs** (commit `070617b`, issues #1–#3
    closed): raw `watch()` never called `end_episode`; the LangChain adapter
    missed `on_llm_error`/`on_chat_model_error`/`on_chain_error`; the CUSUM
@@ -92,7 +92,7 @@ Components exercised in the live test:
    remain open (alert spam/dedupe, replay error handling, nested-chain latency
    false positives, CI lint/coverage, etc.).
 5. **No-key harnesses** prove the architecture against *real* `create_agent`
-   agents with a scripted fake model (`real_agent_executor_demo.py`) — loop /
+   agents with a scripted fake model (`real_agent_executor_demo.py`): loop /
    error / latency each isolate their detector cleanly.
 6. **Real LLM testing** (this document): installed `langchain` 1.x (where
    `AgentExecutor`/`initialize_agent` were replaced by `create_agent` → a
@@ -113,7 +113,7 @@ All snippets below are exact output captured during live runs. The API key was
 supplied only via an environment variable at runtime and never written to disk
 or committed.
 
-### 4.1 Error cascade — a real failing tool
+### 4.1 Error cascade: a real failing tool
 
 Mode `error`, real `openai/gpt-oss-20b:free`, task: *"Call flaky_api with
 `https://this-host-does-not-exist.invalid` three times…"* The tool makes a real
@@ -131,7 +131,7 @@ The same risk, delivered over HTTP to the sidecar and printed by it:
 [sidecar] RECEIVED risk -> trigger=error_cascade score=0.8 detail=3 consecutive errors
 ```
 
-### 4.2 Latency anomaly — real model slowness
+### 4.2 Latency anomaly: real model slowness
 
 Mode `error`, a ~23-step task (weather + sensor + flaky + summary). The free
 model queued and generated slowly; the CUSUM detector flagged the shifts:
@@ -145,7 +145,7 @@ model queued and generated slowly; the CUSUM detector flagged the shifts:
  "timestamp": 1786770715.760837}
 ```
 
-### 4.3 The ~5-minute sustained run — 11 real risks over HTTP
+### 4.3 The ~5-minute sustained run: 11 real risks over HTTP
 
 A larger ~30-step task, time-budgeted to ~270s. The sidecar's `/risks` log
 captured **11 real risks** (the run was still mid-window when the harness's
@@ -174,12 +174,12 @@ received live by the sidecar. No part is fabricated.
 
 ### 4.4 What each detector saw
 
-- **`loop`** — `action repeated 3x in last 12 steps`: the adapter hashes
+- **`loop`**, `action repeated 3x in last 12 steps`: the adapter hashes
   `(tool, args)`; when the real model re-issued the same call, the loop detector
   fired. Real repetition, real detection.
-- **`error_cascade`** — `3 consecutive errors`: three real `URLError`s (or, on a
-  flaky provider, repeated model `502`s — see §7, issue #16).
-- **`latency_anomaly`** — CUSUM on per-tool/`chat` latency with a frozen
+- **`error_cascade`**, `3 consecutive errors`: three real `URLError`s (or, on a
+  flaky provider, repeated model `502`s; see §7, issue #16).
+- **`latency_anomaly`**: CUSUM on per-tool/`chat` latency with a frozen
   baseline + sigma floor; a single large spike *and* a sustained shift both
   fire. The spikes above are the free model's queueing latency.
 
@@ -195,13 +195,13 @@ You can see the architecture with **zero API key** (§5.1), or watch it monitor 
 - Python ≥ 3.10.
 - Git clone: `git clone https://github.com/Cyrax321/SNAGLINE && cd SNAGLINE`.
 
-### 5.1 No key — see the architecture instantly
+### 5.1 No key: see the architecture instantly
 
 ```bash
 python -m venv .venv && . .venv/bin/activate
 pip install -e ".[langchain]" langchain
 
-# Real create_agent agent, scripted fake model — proves the adapter + each detector:
+# Real create_agent agent, scripted fake model, proves the adapter + each detector:
 PYTHONPATH=src python examples/real_agent_executor_demo.py --mode loop      # -> loop
 PYTHONPATH=src python examples/real_agent_executor_demo.py --mode error     # -> error_cascade
 PYTHONPATH=src python examples/real_agent_executor_demo.py --mode latency   # -> latency_anomaly
@@ -211,7 +211,7 @@ PYTHONPATH=src python examples/real_agent_executor_demo.py --mode healthy   # ->
 pytest
 ```
 
-### 5.2 Real LLM — full architecture, live
+### 5.2 Real LLM: full architecture, live
 
 Get a free key from <https://openrouter.ai> (OpenAI-compatible, no credit card
 for `:free` models) **or** an OpenAI/Anthropic key. The key is read from the
@@ -220,14 +220,14 @@ environment at runtime only.
 ```bash
 pip install -e ".[langchain]" langchain langchain-openai
 
-# Terminal 1 — the sidecar (receives risks at POST /risks, detects at POST /events)
+# Terminal 1: the sidecar (receives risks at POST /risks, detects at POST /events)
 snagline serve --port 8787
 # …or without installing the console script:
 # PYTHONPATH=src python -c "from snagline import Monitor; \
 #   from snagline.server.http_server import serve; \
 #   serve(Monitor.default(), host='127.0.0.1', port=8787)"
 
-# Terminal 2 — real model -> real detectors -> WebhookSink -> sidecar
+# Terminal 2: real model -> real detectors -> WebhookSink -> sidecar
 export OPENAI_API_KEY=<your-openrouter-key>        # or OpenAI/Anthropic key
 PYTHONPATH=src python examples/real_time_webhook_demo.py \
     --provider openai --base-url https://openrouter.ai/api/v1 \
@@ -267,16 +267,16 @@ Bucharest, Sofia, Zagreb, Belgrade, Reykjavik. \
 
 ## 6. Known limitations (real findings, tracked as issues)
 
-- **#16 — `error_cascade` counts LLM/chain errors, not just tool failures.**
+- **#16: `error_cascade` counts LLM/chain errors, not just tool failures.**
   During live runs, a flaky provider's `502`s were counted as a cascade. Genuine
   (the model *is* failing), but it can make `healthy` mode non-silent on an
   unreliable provider. Design decision pending: scope the cascade to
   `tool_call`/`plan_step` errors, or tag `error_source`.
-- **#10 — `latency_anomaly` watches LLM-call latency too.** The live
+- **#10: `latency_anomaly` watches LLM-call latency too.** The live
   `latency_anomaly` spikes in §4.2/§4.3 are the model's *generation* latency,
   not just tool latency. Whether to exclude `chat`/`llm` from the latency
   detector is an open question.
-- **#4 — alert spam / no dedupe.** A sustained anomaly emits a risk per step;
+- **#4: alert spam / no dedupe.** A sustained anomaly emits a risk per step;
   a sink-side dedupe/rate-limit is planned.
 - Remaining open issues #5–#15 cover replay error handling, nested-chain latency
   false positives, CI lint/coverage, `ConsoleSink` config, and more.
