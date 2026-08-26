@@ -96,3 +96,16 @@ class GoalDriftDetector:
     def reset(self, episode_id: str) -> None:
         self._live.pop(episode_id, None)
         self._fired.pop(episode_id, None)
+
+    def dump_state(self) -> dict[str, Any]:
+        return {
+            "live": {ep: p.to_dict() for ep, p in self._live.items()},
+            "fired": dict(self._fired),
+        }
+
+    def load_state(self, state: dict[str, Any]) -> None:
+        self._live = {
+            ep: BaselineProfile.from_dict(raw)
+            for ep, raw in state.get("live", {}).items()
+        }
+        self._fired = {ep: bool(v) for ep, v in state.get("fired", {}).items()}

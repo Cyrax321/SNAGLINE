@@ -130,6 +130,11 @@ monitor = Monitor.default(config=config)
 
 With `ml_ensemble_enabled`, `Monitor.default()` wraps the base detectors in a single `MLOrchestrator` instead of exposing them individually, so there is no double counting. Both detectors are documented in [docs/DETECTOR_GUIDE.md](docs/DETECTOR_GUIDE.md).
 
+Baselines go stale as your agent evolves. For scheduled refits, use
+`snagline baseline retrain`: it fits from the newest JSONL window and bumps a
+versioned store atomically (cron/systemd examples and the goal_drift caveats
+in [docs/RETRAIN_CADENCE.md](docs/RETRAIN_CADENCE.md)).
+
 ## Features
 
 | Capability | What it gives you |
@@ -240,6 +245,26 @@ snagline replay tests/fixtures/trajectories/injected_latency_spike.jsonl --summa
 snagline replay tests/fixtures/trajectories/healthy_run.jsonl --summary
 # replayed 24 steps; 0 risk(s) emitted   -> no false positives
 ```
+
+### Detection Accuracy Harness
+
+`benchmarks/detection_accuracy.py` is the honesty gate for every detection-
+accuracy claim (issue #82). It replays the labeled fixture corpus under
+`benchmarks/fixtures/` (64 episodes: four labeled failures per shipped
+trigger plus 32 healthy controls, including near-threshold cases) through a
+default-configured `Monitor` with the opt-in long-horizon flags enabled, then
+reports per-trigger TP/FP/FN, precision, recall, F1, macro-F1, and a
+confusion summary. It exits nonzero if any healthy control fires, so CI can
+consume it as a false-positive gate:
+
+```bash
+python benchmarks/detection_accuracy.py --fixtures benchmarks/fixtures --format table
+```
+
+The corpus is generated deterministically by
+`benchmarks/fixtures/generate_fixtures.py` and committed as files. Published
+precision/recall numbers land in this section after review; none are claimed
+before then.
 
 ## Framework Integration
 

@@ -111,7 +111,10 @@ enterprise-grade alerting. Concretely:
 6. **Baseline lifecycle:** auto-capture cadence, versioned store, per-tenant
    baselines, scheduled retrain. **Done (storage + collector + CLI):** versioned
    per-tenant `BaselineStore`, `BaselineCollector`, and `snagline baseline
-   --store-dir` (#45, #46). Scheduled retrain remains a host-owned cadence.
+   --store-dir` (#45, #46). **Done (retrain contract):** `snagline baseline
+   retrain` refits from the newest JSONL window with an atomic store bump,
+   plus a documented cron/systemd cadence and `--max-age` staleness warning;
+   see docs/RETRAIN_CADENCE.md (#102). The schedule itself stays host-owned.
 
 ### P2 (detection quality, the differentiator)
 
@@ -123,8 +126,15 @@ enterprise-grade alerting. Concretely:
 ### P3 (trust and observability)
 
 10. Monitor self-metrics (Prometheus), health endpoint, structured logs.
-    **Done (partial):** `Monitor.metrics()` counters + `GET /metrics` sidecar
-    endpoint (#47). Prometheus export and structured logging remain.
+    **Done (mostly):** `Monitor.metrics()` counters (#47) and the `GET
+    /metrics` sidecar endpoint now speak Prometheus text exposition 0.0.4 by
+    default (#98): `snagline_events_total`,
+    `snagline_risks_total{trigger,severity}`, `snagline_episodes_active`, and
+    the `snagline_ingest_seconds` count/sum pair. The legacy JSON body stays
+    available via `?format=classic`, an `Accept: application/json` header,
+    or `SNAGLINE_METRICS_FORMAT=classic`. Scrape config: point Prometheus at
+    the sidecar with `metrics_path: /metrics` (same port and auth token as
+    the event endpoints). Structured logging remains.
 11. Integration matrix document plus a prominent "10-line custom adapter"
     path. **Done:** `docs/INTEGRATION_MATRIX.md` (#49).
 
@@ -322,7 +332,6 @@ operational.
   - #48 `feat/batching-sink` - `BatchingSink` async/rate-limited dispatch.
   - #49 `docs/integration-matrix` - `docs/INTEGRATION_MATRIX.md` (P3 item 11).
 - **Status: P0, P1, and most of P3 are complete.** Remaining:
-  - P1 item 6 tail: scheduled/automated retrain cadence (host-owned today).
   - P3 item 10 tail: Prometheus export + structured logging for the monitor.
   - Actual PyPI upload (needs a token); in-process TLS (or documented
     reverse-proxy).

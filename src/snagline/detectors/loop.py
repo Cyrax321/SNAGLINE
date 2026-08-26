@@ -42,7 +42,7 @@ import hashlib
 import re
 from collections import deque
 from collections.abc import Callable
-from typing import cast
+from typing import Any, cast
 
 from snagline.config import Config
 from snagline.events import StepEvent
@@ -331,3 +331,44 @@ class LoopDetector:
         self._stall_count.pop(episode_id, None)
         self._stall_start.pop(episode_id, None)
         self._stall_fired.pop(episode_id, None)
+
+    def dump_state(self) -> dict[str, Any]:
+        # _fired holds per-episode sets of escalated signatures (issue #94
+        # re-arm semantics); sort so the JSON snapshot is deterministic.
+        # Hardening modes (#89) persist their state too: a restart must not
+        # silently reset an in-progress stall streak or cycle track.
+        return {
+            "windows": {ep: list(w) for ep, w in self._windows.items()},
+            "fired": {ep: sorted(sigs) for ep, sigs in self._fired.items()},
+            "near_windows": {ep: list(w) for ep, w in self._near_windows.items()},
+            "near_fired": {ep: sorted(sigs) for ep, sigs in self._near_fired.items()},
+            "cycle_windows": {ep: list(w) for ep, w in self._cycle_windows.items()},
+            "cycle_fired": dict(self._cycle_fired),
+            "stall_sig": dict(self._stall_sig),
+            "stall_count": dict(self._stall_count),
+            "stall_start": dict(self._stall_start),
+            "stall_fired": dict(self._stall_fired),
+        }
+
+    def load_state(self, state: dict[str, Any]) -> None:
+        self._windows = {
+            ep: deque(sigs, maxlen=self.window_size)
+            for ep, sigs in state.get("windows", {}).items()
+        }
+        self._fired = {ep: set(sigs) for ep, sigs in state.get("fired", {}).items()}
+        self._near_windows = {
+            ep: deque(sigs, maxlen=self.window_size)
+            for ep, sigs in state.get("near_windows", {}).items()
+        }
+        self._near_fired = {
+            ep: set(sigs) for ep, sigs in state.get("near_fired", {}).items()
+        }
+        self._cycle_windows = {
+            ep: deque(sigs, maxlen=self.loop_cycle_window_size)
+            for ep, sigs in state.get("cycle_windows", {}).items()
+        }
+        self._cycle_fired = dict(state.get("cycle_fired", {}))
+        self._stall_sig = dict(state.get("stall_sig", {}))
+        self._stall_count = dict(state.get("stall_count", {}))
+        self._stall_start = dict(state.get("stall_start", {}))
+        self._stall_fired = dict(state.get("stall_fired", {}))
