@@ -14,7 +14,7 @@
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.10+" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License" /></a>
   <a href="https://github.com/Cyrax321/SNAGLINE/issues"><img src="https://img.shields.io/github/issues/Cyrax321/SNAGLINE?style=flat-square" alt="Issues" /></a>
-  <a href="https://github.com/Cyrax321/SNAGLINE/actions"><img src="https://img.shields.io/badge/tests-385%20passed-brightgreen?style=flat-square" alt="Tests" /></a>
+  <a href="https://github.com/Cyrax321/SNAGLINE/actions"><img src="https://img.shields.io/badge/tests-390%20passed-brightgreen?style=flat-square" alt="Tests" /></a>
 </p>
 
 ---
@@ -207,10 +207,11 @@ SNAGLINE is verified not just with unit tests, but against real LLM agents, live
 ### Automated Test Suite and Benchmarks
 
 ```
-tests : 385 passed, 1 skipped  (pytest, Python 3.13, 2026-08-26;
-skip = langchain integration test without the optional extra installed)
-bench : median 1.91 us/step, p99 33.90 us/step over 200,000 synthetic steps
-        (measured 2026-08-15 on Apple M1, arm64, CPython 3.13.5)
+tests : 390 passed, 2 skipped  (pytest, Python 3.14, 2026-08-26;
+skip = langchain integrations without optional extras)
+bench : median 2.43 us/step, p99 27.71 us/step over 200,000 synthetic steps
+        (measured 2026-08-26 on Apple M1, arm64, CPython 3.14.5;
+         earlier 1.91 / 33.90 on same hardware 2026-08-15)
 ```
 
 Coverage spans:
@@ -251,21 +252,61 @@ snagline replay tests/fixtures/trajectories/healthy_run.jsonl --summary
 
 `benchmarks/detection_accuracy.py` is the honesty gate for every detection-
 accuracy claim (issue #82). It replays the labeled fixture corpus under
-`benchmarks/fixtures/` (64 episodes: four labeled failures per shipped
-trigger plus 32 healthy controls, including near-threshold cases) through a
-default-configured `Monitor` with the opt-in long-horizon flags enabled, then
-reports per-trigger TP/FP/FN, precision, recall, F1, macro-F1, and a
-confusion summary. It exits nonzero if any healthy control fires, so CI can
-consume it as a false-positive gate:
+`benchmarks/fixtures/` (76 episodes: four labeled failures per shipped
+trigger (10 triggers: loop, error_cascade, latency_anomaly, token_runaway,
+budget_breach, meltdown_low, meltdown_high, silent_abort, goal_drift,
+ml_ensemble) plus 36 healthy controls, including near-threshold cases) through
+harness config variants (`benchmarks/detection_accuracy.py::harness_config`
+with thresholds from `src/snagline/config.py`), then reports per-trigger
+TP/FP/FN, precision, recall, F1, macro-F1, and a confusion summary. It exits
+nonzero if any healthy control fires, so CI can consume it as a
+false-positive gate. The corpus is generated deterministically by
+`benchmarks/fixtures/generate_fixtures.py` and committed as files (including
+`benchmarks/fixtures/goal_drift_baseline.json` for the goal_drift variant).
 
 ```bash
 python benchmarks/detection_accuracy.py --fixtures benchmarks/fixtures --format table
 ```
 
-The corpus is generated deterministically by
-`benchmarks/fixtures/generate_fixtures.py` and committed as files. Published
-precision/recall numbers land in this section after review; none are claimed
-before then.
+Reproduced on corpus commit `eaf237b` (PR #141, 76 episodes) and on this docs
+commit, identical output. Thresholds are `Config` defaults as of that commit
+(see `src/snagline/config.py` and `benchmarks/detection_accuracy.py` for the
+full list): loop `window_size=12` / `repeat_threshold=3`, cascade
+`window_size=10` / `error_threshold=3` / `consecutive_threshold=3`, CUSUM
+`k=0.5` / `h=5.0` / `min_samples=5` / `sigma_floor_abs=1.0` /
+`sigma_floor_rel=0.05`, `episode_token_budget=50000`, meltdown
+`low_entropy=0.4` / `high_entropy=2.8` / `window_size=20`, goal_drift
+`latency_k=3.0` / `min_samples=10` / `score_threshold=0.5` /
+`error_tolerance=0.1`, ml_ensemble `score_threshold=0.5`. No rounding up,
+no cherry-picking, and no claim of parity with the source paper
+(arXiv:2608.02464) per project.md section 14, the numbers below are honest
+replay results on the synthetic fixture corpus:
+
+```
+trigger            TP   FP   FN  precision   recall      f1
+-----------------------------------------------------------
+loop                4    0    0      1.000    1.000   1.000
+error_cascade       4    0    0      1.000    1.000   1.000
+latency_anomaly     4    0    0      1.000    1.000   1.000
+token_runaway       4    0    0      1.000    1.000   1.000
+budget_breach       4    0    0      1.000    1.000   1.000
+meltdown_low        4    0    0      1.000    1.000   1.000
+meltdown_high       4    0    0      1.000    1.000   1.000
+silent_abort        4    0    0      1.000    1.000   1.000
+goal_drift          4    0    0      1.000    1.000   1.000
+ml_ensemble         4    0    0      1.000    1.000   1.000
+-----------------------------------------------------------
+macro-F1: 1.000
+episodes: 76 (40 labeled, 36 healthy controls)
+confusion (firings on other data):
+  (none)
+healthy controls that fired: 0
+```
+
+Ingest overhead on the same commit and hardware: median 2.43 us/step,
+p99 27.71 us/step over 200,000 synthetic steps
+(`python benchmarks/overhead_benchmark.py` or `snagline bench`; Apple M1,
+arm64, CPython 3.14.5).
 
 ## Framework Integration
 
