@@ -342,6 +342,14 @@ them is purely operational.
   oversized payloads are dropped at the edge instead of consuming sidecar
   memory and CPU. The cap exists to bound per-request memory while still
   admitting batched `StepEvent` arrays.
+- **Expect 400 on unusable request framing.** A POST whose `Content-Length`
+  is non-numeric or negative gets `{"error": "invalid Content-Length"}` with
+  400 and the connection is closed, because the body's extent is unknown and
+  a reused connection would misread the leftover bytes as the next request
+  (issue #129). An absent `Content-Length` is read as an empty body instead,
+  so it fails on the JSON parse like any other empty payload. Health
+  checkers and fuzzers that emit bad headers therefore get a clean status
+  line rather than a dropped connection and a server-side traceback.
 - **Remember nothing sensitive is retained.** Events carry hashes, timings,
   counts, and booleans, never prompt or response content. `GET /risks`
   retains the most recent 1000 `FailureRisk` records (ids, scores, trigger

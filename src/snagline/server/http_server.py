@@ -18,7 +18,10 @@ counting finished episodes without waiting for cap eviction.
 
 POST bodies are capped at ``max_body_bytes`` (default 1 MB); larger payloads
 get 413. This keeps the sidecar safe to expose and able to absorb buffered
-telemetry from any host.
+telemetry from any host. A missing ``Content-Length`` counts as an empty
+body; a malformed one (non-numeric or negative) gets 400 and the connection
+is closed, because the body's extent is unknown and a reused connection
+would misread the leftover bytes as the next request (issue #129).
 
 Optionally protect the endpoints with a shared secret by passing
 ``auth_token=`` to ``make_server``/``serve``. When set, requests must carry the
@@ -59,6 +62,7 @@ one-way telemetry, and callers should not block on detection results.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import math
@@ -96,6 +100,17 @@ _MAX_OVERCAP_DRAIN_EXCESS = 65_536
 # Drain reads happen in fixed chunks, so peak memory stays at one chunk no
 # matter what Content-Length claims.
 _DRAIN_CHUNK_BYTES = 16_384
+# A malformed Content-Length leaves the body's extent unknown, so the drain
+# above cannot be used to clear the socket before the 400 goes out (issue
+# #129). Instead the connection is drained under a hard total deadline: long
+# enough that a sender whose body is still in flight sees the status line
+# rather than an RST, short enough that a stalled sender cannot hold the
+# handler thread. A client waiting on the response never closes first, so this
+# is paid in full on every malformed request -- measured on loopback, a purely
+# non-blocking drain lost the 400 to a reset on 31 of 200 requests while any
+# nonzero deadline delivered all 200, hence a small one rather than none.
+# Bytes are bounded by the body cap as usual.
+_BAD_FRAMING_DRAIN_SECONDS = 0.05
 
 
 def _escape_label(value: str) -> str:
@@ -401,16 +416,24 @@ def make_handler(
             self._respond_text(200, body, PROMETHEUS_CONTENT_TYPE)
 
         def do_POST(self) -> None:  # noqa: N802 - http.server naming
+            length = self._content_length()
+            if length is None:
+                # Framing is unusable, so this has to be settled before auth
+                # or routing: every branch below reads or drains the body,
+                # and none of them can know where it ends. Answering 400 up
+                # front leaks nothing an unauthenticated caller could not
+                # already tell from the header it sent itself (issue #129).
+                self._reject_bad_content_length()
+                return
             if not self._authorized():
                 # Drain the declared body before replying: closing a
                 # connection that still has unread inbound data makes the
                 # kernel send RST and the sender can lose the 401 response
                 # entirely (same rationale as the over-cap drain, #121;
                 # observed over TLS where close timing shifts the race).
-                self._discard_overcap_body(int(self.headers.get("Content-Length") or 0))
+                self._discard_overcap_body(length)
                 self._respond(401, {"error": "unauthorized"})
                 return
-            length = int(self.headers.get("Content-Length") or 0)
             if length > self.snagline_max_body:
                 # Consume the over-cap body first: closing with megabytes
                 # unread makes the peer see EPIPE/reset instead of the 413
@@ -427,7 +450,7 @@ def make_handler(
             elif self.path == "/risks":
                 self._post_risks()
             else:
-                self._discard_overcap_body(int(self.headers.get("Content-Length") or 0))
+                self._discard_overcap_body(length)
                 self._respond(404, {"error": "not found"})
 
         def _post_risks(self) -> None:
@@ -581,6 +604,81 @@ def make_handler(
                 },
             )
 
+        def _content_length(self) -> int | None:
+            """Parse ``Content-Length``, or None when the value is unusable.
+
+            A missing or empty header means "no body" and yields 0, which is
+            the right reading for every endpoint here: they all treat an
+            absent body as an empty one and answer 400 on the failed JSON
+            parse that follows.
+
+            A header that is present but malformed -- ``abc``, ``0x10``, a
+            negative number -- has no such reading. Left to ``int()`` it
+            raised straight out of the handler into ``socketserver``, which
+            printed a traceback per request and dropped the connection, so
+            the client got an empty reply instead of a status line; negative
+            values reached ``rfile.read(-n)`` and failed there instead
+            (issue #129). Callers turn None into a 400 without touching the
+            body.
+            """
+            raw = self.headers.get("Content-Length")
+            if raw is None or not raw.strip():
+                return 0
+            try:
+                length = int(raw)
+            except ValueError:
+                return None
+            return length if length >= 0 else None
+
+        def _reject_bad_content_length(self) -> None:
+            """Answer 400 for unparseable framing and close the connection.
+
+            The body is never interpreted: its extent is unknown, so bytes
+            left in the socket would be misread as the next request line on
+            a reused connection. Closing is the only safe resynchronization,
+            and the drain below only exists so the peer actually receives the
+            400 before that close (see ``_drain_unknown_body``).
+            """
+            self.close_connection = True
+            self._respond(400, {"error": "invalid Content-Length"})
+            self._drain_unknown_body()
+
+        def _drain_unknown_body(self) -> None:
+            """Discard whatever the sender wrote, bounded in bytes and time.
+
+            Closing with unread inbound data makes the kernel answer with RST
+            and the 400 just written is discarded along with it, so the client
+            sees an empty reply -- the very symptom being fixed. #121 handles
+            this by draining the declared length, which is not available here,
+            so the read is bounded by ``_BAD_FRAMING_DRAIN_SECONDS`` of wall
+            clock instead. Reading the raw connection rather than ``rfile``
+            keeps this to the kernel buffer, which is what triggers the reset;
+            anything already buffered by the header parse is harmless.
+
+            Entirely best-effort: the response is on the wire before this
+            runs, so every failure mode just ends the drain.
+            """
+            connection = self.connection
+            previous_timeout = connection.gettimeout()
+            remaining = self.snagline_max_body + _MAX_OVERCAP_DRAIN_EXCESS
+            deadline = time.monotonic() + _BAD_FRAMING_DRAIN_SECONDS
+            try:
+                self.wfile.flush()
+                while remaining > 0:
+                    budget = deadline - time.monotonic()
+                    if budget <= 0:
+                        return
+                    connection.settimeout(budget)
+                    chunk = connection.recv(min(remaining, _DRAIN_CHUNK_BYTES))
+                    if not chunk:
+                        return  # peer hung up: nothing left to reset over
+                    remaining -= len(chunk)
+            except (OSError, ValueError):
+                logger.debug("snagline: bad-framing drain ended early", exc_info=True)
+            finally:
+                with contextlib.suppress(OSError):
+                    connection.settimeout(previous_timeout)
+
         def _discard_overcap_body(self, declared_length: int) -> None:
             """Read and throw away an over-cap body before replying 413.
 
@@ -609,7 +707,12 @@ def make_handler(
                 remaining -= len(chunk)
 
         def _read_body(self) -> bytes:
-            length = int(self.headers.get("Content-Length") or 0)
+            length = self._content_length()
+            if length is None:
+                # Unreachable through do_POST, which rejects bad framing
+                # before routing; belt-and-braces so a future caller cannot
+                # reintroduce the ValueError escape of issue #129.
+                return b""
             return self.rfile.read(length)
 
         def _respond(self, code: int, payload: dict) -> None:

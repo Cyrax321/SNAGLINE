@@ -162,6 +162,43 @@ def test_plaintext_probe_is_not_served_and_server_survives(tmp_path):
 
 
 @requires_openssl
+def test_malformed_content_length_gets_400_over_tls(tmp_path):
+    """The #129 400 path also works when ``self.connection`` is an SSLSocket.
+
+    Worth pinning separately: the bad-framing drain reads and re-times the
+    raw connection object, which is a wrapped socket on this listener, and
+    no client library will emit an invalid Content-Length for us.
+    """
+    server, _ = _start_tls_server(tmp_path)
+    host, port = server.server_address[0], server.server_address[1]
+    try:
+        raw = socket.create_connection((host, port), timeout=10)
+        client = _insecure_client_context().wrap_socket(raw)
+        try:
+            client.sendall(
+                b"POST /events HTTP/1.0\r\n"
+                b"Host: localhost\r\n"
+                b"Content-Length: abc\r\n"
+                b"\r\n"
+            )
+            client.sendall(b"x")  # unread body: the reset race the drain covers
+            chunks = []
+            while True:
+                data = client.recv(65536)
+                if not data:
+                    break
+                chunks.append(data)
+            reply = b"".join(chunks)
+        finally:
+            client.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert reply.startswith(b"HTTP/1.0 400"), reply[:120]
+    assert b"invalid Content-Length" in reply
+
+
+@requires_openssl
 def test_make_server_accepts_ready_ssl_context(tmp_path):
     certfile, keyfile = _generate_self_signed_cert(tmp_path)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
