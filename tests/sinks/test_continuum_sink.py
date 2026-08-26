@@ -93,6 +93,18 @@ def test_ledger_failure_is_swallowed_fail_open(
     assert any("flag_for_review failed" in rec.message for rec in caplog.records)
 
 
+def test_key_from_risk_failure_is_swallowed_fail_open(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def exploding_key(_risk: FailureRisk) -> str:
+        raise RuntimeError("mapping exploded")
+
+    sink, ledger = make_sink(FakeLedger(), key_from_risk=exploding_key)
+    with caplog.at_level(logging.WARNING, logger="snagline"):
+        sink.emit(make_risk())  # host-supplied mapping failure must not propagate
+    assert ledger.flagged == []
+
+
 def test_escalate_action_direct() -> None:
     sink, ledger = make_sink(FakeLedger())
     sink.escalate_action("k9", "human needed")
