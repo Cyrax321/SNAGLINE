@@ -101,3 +101,46 @@ jobs:
         run: |
           . .venv/bin/activate
           python -m pytest tests/ -q
+
+  benchmark-accuracy:
+    # False-positive gate (issue #148): replays the committed deterministic
+    # 76-episode corpus through benchmarks/detection_accuracy.py on every
+    # push/PR. The harness exits 1 when any healthy control fires, so its
+    # exit code is consumed directly as the gate -- a red job here means a
+    # detector regressed onto healthy traffic and must not merge. Stdlib-only
+    # (imports snagline + stdlib), runs in well under a second.
+    name: Accuracy gate (healthy-control false positives)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install (stdlib-only core, zero extras)
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Accuracy false-positive gate (table format)
+        run: |
+          . .venv/bin/activate
+          python benchmarks/detection_accuracy.py --fixtures benchmarks/fixtures --format table
+
+      - name: Accuracy report JSON (for audit, even when the gate is red)
+        if: always()
+        run: |
+          . .venv/bin/activate
+          python benchmarks/detection_accuracy.py --fixtures benchmarks/fixtures --format json > accuracy-report.json || true
+
+      - name: Upload accuracy report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: accuracy-report
+          path: accuracy-report.json
+          if-no-files-found: ignore
