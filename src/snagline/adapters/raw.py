@@ -46,9 +46,11 @@ def watch(
 
     ``step(action_type, tool_name=None, *, args="", latency_ms=None,
     error=False, error_type=None, tokens_in=None, tokens_out=None,
-    metadata=None, **extra)`` builds a ``StepEvent`` (with an auto-incrementing
-    ``step_id``), ingests it, and returns it. Any extra kwargs are folded into
-    ``metadata`` (which detectors never read).
+    metadata=None, side_effect=False, **extra)`` builds a ``StepEvent`` (with
+    an auto-incrementing ``step_id``), ingests it, and returns it. Any extra
+    kwargs are folded into ``metadata`` (which detectors never read).
+    ``side_effect=True`` marks the action as non-idempotent (issue #88); set
+    it deliberately from your own knowledge of the tool, never heuristically.
     """
     counter = itertools.count()
 
@@ -63,6 +65,7 @@ def watch(
         tokens_in: int | None = None,
         tokens_out: int | None = None,
         metadata: dict[str, Any] | None = None,
+        side_effect: bool = False,
         **extra: Any,
     ) -> StepEvent:
         sig = _build_signature(action_type, tool_name, args)
@@ -81,6 +84,7 @@ def watch(
             tokens_in=tokens_in,
             tokens_out=tokens_out,
             metadata=md,
+            side_effect=side_effect,
         )
         monitor.ingest(event)
         return event

@@ -68,12 +68,15 @@ def observe_openai_call(
     error_type: str | None = None,
     result: Any | None = None,
     step_id: str | None = None,
+    side_effect: bool = False,
 ) -> StepEvent:
     """Observe a single OpenAI call as a ``StepEvent`` and ingest it.
 
     ``messages``/``prompt`` are hashed into the signature, not stored.
     If ``result`` is given, tokens are extracted from ``result.usage``.
-    Returns the ingested event.
+    Returns the ingested event. ``side_effect=True`` marks the call as a
+    non-idempotent action (issue #88); set it only from your own knowledge
+    of what the call does, never heuristically.
     """
     sig_text = str(messages or prompt or "")
     # Include model + message shape hash; exclude volatile content already hashed.
@@ -94,6 +97,7 @@ def observe_openai_call(
         tokens_in=tokens_in,
         tokens_out=tokens_out,
         metadata={"adapter": "openai"},
+        side_effect=side_effect,
     )
     with contextlib.suppress(Exception):
         monitor.ingest(event)
