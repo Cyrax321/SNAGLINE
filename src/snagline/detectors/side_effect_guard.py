@@ -39,7 +39,7 @@ The trigger string is API: CONTINUUM's policy table maps
 
 from __future__ import annotations
 
-from typing import cast
+from typing import Any, cast
 
 from snagline.config import Config
 from snagline.events import StepEvent
@@ -102,3 +102,28 @@ class SideEffectGuardDetector:
     def reset(self, episode_id: str) -> None:
         """Drop every counted action for ``episode_id`` (Monitor.end_episode)."""
         self._counts.pop(episode_id, None)
+
+    def dump_state(self) -> dict[str, Any]:
+        """Serialize occurrence counters for ``Monitor.snapshot`` (#91/#149).
+
+        Plain nested dicts of ints by construction; only the inner
+        ``(tool_name, action_signature)`` tuple keys need encoding, which
+        become two-element JSON lists. Sorted so snapshots are deterministic.
+        """
+        return {
+            "counts": {
+                ep: [
+                    [list(key), count]
+                    for key, count in sorted(
+                        per_episode.items(), key=lambda kv: repr(kv[0])
+                    )
+                ]
+                for ep, per_episode in self._counts.items()
+            }
+        }
+
+    def load_state(self, state: dict[str, Any]) -> None:
+        self._counts = {
+            str(ep): {(key[0], key[1]): int(count) for key, count in raw_counts}
+            for ep, raw_counts in state.get("counts", {}).items()
+        }
