@@ -130,6 +130,11 @@ monitor = Monitor.default(config=config)
 
 With `ml_ensemble_enabled`, `Monitor.default()` wraps the base detectors in a single `MLOrchestrator` instead of exposing them individually, so there is no double counting. Both detectors are documented in [docs/DETECTOR_GUIDE.md](docs/DETECTOR_GUIDE.md).
 
+Baselines go stale as your agent evolves. For scheduled refits, use
+`snagline baseline retrain`: it fits from the newest JSONL window and bumps a
+versioned store atomically (cron/systemd examples and the goal_drift caveats
+in [docs/RETRAIN_CADENCE.md](docs/RETRAIN_CADENCE.md)).
+
 ## Features
 
 | Capability | What it gives you |
@@ -241,6 +246,26 @@ snagline replay tests/fixtures/trajectories/healthy_run.jsonl --summary
 # replayed 24 steps; 0 risk(s) emitted   -> no false positives
 ```
 
+### Detection Accuracy Harness
+
+`benchmarks/detection_accuracy.py` is the honesty gate for every detection-
+accuracy claim (issue #82). It replays the labeled fixture corpus under
+`benchmarks/fixtures/` (64 episodes: four labeled failures per shipped
+trigger plus 32 healthy controls, including near-threshold cases) through a
+default-configured `Monitor` with the opt-in long-horizon flags enabled, then
+reports per-trigger TP/FP/FN, precision, recall, F1, macro-F1, and a
+confusion summary. It exits nonzero if any healthy control fires, so CI can
+consume it as a false-positive gate:
+
+```bash
+python benchmarks/detection_accuracy.py --fixtures benchmarks/fixtures --format table
+```
+
+The corpus is generated deterministically by
+`benchmarks/fixtures/generate_fixtures.py` and committed as files. Published
+precision/recall numbers land in this section after review; none are claimed
+before then.
+
 ## Framework Integration
 
 SNAGLINE plugs into agent frameworks without becoming one. Six adapters ship in `src/snagline/adapters/`, all optional installs so the core stays zero-dependency:
@@ -305,6 +330,7 @@ Sinks consume `FailureRisk` and escalate it. Only `FailureRisk` fields are ever 
 |:--|:--|:--|:--|
 | **Console** (default) | `sinks/console.py` | (built-in) | Writes `FailureRisk` as a JSON line to stderr. Zero dependency. |
 | **Webhook** | `sinks/webhook.py` | (built-in) | POSTs `FailureRisk` JSON via stdlib `urllib.request`. Fire-and-forget with a short timeout (default 2s). Silently ignores a dead endpoint. |
+| **Logging** | `sinks/logging_sink.py` | (built-in) | Emits one compact JSON object per risk on the `snagline` logger for log aggregators (`Config.log_format`: `text` or `json`, env `SNAGLINE_LOG_FORMAT`). Fail-open with a plain-text fallback if serialization breaks. Zero dependency. |
 
 Custom sinks implement the `AlertSink` protocol:
 
@@ -429,7 +455,7 @@ Detectors reason only about **hashes, timings, counts, and booleans** -- never r
 - **FailureRisk** deliberately carries no `metadata` field. An alerting channel (webhook, Slack) cannot become an accidental data-exfiltration path.
 - **The `metadata` dict** on `StepEvent` is the one place raw content could leak if an adapter author puts it there. Detectors never read `metadata`, and sinks should not forward it by default.
 - **The webhook sink** transmits only `FailureRisk` fields (ids, score, trigger, detail, timestamp) -- never `StepEvent.content` or `StepEvent.metadata`.
-- **The HTTP sidecar** accepts arbitrary `StepEvent` JSON from any caller. For production use, front it with a reverse proxy that enforces authentication.
+- **The HTTP sidecar** serves plain HTTP and accepts arbitrary `StepEvent` JSON from any caller. For production use, front it with a reverse proxy that enforces authentication and terminates TLS; copy-paste nginx and Caddy configs are in [docs/ATTACH_ANY_SYSTEM.md](docs/ATTACH_ANY_SYSTEM.md#sidecar-tls-reverse-proxy-termination-issue-103). In-process TLS is the documented future option ([#103](https://github.com/Cyrax321/SNAGLINE/issues/103)).
 
 ## What SNAGLINE Is Not
 

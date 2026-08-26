@@ -25,6 +25,7 @@ content (project.md §1.4).
 from __future__ import annotations
 
 import math
+from typing import Any
 
 from snagline.config import Config
 from snagline.events import StepEvent
@@ -149,3 +150,45 @@ class LatencyAnomalyDetector:
     def reset(self, episode_id: str) -> None:
         for key in [k for k in self._states if k[0] == episode_id]:
             self._states.pop(key, None)
+
+    @staticmethod
+    def _state_to_dict(s: _WelfordCUSUM) -> dict[str, Any]:
+        return {
+            "n": s.n,
+            "mean": s.mean,
+            "m2": s._m2,
+            "cusum": s.cusum,
+            "mu0": s.mu0,
+            "sigma0": s.sigma0,
+            "frozen": s.frozen,
+        }
+
+    @classmethod
+    def _state_from_dict(cls, s: _WelfordCUSUM, raw: dict[str, Any]) -> None:
+        s.n = raw["n"]
+        s.mean = raw["mean"]
+        s._m2 = raw["m2"]
+        s.cusum = raw["cusum"]
+        s.mu0 = raw["mu0"]
+        s.sigma0 = raw["sigma0"]
+        s.frozen = raw["frozen"]
+
+    def dump_state(self) -> dict[str, Any]:
+        # Keys are (episode_id, tool_name) tuples; JSON dict keys must be
+        # strings, so serialize as [key-pair, state] entries.
+        return {
+            "states": [
+                [[ep, tool], self._state_to_dict(s)]
+                for (ep, tool), s in sorted(self._states.items())
+            ]
+        }
+
+    def load_state(self, state: dict[str, Any]) -> None:
+        self._states = {}
+        for key_pair, raw in state.get("states", []):
+            ep, tool = key_pair[0], key_pair[1]
+            s = _WelfordCUSUM(
+                self.k, self.h, self.sigma_floor_abs, self.sigma_floor_rel
+            )
+            self._state_from_dict(s, raw)
+            self._states[(ep, tool)] = s

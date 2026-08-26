@@ -85,8 +85,68 @@ class Config:
     ml_ensemble_enabled: bool = False
     ml_ensemble_score_threshold: float = 0.5  # emit a combined risk above this
 
+    # --- Stagnation detector (issue #87) --------------------------------------
+    # Opt-in novelty-rate tracker: flags an episode whose share of never-
+    # before-seen action signatures collapses, i.e. the agent is busy but
+    # discovering nothing. Distinct from the loop detector, which needs exact
+    # repeats: near-duplicate actions with slightly varied arguments produce
+    # fresh signatures and evade exact matching while still being stuck.
+    # Default off so the zero-dependency preset and the published bench
+    # numbers are untouched.
+    stagnation_enabled: bool = False
+    stagnation_window_size: int = 50  # steps per novelty window
+    stagnation_min_novelty: float = 0.05  # stale when fewer than this share new
+    stagnation_patience: int = 2  # consecutive stale windows before firing
+
+    # Token-runaway detector (issue #84, opt-in). Sustained-burn CUSUM over
+    # per-step token volume plus an optional hard per-episode budget envelope.
+    # Needs adapters that report tokens_in/tokens_out; disabled by default so
+    # the zero-configuration preset and its published bench numbers are
+    # unchanged until the accuracy gate (#82) has validated thresholds.
+    token_runaway_enabled: bool = False
+    token_cusum_k: float = 0.5  # slack parameter
+    token_cusum_h: float = 5.0  # alarm threshold
+    token_min_samples: int = 20  # warm-up before sustained-burn alarms
+    episode_token_budget: int | None = None  # total tokens; None disables envelope
+    token_budget_warn_fraction: float = 0.8  # single warning at this fraction
+
+    # Meltdown detector (issue #85, opt-in until the accuracy gate lands).
+    # Sliding-window Shannon entropy over tool-call identities; flags both the
+    # low-entropy rote-collapse shape and the high-entropy thrash shape
+    # documented as "meltdown" in arXiv:2603.29231. Thresholds are bits and
+    # were tuned against fixtures: uniform alternation over ~5 tools (~2.32
+    # bits) stays silent, collapse onto one tool (<0.4 bits) and churn across
+    # 12+ (~3.6 bits) fire.
+    meltdown_enabled: bool = False
+    meltdown_window_size: int = 20
+    meltdown_low_entropy: float = 0.4  # bits; below this the window is rote
+    meltdown_high_entropy: float = 2.8  # bits; above this the window thrashes
+    meltdown_rearm_steps: int = 10  # in-band steps before re-arming
+
+    # Silent-abort detector (issue #86, opt-in). Evaluated once at
+    # end_episode(): fires when an episode's final step was an error-free bare
+    # tool call instead of an output step -- the completion check from
+    # arXiv:2608.02464 that caught 7/7 organic failures-of-omission there.
+    silent_abort_enabled: bool = False
+
     # Global
     fail_open: bool = True
+
+    # --- Structured logging sink (issue #99) ---------------------------------
+    # Emission format for the logging sink (``sinks/logging_sink.py``):
+    # "text" keeps plain lines, "json" emits one compact JSON object per risk
+    # with exactly the keys ts, episode_id, step_id, trigger, severity, score,
+    # detail. Selectable via env ``SNAGLINE_LOG_FORMAT`` or a config-file
+    # ``log_format`` key; values other than "text"/"json" are undefined.
+    # Structure only: the emitted object never carries prompt/response content.
+    log_format: str = "text"
+
+    # --- Sidecar /metrics exposition (issue #98) -----------------------------
+    # Format served by GET /metrics on the sidecar: "prometheus" serves text
+    # exposition version 0.0.4 (the default), "classic" serves the legacy JSON
+    # counters body. Per-request override via ?format=classic or
+    # ?format=prometheus; environment override SNAGLINE_METRICS_FORMAT.
+    metrics_format: str = "prometheus"
 
     # --- 12-factor configuration (project.md §5.4, ATTACH_ANY_SYSTEM P0) -----
     @classmethod

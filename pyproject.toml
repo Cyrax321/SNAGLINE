@@ -67,6 +67,8 @@ ignore = ["E501"]
 [tool.ruff.lint.per-file-ignores]
 # Tests intentionally use loose typing and dummy implementations.
 "tests/*" = ["B", "C4", "SIM"]
+# ML-extra tests import snagline.ml after the conditional numpy skip (issue #80).
+"tests/test_ml_esn_ensemble.py" = ["E402"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -87,6 +89,7 @@ addopts = "--cov=snagline --cov-fail-under=80"
 
 [tool.coverage.run]
 source = ["src/snagline"]
+omit = ["src/snagline/ml/*"]  # optional ml extra: exercised by the dedicated ml CI leg
 branch = true
 
 [tool.coverage.report]

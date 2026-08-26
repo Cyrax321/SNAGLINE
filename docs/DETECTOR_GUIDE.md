@@ -61,18 +61,22 @@ monitor._detectors.append(MyDetector())   # or: Monitor(default_detectors + [min
 - `detectors/loop.py` - sliding-window repetition count on `action_signature`
 - `detectors/error_cascade.py` - consecutive and windowed error counts
 - `detectors/latency_anomaly.py` - Welford baseline + CUSUM deviation per tool
+- `detectors/stagnation.py` - all-time novelty set plus a sliding novelty share
 - `detectors/goal_drift.py` - compares a live run to a persisted `BaselineProfile`
 - `detectors/ml_ensemble.py` - `MLOrchestrator` combining base detector scores
+- `detectors/token_runaway.py` - token-volume CUSUM + per-episode budget envelope
+- `detectors/meltdown.py` - sliding-window entropy collapse/thrash detection
+- `detectors/silent_abort.py` - end-of-episode completion check via `finalize`
 
 Each has a matching test in `tests/detectors/` showing the synthetic-sequence
 pattern (injected failure fires; healthy sequence stays silent). Copy that
 test shape for your own detector.
 
-## Optional detectors: baseline, goal-drift, and ensemble
+## Optional detectors: baseline, goal-drift, ensemble, and horizon set
 
 `LoopDetector`, `ErrorCascadeDetector`, and `LatencyAnomalyDetector` ship in
-`Monitor.default()`. Two further detectors are opt-in behind config flags so the
-zero-dependency preset is unchanged.
+`Monitor.default()`. The detectors below are opt-in behind config flags so the
+zero-dependency preset (and its published bench numbers) are unchanged.
 
 ### `BaselineProfile` and the `baseline` command
 
@@ -99,4 +103,79 @@ into one stronger risk. The default combiner is a transparent noisy-OR
 detectors agree. Pass `model=callable(scores) -> float` (e.g. a fitted
 scikit-learn pipeline from the `ml` extra) to replace the combiner. Enable it
 with `Config(ml_ensemble_enabled=True)`; `Monitor.default()` then wraps the
-base detectors in one orchestrator so there is no double counting.
+base detectors in one orchestrator so there is no double counting. The
+orchestrator forwards `finalize`, `dump_state`, and `load_state` to its bases,
+so orchestrated completion checks and snapshots keep working.
+
+### `StagnationDetector` (issue #87)
+
+`StagnationDetector(config=cfg)` asks a question the loop detector cannot:
+not "is it repeating?" but "is it discovering anything?". It tracks the share
+of never-before-seen `action_signature` values in the last
+`stagnation_window_size` steps (default 50). When that novelty share stays
+below `stagnation_min_novelty` (default 0.05) for `stagnation_patience`
+(default 2) consecutive full-window observations, it emits exactly one risk
+(score 0.6, trigger `stagnation`). Novelty recovering resets the stale
+counter, so a later collapse fires again: one alert per stagnation period,
+never one per step.
+
+The two detectors are complementary by construction. Near-duplicate actions
+with slightly varied arguments produce fresh signatures each time and evade
+exact-match loop windows entirely; the all-time novelty set still collapses
+because the agent keeps drawing from the same small template space. The tests
+in `tests/detectors/test_stagnation.py` prove a sequence that trips
+stagnation while the loop detector stays silent.
+
+Memory, stated honestly: the per-episode `seen_all_time` set grows
+monotonically by design and only `reset(episode_id)` (called by
+`Monitor.end_episode()`) releases it. Signatures are full 64-character hex
+digests since issue #15; measured on CPython 3.14, retaining one costs about
+105 bytes plus roughly 70 bytes of amortized set overhead, so budget around
+175 bytes per unique action: a pathological all-unique 100k-step episode
+holds on the order of 17 MB. Typical episodes repeat heavily and cost far
+less. The sliding counter itself is bounded (`window_size` booleans per
+episode).
+
+Enable it with `Config(stagnation_enabled=True)`. It ships opt-in so the
+zero-dependency preset and the published bench numbers are untouched.
+
+## The horizon detectors (long-run set, issues #84/#85/#86)
+
+Three opt-in detectors aimed at multi-day episodes. All are stdlib-only and
+O(1) amortized per step.
+
+### `TokenRunawayDetector` (`token_runaway_enabled=True`)
+
+Sustained-burn CUSUM over per-step token volume (`tokens_in + tokens_out`),
+plus an optional hard envelope: one warning at
+`token_budget_warn_fraction` (default 80%) of `episode_token_budget` and a
+single critical `budget_breach` risk at 100%. Trigger names (`token_runaway`,
+`budget_breach`) are API: downstream policy layers map them by string.
+
+### `MeltdownDetector` (`meltdown_enabled=True`)
+
+Sliding-window Shannon entropy over tool-call identities, flagging both
+collapse shapes documented for long-horizon agents (arXiv:2603.29231):
+rote collapse below `meltdown_low_entropy` bits and churn above
+`meltdown_high_entropy` bits. Thresholds were tuned against fixtures so
+healthy five-tool alternation (~2.32 bits) stays silent.
+
+### `SilentAbortDetector` (`silent_abort_enabled=True`)
+
+The completion check from arXiv:2608.02464: evaluated once at
+`Monitor.end_episode()`, it fires when an episode's last step was an
+error-free bare tool call instead of an output step. To judge at episode end,
+a detector implements the duck-typed `finalize(episode_id)` method
+(`detectors.base.EpisodeFinalizer`); `end_episode` discovers it by attribute,
+so ordinary detectors are unaffected and fail-open applies as always.
+
+## Restart-survivable state: snapshot/restore (issue #91)
+
+Detectors that implement the duck-typed `dump_state()` / `load_state(state)`
+pair (`detectors.base.StatefulDetector`; JSON-compatible data only, never
+pickle) participate in `Monitor.snapshot(path)` / `Monitor.restore(path)`.
+Snapshots are written atomically (tmp + `os.replace`). Restore is a
+setup-time operation: a version or strict-composition mismatch raises rather
+than failing open -- a monitor that silently starts blank is exactly the quiet
+misbehavior this exists to prevent. All shipped detectors implement it, and
+`DedupSink` persists cooldowns when used with its default key function.
