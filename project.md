@@ -526,7 +526,53 @@ All three horizon detectors are stdlib-only, O(1) amortized per step,
 implement `StatefulDetector`, and leave the zero-dependency preset (and
 its published bench numbers) unchanged.
 
-### 5.7 Config (`config.py`)
+### 5.7 Horizon-scale time axis (`monitor.py` + `detectors/windowing.py`, issue #92)
+
+Fixed step-count assumptions break on multi-day episodes where step rates
+vary by orders of magnitude between phases (an hour of tool grinding vs a
+long LLM call). The time axis adds wall-clock budgets, idle detection,
+window auto-scaling, and external liveness so silence itself becomes
+detectable. All of it is opt-in; with the options unset, behavior is
+byte-identical to the pre-#92 build (fingerprint-tested against every
+fixture trajectory).
+
+**Region contract.** Inter-event deltas are computed from
+`StepEvent.timestamp` at the TOP of `Monitor.ingest()` only, under the
+per-episode lock. Zero wall-clock reads in the hot path, so replay stays
+deterministic by construction. The sinks/policy tail of `ingest()` is
+owned by another feature area and is untouched.
+
+* **Wall-clock budget** (`max_episode_wall_seconds`, deterministic breach
+  risk at the limit): one warning risk at `warn_fraction` (default 0.8) of
+  the budget, scored 0.7 (severity "warning"), and a single critical breach
+  at 100%, scored 1.0. Trigger name for both: `wall_clock_budget`. Each
+  fires at most once per episode; a single delta that jumps straight past
+  the limit fires only the breach (mirrors the token-runaway envelope).
+* **Idle detection** (`idle_warn_seconds`): a gap of at least that many
+  seconds between consecutive ingests fires one `idle_gap` risk (score 0.8)
+  per episode. This is the in-band half of hang detection: a wedged host
+  stops ingesting, so the *absence* of deltas is the signal.
+* **Window auto-scaling** (`window_scale_steps > 0`, cap `max_window`):
+  window-based detectors (loop, cascade, meltdown, stagnation) grow their
+  effective window as `base * ceil(episode_len / window_scale_steps)`,
+  capped, refitted lazily keeping the most recent items. Below one scale
+  step, scaling on and off are exactly equivalent (property-tested).
+* **CUSUM baseline re-fit** (`cusum_refit_every > 0`): every N post-warm-up
+  samples the latency detector starts a parallel Welford learner while the
+  frozen baseline keeps scoring (coverage never pauses). When the learner
+  completes, a shift beyond the same `h * sigma` alarm bar surfaces as one
+  `latency_anomaly` risk, then the candidate is adopted and the CUSUM
+  restarts from zero. Drift in the baseline itself becomes visible.
+* **HeartbeatSink** (`sinks/heartbeat.py`; CLI `snagline watch --follow
+  --heartbeat PATH`): touches a liveness file's mtime on every ingest and
+  every idle follow-poll. ~five lines of stdlib; missing directory handled
+  fail-open; no content is ever written. In-band detectors can never see a
+  hung host: no events means no `observe()` calls. Only a clock or an
+  external watcher closes that hole; the watcher owns the alerting decision,
+  snagline just leaves evidence of life. Pairs with CONTINUUM#302's
+  run-level silence watchdog for non-CONTINUUM deployments.
+
+### 5.8 Config (`config.py`)
 
 ```python
 @dataclass
@@ -549,6 +595,13 @@ class Config:
     meltdown_low_entropy: float = 0.4
     meltdown_high_entropy: float = 2.8
     silent_abort_enabled: bool = False
+    # horizon-scale time axis (issue #92; all opt-in, defaults off)
+    max_episode_wall_seconds: float | None = None
+    warn_fraction: float = 0.8
+    idle_warn_seconds: float | None = None
+    window_scale_steps: int = 0
+    max_window: int = 512
+    cusum_refit_every: int = 0
 ```
 
 All thresholds tunable at `Monitor` construction; ship sensible defaults so
