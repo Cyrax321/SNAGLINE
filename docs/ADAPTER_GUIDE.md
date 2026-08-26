@@ -52,6 +52,46 @@ sees. Two steps with the same signature count as "the same attempt."
 Never put raw prompt/response content into `metadata` unless you have a reason
 and a reviewed sink; detectors never read it, but a custom sink could forward
 it. Everything detection needs fits in the hash + timings + booleans.
+(The one documented exception is the compaction tripwire below, which reads
+exactly two metadata keys.)
+
+## Optional: compaction tripwire events (issue #90)
+
+If your harness exposes compaction hooks (LangGraph pre-compaction callbacks,
+Claude Code auto-compact hooks, your own summarization step), you can opt into
+`CompactionTripwireDetector` by emitting two extra action types:
+
+```python
+import hashlib
+
+# when the harness compacts context: pin the constraints that MUST survive
+step("compaction", tool_name=None, metadata={"pinned": [
+    hashlib.sha256(c.encode()).hexdigest() for c in constraints
+]})
+
+# whenever introspection shows a constraint still present in live context
+step("constraint_present", tool_name=None, metadata={"pin":
+    hashlib.sha256(constraint.encode()).hexdigest()
+})
+```
+
+Rules:
+
+- **Hash the constraint text yourself** (SHA-256). Constraint text never
+  reaches snagline; send only hex digests. Emitted risks carry 16-hex
+  prefixes only.
+- **Metadata exception:** `pinned` and `pin` are the one documented pair of
+  metadata keys any detector reads. Nothing else on the event is touched.
+- **Re-confirm within the grace window:** every pinned hash needs a
+  `constraint_present` event within `compaction_tripwire_grace_steps`
+  (default 3) events of the compaction, or exactly one `score=0.9`
+  `governance_decay` risk fires.
+
+Be honest about coverage: if your host offers no compaction hook, or gives no
+way to observe whether a constraint survived, do not emit these events. The
+detector then stays permanently silent (inert by design); it never pretends
+to protect constraints it cannot see. Enable it with
+`Config(compaction_tripwire_enabled=True)`; default off everywhere.
 
 ## Reference adapters
 

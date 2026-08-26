@@ -193,3 +193,26 @@ Each line must be a canonical StepEvent JSON object (see
 - Latency anomalies: only when Pre/Post pairs are both forwarded (the
   sidecar pairs them by `tool_use_id`); the file/command bridge without
   pairing still detects loops and cascades.
+
+## Compaction hooks (governance-decay tripwire, issue #90)
+
+Where a framework exposes a pre-compaction callback, a bridge can feed the
+opt-in `CompactionTripwireDetector`:
+
+- LangGraph: pre-compaction / summarization node callbacks are the natural
+  point to emit `step("compaction", metadata={"pinned": [...]})` with the
+  SHA-256 hashes of constraints that must survive the compaction.
+- Claude Code: an auto-compact hook can POST the same event through the
+  sidecar or append it to the file bridge.
+- Any host with a summarizer: wrap the summarization call itself; the pins
+  are hashes you compute locally, so constraint text never leaves the host.
+
+Presence markers (`constraint_present`) depend entirely on what introspection
+the host allows. If you can re-read the live context, re-emit each surviving
+pin's hash when it is observed verbatim. If you cannot observe presence, say
+so in your integration notes rather than emitting fake confirmations.
+
+No visibility, no detection: frameworks with neither a compaction hook nor
+context introspection leave this detector permanently silent. That is
+inert-by-design, not a gap we paper over; DETECTOR_GUIDE and ADAPTER_GUIDE
+state the same limit.
