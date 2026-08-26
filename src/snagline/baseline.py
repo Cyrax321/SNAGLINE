@@ -105,10 +105,24 @@ class ToolBaseline:
 
 @dataclass
 class BaselineProfile:
-    """Aggregated healthy-run profile across all tools."""
+    """Aggregated healthy-run profile across all tools.
+
+    The embedding fields are optional and only written by the semantic
+    goal-drift fitter (``snagline.drift``, the ``drift`` extra, issue #81).
+    They carry an averaged unit-independent reference vector over healthy
+    steps, never any text: profiles stay content-free on disk. Legacy JSON
+    without these keys loads unchanged, and profiles fitted structurally
+    serialize exactly as before (byte-identical zero-dep preset).
+    """
 
     tools: dict[str, ToolBaseline] = field(default_factory=dict)
     total_steps: int = 0
+    # Semantic reference (optional, drift extra): mean of per-step embeddings
+    # over the healthy trajectory, how many steps contributed, and which
+    # model produced them (provenance only; never logged with content).
+    embedding_centroid: list[float] | None = None
+    embedding_count: int = 0
+    embedding_model: str | None = None
 
     def add_event(self, event: StepEvent) -> None:
         self.total_steps += 1
@@ -121,17 +135,29 @@ class BaselineProfile:
             tb.add(event.latency_ms, event.error)
 
     def to_dict(self) -> dict:
-        return {
+        data: dict = {
             "version": 1,
             "total_steps": self.total_steps,
             "tools": {name: tb.to_dict() for name, tb in sorted(self.tools.items())},
         }
+        # Emit semantic keys only when actually fitted so legacy structural
+        # profiles keep their exact historical byte layout.
+        if self.embedding_centroid is not None:
+            data["embedding_model"] = self.embedding_model
+            data["embedding_centroid"] = list(self.embedding_centroid)
+            data["embedding_count"] = self.embedding_count
+        return data
 
     @classmethod
     def from_dict(cls, data: dict) -> BaselineProfile:
         profile = cls(total_steps=data.get("total_steps", 0))
         for name, tb in data.get("tools", {}).items():
             profile.tools[name] = ToolBaseline.from_dict(tb)
+        centroid = data.get("embedding_centroid")
+        if centroid is not None:
+            profile.embedding_centroid = [float(v) for v in centroid]
+            profile.embedding_count = int(data.get("embedding_count", 0))
+            profile.embedding_model = data.get("embedding_model")
         return profile
 
 
