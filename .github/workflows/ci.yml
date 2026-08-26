@@ -17,10 +17,11 @@ jobs:
         include:
           # Windows legs (issue #116): the two newest interpreters only, so
           # Windows-only regressions surface in CI without an 8-way matrix.
-          # Lint, type-check, and the coverage gate stay Linux-only (steps
-          # below): they are OS-independent checks, and branch coverage of
-          # POSIX-gated code paths would let one runner spuriously fail a
-          # shared --cov-fail-under threshold.
+          # Coverage policy: each job checks its own threshold independently;
+          # the Linux legs enforce the single canonical 80% gate from
+          # pyproject.toml while the Windows legs run report-only
+          # (--cov-fail-under=0 below), so per-OS numbers stay visible
+          # without becoming extra gates that must be moved in lockstep.
           - os: windows-latest
             python-version: "3.12"
           - os: windows-latest
