@@ -103,12 +103,13 @@ The full architecture reference is in [docs/ADAPTER_GUIDE.md](docs/ADAPTER_GUIDE
 | **Semantic goal-drift detector** (opt-in, `snagline[drift]`) | The agent's activity mix drifting from its healthy goal | Embeds structural labels (`action_type`, `tool_name`, `error_type`; never content) with `sentence-transformers` and watches the live episode's running centroid against the persisted `BaselineProfile` embedding centroid; sustained cosine deviation through a CUSUM gate emits `goal_drift`. Import is lazy; missing model or inference failures leave it inert (fail-open). | O(embedding dim) per step, bounded state |
 | **ML ensemble** (opt-in) | A stronger, combined signal | Wraps the base detectors and combines their scores with a transparent noisy-OR. A real model can be injected via `MLOrchestrator(model=...)` (the `ml` extra provides scikit-learn). | O(1) amortized |
 | **Horizon-scale time axis** (opt-in) | Budget exhaustion and silence on multi-day episodes | Wall-clock budget derived from event timestamps: one warning at `warn_fraction` of `max_episode_wall_seconds`, one critical breach at the limit (`wall_clock_budget`). Idle detection fires `idle_gap` when consecutive ingests drift more than `idle_warn_seconds` apart. Every quantity comes from `StepEvent.timestamp`, never the wall clock, so replay stays deterministic. | O(1) per step |
+| **Stagnation detector** (opt-in) | Busy-but-discovering-nothing episodes | Tracks the share of never-before-seen action signatures in a sliding window; when novelty collapses below a floor for several consecutive windows it fires once. Complements the loop detector, which requires exact repeats: near-duplicate argument-varying actions evade exact matching but still exhaust the agent's template space. | O(1) amortized |
 
 Detection is deterministic and `O(1)` amortized per step. It runs with no network calls and no LLM calls. The CUSUM detector uses only the Python standard library (`statistics` module) -- no numpy required.
 
 ### Baseline and advanced detection
 
-The `goal_drift`, `ml_ensemble`, and semantic goal-drift (`drift`) detectors are opt-in (default off) so the zero-dependency preset is unchanged. They unlock once you capture a healthy run:
+The `goal_drift`, `ml_ensemble`, `stagnation`, and semantic goal-drift (`drift`) detectors are opt-in (default off) so the zero-dependency preset is unchanged. Stagnation needs no baseline at all: enable it with `Config(stagnation_enabled=True)` and tune it with `stagnation_window_size=50` (steps per window), `stagnation_min_novelty=0.05` (stale when fewer than this share of the window is new), and `stagnation_patience=2` (consecutive stale windows before firing). The baseline-based detectors unlock once you capture a healthy run:
 
 ```bash
 # 1. Capture a known-good trajectory (one JSON StepEvent per line)...
@@ -126,6 +127,7 @@ config = Config(
     goal_drift_enabled=True,
     goal_drift_baseline=baseline,
     ml_ensemble_enabled=True,   # combine all base detectors into one signal
+    stagnation_enabled=True,    # novelty-collapse detection, no baseline needed
 )
 monitor = Monitor.default(config=config)
 ```
