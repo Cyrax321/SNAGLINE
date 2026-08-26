@@ -102,14 +102,51 @@ to protect constraints it cannot see. Enable it with
 | `adapters/langgraph_adapter.py` | LangGraph `graph.stream()` | pass-through iterator wrapper |
 | `adapters/autogen.py` | Autogen `agent.run_stream(task)` | `SnaglineAutogenHandler` observer + `run_and_monitor` wrapper |
 | `adapters/crewai.py` | CrewAI `Agent(step_callback=...)` | `snagline_step_callback` returning the hook callable |
+| `adapters/continuum_adapter.py` | CONTINUUM `Storage` event log | `ContinuumAdapter` poll/push translating ledger entries |
 | `server/http_server.py` | any non-Python runtime | stdlib HTTP sidecar, `POST /events` |
 
 Both the Autogen and CrewAI adapters are duck-typed: they read event objects via
 `model_dump()` with attribute/dict fallbacks, so they import without the
-framework installed and never hard-couple to a specific release. Adapters for
-raw OpenAI/Anthropic SDKs and CONTINUUM remain planned (project.md §13 step 10 /
-§6) - the raw adapter is usually a fine stand-in for any of them, since they all
-bottom out in a tool-calling loop.
+framework installed and never hard-couple to a specific release. The CONTINUUM
+adapter (`pip install snagline-agent[continuum]`, issue #79) is duck-typed the
+same way: it calls only the verified public read pair
+(`read_events(run_id, *, after_sequence=0, upto=None)` + `last_sequence(run_id)`)
+and never imports `continuum`. It maps `PERCEPTION_OBSERVED` to an observation,
+`BRANCH_RESOLVED` to a plan step, and the action-ledger lifecycle
+(`ACTION_RECORDED` started/completed/failed, plus reconcile/compensate) to tool
+calls with paired latency. `raw_claim` text is dropped at translation time;
+only hashes, ids, statuses and counts cross over.
+
+## CONTINUUM sink (closing the loop)
+
+`sinks/continuum_sink.py` escalates a detected risk back into CONTINUUM via its
+existing request-human path: `ActionLedger.flag_for_review(key, reason)`, which
+sets the action's status to `REQUIRES_REVIEW` and appends an auditable ledger
+event (CONTINUUM's recovery planner then routes it to a person).
+
+```python
+from snagline.sinks.continuum_sink import ContinuumSink
+
+sink = ContinuumSink(
+    storage,                      # a CONTINUUM Storage handle
+    run_id,
+    key_from_risk=lambda risk: my_action_keys.get(risk.step_id),
+)
+monitor.add_sink(sink)
+```
+
+Honest limits, verified against current CONTINUUM source:
+
+- Run-level `request_human` is a *derived* recovery mode there; the only
+  writable escalation API is the action-level `flag_for_review`. A risk with no
+  resolvable action key is therefore logged and dropped, not fabricated onto
+  the ledger.
+- `key_from_risk` must return the resolved idempotency key or `action_id`; a
+  bare action name is refused by the real ledger with `LedgerError`.
+- Exercised against real CONTINUUM code only in the skip-guarded test
+  `tests/sinks/test_continuum_sink.py::test_real_actionledger_flags_review`
+  (claim -> flag_for_review -> REQUIRES_REVIEW); no live CONTINUUM instance was
+  used for end-to-end polling.
 
 ## Testing your adapter
 

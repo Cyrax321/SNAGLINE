@@ -619,17 +619,25 @@ calls (not monkeypatching) for people using a raw SDK without any
 orchestration framework at all — this is the "raw loop" case's most common
 concrete form.
 
-### 6.6 `continuum_adapter.py`
+### 6.6 `continuum_adapter.py` -- BUILT (issue #79)
 
-Reads CONTINUUM's `Storage` by sequence (its existing public API) and
-translates ledger entries — including the `PERCEPTION_OBSERVED`,
-`BRANCH_RESOLVED`, and action-ledger claim/perform/complete events from the
-security-extension work already done — into `StepEvent`s. This is the
-"free telemetry" case: zero new instrumentation on the CONTINUUM side,
-just a consumer of the existing hash-chained ledger. **Verify the exact
-`Storage` read-by-sequence method signature against the current CONTINUUM
-source before implementing** — don't assume the API shape described here
-is exact; confirm against the real repo.
+Reads CONTINUUM's `Storage` by sequence and translates ledger entries,
+including the `PERCEPTION_OBSERVED`, `BRANCH_RESOLVED`, and action-ledger
+claim/perform/complete events from the security-extension work already done,
+into `StepEvent`s. This is the "free telemetry" case: zero new instrumentation
+on the CONTINUUM side, just a consumer of the existing hash-chained ledger.
+
+Verified against current CONTINUUM source: there is no `read_by_sequence`
+method; the public read-by-sequence surface is
+`read_events(run_id, *, after_sequence=0, upto=None)` plus
+`last_sequence(run_id)`, which is what the adapter codes against. Poll mode
+advances `after_sequence`; push mode accepts live-tailed entries. The sink
+(`sinks/continuum_sink.py`) escalates risks via
+`ActionLedger.flag_for_review(key, reason)` -> `ActionStatus.REQUIRES_REVIEW`;
+run-level `request_human` remains a derived recovery mode with no public
+append API, so risks without a resolvable action key are dropped, not
+fabricated. Ships behind the optional `[continuum]` extra (`continuum-agent`);
+both modules are duck-typed and never import `continuum`.
 
 ### 6.7 `claude_code_adapter.py`
 
@@ -815,8 +823,7 @@ project easily").
   (`snagline/auto/openai.py`, `anthropic.py`, plus explicit wrappers per
   §6.5). The horizon detector set (§5.4–5.6) and restart-survivable
   snapshots (§4.6) are **done** on the `feat/horizon-detectors` branch.
-  Still pending: `continuum_adapter.py`/`continuum_sink.py` and the
-  `drift` extra.
+  Still pending: the `drift` extra.
 
 ---
 
@@ -896,6 +903,24 @@ when the optional langchain extra is absent).
   `ml_ensemble` shipped detector is the deterministic stand-in.
 - `drift` extra semantic goal-drift (`drift/goal_drift.py`,
   sentence-transformers).
-- `continuum_adapter.py`/`continuum_sink.py`, `openai_adapter.py`,
-  `anthropic_adapter.py`.
 - `benchmarks/detection_accuracy.py` (paper-number honesty gate in §14).
+
+### CONTINUUM bridge (issue #79)
+
+- **CONTINUUM adapter** (`adapters/continuum_adapter.py`): poll-by-sequence and
+  push modes translating `PERCEPTION_OBSERVED`, `BRANCH_RESOLVED`, and the
+  action-ledger lifecycle into `StepEvent`s; latency paired claim-to-terminal;
+  `raw_claim` and other payload text dropped at translation. Coded against the
+  verified real API (`read_events(run_id, *, after_sequence, upto)` /
+  `last_sequence(run_id)`), not the spec's guessed name. Duck-typed; imports
+  without CONTINUUM present.
+- **CONTINUUM sink** (`sinks/continuum_sink.py`): escalates a `FailureRisk` by
+  calling `ActionLedger.flag_for_review` so the action lands as
+  `REQUIRES_REVIEW`; requires a resolvable action key (`key_from_risk`) and
+  drops unmapped risks rather than inventing ledger facts. Fail-open.
+- **Extra**: `snagline-agent[continuum]` names the real `continuum-agent`
+  distribution; core stays zero-dependency either way.
+- **Verification honesty**: unit tests use a fake storage implementing only
+  the verified surface; one skip-guarded test drives the real
+  `ActionLedger.claim` -> `flag_for_review` path where CONTINUUM is importable.
+  No end-to-end run against a live CONTINUUM instance has been performed.
