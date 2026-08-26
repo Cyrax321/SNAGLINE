@@ -14,7 +14,7 @@
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.10+" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License" /></a>
   <a href="https://github.com/Cyrax321/SNAGLINE/issues"><img src="https://img.shields.io/github/issues/Cyrax321/SNAGLINE?style=flat-square" alt="Issues" /></a>
-  <a href="https://github.com/Cyrax321/SNAGLINE/actions"><img src="https://img.shields.io/badge/tests-78%20passed-brightgreen?style=flat-square" alt="Tests" /></a>
+  <a href="https://github.com/Cyrax321/SNAGLINE/actions"><img src="https://img.shields.io/badge/tests-385%20passed-brightgreen?style=flat-square" alt="Tests" /></a>
 </p>
 
 ---
@@ -207,7 +207,8 @@ SNAGLINE is verified not just with unit tests, but against real LLM agents, live
 ### Automated Test Suite and Benchmarks
 
 ```
-tests : 78 passed, 0 failed  (pytest, Python 3.13.5, 2026-08-15)
+tests : 385 passed, 1 skipped  (pytest, Python 3.13, 2026-08-26;
+skip = langchain integration test without the optional extra installed)
 bench : median 1.91 us/step, p99 33.90 us/step over 200,000 synthetic steps
         (measured 2026-08-15 on Apple M1, arm64, CPython 3.13.5)
 ```
@@ -528,7 +529,7 @@ SNAGLINE sits at the overlap of real-time monitoring, anomaly detection, and rel
 
 ## Status and Limitations
 
-- **Tested**: 169 tests passing, 1 skipped (see [Verification Status](#empirical-verification)).
+- **Tested**: 385 tests passing, 1 skipped (see [Verification Status](#empirical-verification)).
 - **Not on PyPI.** Install from a clone (see Quick Start).
 - **Overhead is measured, not asserted.** Run `snagline bench` to reproduce on your hardware.
 - **Framework adapters are optional extras; sinks ship in core.** The LangChain, LangGraph, Autogen, and CrewAI adapters are optional installs (`pip install snagline-agent[langchain]`, etc.). The console, webhook, Slack, PagerDuty, and dedup sinks are zero-dependency stdlib and always available.
@@ -538,8 +539,6 @@ SNAGLINE sits at the overlap of real-time monitoring, anomaly detection, and rel
 - **Alert spam under sustained anomalies.** The loop and error-cascade detectors emit a risk on every step while the triggering condition holds. Wrap a sink in `DedupSink` to suppress repeats within a cooldown window ([#4](https://github.com/Cyrax321/SNAGLINE/issues/4)).
 - **Slack delivery is fire-and-forget.** `SlackSink` posts to an incoming webhook with a short timeout; it never raises and never blocks `ingest()` for long.
 - **PagerDuty pages on-call.** `PagerDutySink` triggers a PagerDuty Events API v2 incident per qualifying `FailureRisk`, with an optional `min_severity` filter. Fire-and-forget and fail-open.
-- **WebhookSink blocks `ingest()` under the lock.** A slow webhook endpoint blocks concurrent `ingest()` calls for up to the timeout duration. Fix planned (tracked as [#8](https://github.com/Cyrax321/SNAGLINE/issues/8)).
-- **LangChain error events lack latency.** `on_tool_error`, `on_llm_error`, and `on_chain_error` omit `latency_ms` even though the start time is available. Fix planned (tracked as [#17](https://github.com/Cyrax321/SNAGLINE/issues/17)).
 
 For a full account of what is verified, believed, and neither, see the [issue tracker](https://github.com/Cyrax321/SNAGLINE/issues).
 
