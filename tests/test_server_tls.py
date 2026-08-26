@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import socket
 import ssl
 import subprocess
 import threading
@@ -104,11 +105,58 @@ def _request_tls(method: str, base: str, path: str, **kw):
 def test_tls_handshake_serves_health_over_https(tmp_path):
     server, base = _start_tls_server(tmp_path)
     try:
-        assert isinstance(server.socket, ssl.SSLSocket)
+        # Listener stays raw; wrapping happens per connection in the worker
+        # thread so one stalled handshake cannot block other senders.
+        assert not isinstance(server.socket, ssl.SSLSocket)
+        assert isinstance(server.snagline_ssl_context, ssl.SSLContext)
         status, body = _request_tls("GET", base, "/health")
         assert status == 200
         assert body == {"status": "ok"}
     finally:
+        server.shutdown()
+        server.server_close()
+
+
+@requires_openssl
+def test_stalled_handshake_does_not_block_other_connections(tmp_path):
+    # One client opens a TCP connection and never advances the TLS handshake;
+    # a second client must still be served because the handshake runs on the
+    # stalled connection's own worker thread, not on the accept loop.
+    server, base = _start_tls_server(tmp_path)
+    host, port = server.server_address[0], server.server_address[1]
+    stalled = socket.create_connection((host, port), timeout=5)
+    try:
+        status, body = _request_tls("GET", base, "/health")
+        assert status == 200
+        assert body == {"status": "ok"}
+    finally:
+        stalled.close()
+        server.shutdown()
+        server.server_close()
+
+
+@requires_openssl
+def test_plaintext_probe_is_not_served_and_server_survives(tmp_path):
+    # Both sides: plaintext bytes to the TLS listener must never get an HTTP
+    # answer, and the sidecar must keep serving proper TLS clients after.
+    server, base = _start_tls_server(tmp_path)
+    host, port = server.server_address[0], server.server_address[1]
+    probe = socket.create_connection((host, port), timeout=5)
+    try:
+        probe.sendall(b"GET /health HTTP/1.0\r\n\r\n")
+        probe.settimeout(5)
+        reply = b""
+        try:
+            reply = probe.recv(1024)  # alert bytes or abrupt close: both fine
+        except (ssl.SSLError, OSError):
+            pass
+        assert b"HTTP/1." not in reply  # no plaintext service on the TLS port
+        probe.close()
+        status, body = _request_tls("GET", base, "/health")
+        assert status == 200
+        assert body == {"status": "ok"}
+    finally:
+        probe.close()
         server.shutdown()
         server.server_close()
 
@@ -128,7 +176,8 @@ def test_make_server_accepts_ready_ssl_context(tmp_path):
     # tears the server down cleanly instead of deadlocking on shutdown().
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        assert isinstance(server.socket, ssl.SSLSocket)
+        assert not isinstance(server.socket, ssl.SSLSocket)
+        assert isinstance(context, ssl.SSLContext)
         base = f"https://127.0.0.1:{server.server_address[1]}"
         status, body = _request_tls("GET", base, "/health")
         assert status == 200
@@ -199,6 +248,7 @@ def test_keyfile_without_certfile_is_rejected_before_binding():
         make_server(Monitor.default(), host="127.0.0.1", port=0, keyfile="/x/k.pem")
 
 
+@requires_openssl
 def test_ssl_context_and_certfile_together_are_rejected(tmp_path):
     certfile, keyfile = _generate_self_signed_cert(tmp_path)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -254,3 +304,15 @@ def test_cli_serve_without_tls_flags_passes_none(monkeypatch):
     assert main(["serve", "--port", "0"]) == 0
     assert "certfile" not in captured
     assert "keyfile" not in captured
+
+
+def test_cli_serve_rejects_bare_keyfile_before_starting(monkeypatch):
+    # A bare --keyfile must fail fast with a clean refusal (exit 2), never
+    # print the https banner and then die inside serve().
+    from snagline.cli import main
+
+    def _fake_serve(monitor, **kwargs):
+        raise AssertionError("serve() must not be called for a bad TLS config")
+
+    monkeypatch.setattr("snagline.server.http_server.serve", _fake_serve)
+    assert main(["serve", "--port", "0", "--keyfile", "/t/k.pem"]) == 2

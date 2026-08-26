@@ -20,10 +20,11 @@ missing or wrong tokens get 401. ``GET /health`` stays open for liveness
 probes -- everything else, GET and POST alike, is behind the token.
 
 The listener can terminate TLS itself (issue #120): pass ``certfile=`` and
-``keyfile=`` (or a ready-made ``ssl_context=``) and the listening socket is
-wrapped with stdlib ``ssl``, so the sidecar speaks ``https://`` on the same
-endpoints with identical auth semantics. Without these arguments the listener
-stays plain HTTP, byte-for-byte the behavior described above.
+``keyfile=`` (or a ready-made ``ssl_context=``) and each accepted connection
+is wrapped with stdlib ``ssl`` inside its own worker thread, so the sidecar
+speaks ``https://`` on the same endpoints with identical auth semantics, and
+one stalled handshake never blocks other senders. Without these arguments
+the listener stays plain HTTP, byte-for-byte the behavior described above.
 
 ``POST /risks`` retains the most recent ``max_risks`` risks (default 1000) for
 ``GET /risks``; older ones are discarded so an unbounded sender cannot grow the
@@ -597,6 +598,49 @@ def _resolve_ssl_context(
     return context
 
 
+class _TLSThreadingHTTPServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer that terminates TLS inside the worker thread.
+
+    The listening socket stays a plain socket; each accepted connection is
+    wrapped (and its TLS handshake driven) in ``finish_request``, which
+    ThreadingMixIn already runs on the per-connection worker thread. A client
+    that opens a connection and stalls the handshake therefore ties up only
+    its own thread, not the accept loop: one slow or hostile peer cannot
+    freeze every other sender (the failure mode of wrapping the listener
+    itself, where ``accept()`` performs the handshake inline).
+    """
+
+    def __init__(
+        self,
+        *args: Any,
+        snagline_ssl_context: ssl.SSLContext,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self.snagline_ssl_context = snagline_ssl_context
+
+    def finish_request(self, request: Any, client_address: Any) -> None:
+        try:
+            tls_request = self.snagline_ssl_context.wrap_socket(
+                request, server_side=True
+            )
+        except (ssl.SSLError, OSError):
+            # Failed handshake (plaintext probe against the TLS port, port
+            # scan, stale client): drop this one connection and keep serving.
+            # Fail-open per project.md §1.2; never surface as a serving error.
+            logger.debug(
+                "snagline sidecar: TLS handshake failed from %s:%s",
+                client_address[0],
+                client_address[1],
+                exc_info=True,
+            )
+            return
+        # Annotated locally: typeshed binds this call's server parameter to
+        # Self, which the subclass indirection here trips over.
+        handler_class: Any = self.RequestHandlerClass
+        handler_class(tls_request, client_address, self)
+
+
 def make_server(
     monitor: Monitor,
     host: str = "127.0.0.1",
@@ -611,18 +655,20 @@ def make_server(
 ) -> ThreadingHTTPServer:
     """Construct a ready-to-``serve_forever()`` sidecar server.
 
-    With ``ssl_context`` or ``certfile``/``keyfile`` the listening socket is
-    wrapped server-side via stdlib ``ssl`` (issue #120): the sidecar speaks
-    HTTPS directly. Without them the server is plain HTTP, exactly as before.
+    With ``ssl_context`` or ``certfile``/``keyfile`` the sidecar speaks
+    HTTPS directly (issue #120): connections are wrapped server-side via
+    stdlib ``ssl`` with the handshake running on each connection's own
+    worker thread. Without them the server is plain HTTP, exactly as before.
     """
     tls_context = _resolve_ssl_context(ssl_context, certfile, keyfile)
-    server = ThreadingHTTPServer(
-        (host, port),
-        make_handler(monitor, auth_token, max_body_bytes, max_risks, metrics_format),
+    handler = make_handler(
+        monitor, auth_token, max_body_bytes, max_risks, metrics_format
     )
-    if tls_context is not None:
-        server.socket = tls_context.wrap_socket(server.socket, server_side=True)
-    return server
+    if tls_context is None:
+        return ThreadingHTTPServer((host, port), handler)
+    return _TLSThreadingHTTPServer(
+        (host, port), handler, snagline_ssl_context=tls_context
+    )
 
 
 def serve(
