@@ -85,6 +85,19 @@ class Config:
     ml_ensemble_enabled: bool = False
     ml_ensemble_score_threshold: float = 0.5  # emit a combined risk above this
 
+    # --- Loop hardening modes (issue #89, opt-in) ----------------------------
+    # Each mode extends LoopDetector with one more failure shape beyond plain
+    # single-signature repetition. All default off so the plain-loop path is
+    # unchanged and the zero-dependency preset keeps its bench numbers.
+    # Triggers emitted (API strings): "near_duplicate_loop", "cycle", "stall".
+    loop_near_duplicate_enabled: bool = False  # collapse volatile ids, recount
+    loop_cycle_enabled: bool = False  # A,B,A,B,... periodicity scan
+    loop_cycle_window_size: int = 12  # window scanned for periodicity
+    loop_cycle_min_period: int = 2  # shortest repeating period considered
+    loop_cycle_max_period: int = 6  # longest repeating period considered
+    loop_stall_enabled: bool = False  # identical signature, zero progress
+    loop_stall_steps: int = 25  # consecutive identical steps before firing
+
     # --- Stagnation detector (issue #87) --------------------------------------
     # Opt-in novelty-rate tracker: flags an episode whose share of never-
     # before-seen action signatures collapses, i.e. the agent is busy but

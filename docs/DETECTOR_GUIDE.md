@@ -72,6 +72,45 @@ Each has a matching test in `tests/detectors/` showing the synthetic-sequence
 pattern (injected failure fires; healthy sequence stays silent). Copy that
 test shape for your own detector.
 
+### Loop hardening modes (issue #89)
+
+`LoopDetector` has three opt-in extensions for failure shapes that plain
+repetition counting misses. All are off by default: with stock config the
+detector's behavior is exactly the plain path above.
+
+- **Near-duplicate** (`Config(loop_near_duplicate_enabled=True)`): retries
+  whose signatures differ only by volatile identifiers (uuid-shaped
+  substrings, digit runs) collapse onto one normalized key before hashing,
+  then feed the same window and threshold logic as the plain path. Trigger:
+  `near_duplicate_loop`. The default normalizer is a documented heuristic
+  (uuid-like substrings become one token, remaining digit runs become `#`);
+  it is deliberately blunt, and against opaque hex digests collapsing digits
+  raises collision odds, so treat enabling it as a deliberate choice. Swap in
+  your own strategy with `LoopDetector(config=cfg, normalizer=fn)`, where
+  `fn` maps a signature string to its normalized form.
+- **Cycle** (`Config(loop_cycle_enabled=True)`): A,B,A,B,... periodicity that
+  never repeats one action often enough to trip `repeat_threshold`. After
+  each step an ascending scan (O(window)) finds the window content's minimal
+  period p; it fires once when p lies inside the configured band
+  (`loop_cycle_min_period` to `loop_cycle_max_period`, default 2..6) and the
+  recent `loop_cycle_window_size` window holds at least two full periods,
+  then re-arms when periodicity breaks. Filtering on the true minimum means a
+  custom band genuinely suppresses faster loops instead of re-flagging them
+  through a multiple, and uniform repetition (minimal period 1) is always
+  ignored: single-action loops belong to the plain loop/stall modes.
+  Trigger: `cycle`.
+- **Stall** (`Config(loop_stall_enabled=True)`): N consecutive identical
+  signatures with no progress fires after `loop_stall_steps` (default 25).
+  Wall-clock deltas never reset the streak: zero-delta steps count toward it
+  (a frozen clock is itself evidence of a stall), and positive deltas do not
+  reset it either (tight retries burn real time while going nowhere); only a
+  different signature restarts the count. Trigger: `stall`.
+
+The trigger strings `near_duplicate_loop`, `cycle`, and `stall` are API:
+downstream policy layers map them by name. When several shapes fire on the
+same step the plain-loop risk keeps precedence; each mode still advances its
+state every step, so nothing is lost.
+
 ## Optional detectors: baseline, goal-drift, ensemble, and horizon set
 
 `LoopDetector`, `ErrorCascadeDetector`, and `LatencyAnomalyDetector` ship in
