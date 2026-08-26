@@ -420,6 +420,7 @@ class Monitor:
         via ``Config.resolve()``), so ``SNAGLINE_LOG_FORMAT=json`` works with
         zero code changes. Pass an explicit ``Config`` to pin every knob.
         """
+        from snagline.detectors.compaction_tripwire import CompactionTripwireDetector
         from snagline.detectors.error_cascade import ErrorCascadeDetector
         from snagline.detectors.goal_drift import GoalDriftDetector
         from snagline.detectors.latency_anomaly import LatencyAnomalyDetector
@@ -480,6 +481,11 @@ class Monitor:
         # published bench numbers are untouched.
         if cfg.side_effect_guard_enabled:
             base.append(SideEffectGuardDetector(config=cfg))
+        # Compaction tripwire is opt-in (issue #90): governance-decay
+        # detection across context compactions. Inert unless the adapter
+        # emits the "compaction" / "constraint_present" action types.
+        if cfg.compaction_tripwire_enabled:
+            base.append(CompactionTripwireDetector(config=cfg))
         if cfg.ml_ensemble_enabled:
             # Optional ml extra: add the one-class ESN + CUSUM detector to the
             # ensemble when numpy is importable (issue #80). The import is
