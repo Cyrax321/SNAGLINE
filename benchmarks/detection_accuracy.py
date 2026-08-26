@@ -15,6 +15,15 @@ labels:
   listing which trigger fired on another trigger's data.
 * Episodes with ``label: null`` are healthy controls: anything they emit is a
   false positive, and they can never contribute a false negative.
+* An episode envelope may carry an optional ``config`` field naming a harness
+  config variant (issue #118): ``"standard"`` (the default, used when the key
+  is absent), ``"goal_drift"``, or ``"ml_ensemble"``. Variants are additive on
+  the standard flags: ``goal_drift`` additionally enables the goal-drift
+  detector against the corpus's committed baseline fixture
+  (``goal_drift_baseline.json`` inside the scanned fixtures directory), and
+  ``ml_ensemble`` additionally wraps every base detector in the noisy-OR
+  ``MLOrchestrator``, so ensemble episodes can only ever emit the single
+  combined ``ml_ensemble`` trigger.
 
 The meltdown detector emits a single ``meltdown`` trigger for both failure
 shapes; the harness maps an emission to label-space ``meltdown_low`` or
@@ -58,7 +67,28 @@ SHIPPED_TRIGGERS: tuple[str, ...] = (
     "meltdown_low",
     "meltdown_high",
     "silent_abort",
+    # Opt-in detectors given labeled coverage by issue #118. Both need a
+    # harness config variant (see the ``config`` envelope field below).
+    "goal_drift",
+    "ml_ensemble",
 )
+
+# Harness config variants (issue #118). Every variant includes the standard
+# flags above; the named opt-in detector is switched on top of them.
+HARNESS_CONFIG_VARIANTS: tuple[str, ...] = (
+    "standard",
+    "goal_drift",
+    "ml_ensemble",
+)
+DEFAULT_CONFIG_VARIANT = "standard"
+
+# Committed healthy BaselineProfile the goal_drift variant replays against.
+# Written by generate_fixtures.py next to the episode files it emits; when the
+# scanned --fixtures directory has none, the copy in this repo's fixture
+# directory is used so old call sites keep working.
+GOAL_DRIFT_BASELINE_FILENAME = "goal_drift_baseline.json"
+_HARNESS_DIR = Path(__file__).resolve().parent
+_REPO_FIXTURES_DIR = _HARNESS_DIR / "fixtures"
 
 # The opt-in flags and fixed threshold the labels require on top of
 # Monitor.default(). The episode token budget must be a known number for
@@ -67,14 +97,42 @@ SHIPPED_TRIGGERS: tuple[str, ...] = (
 HARNESS_TOKEN_BUDGET = 50_000
 
 
-def harness_config() -> Config:
-    """Monitor.default() configuration plus the flags the labels require."""
+def harness_config(
+    variant: str = DEFAULT_CONFIG_VARIANT, fixtures_dir: Path | None = None
+) -> Config:
+    """Monitor.default() configuration plus the flags the labels require.
+
+    ``variant`` selects a config variant from :data:`HARNESS_CONFIG_VARIANTS`;
+    unknown names raise ValueError so a typo cannot silently replay an episode
+    under the wrong detector set. The ``goal_drift`` variant loads its healthy
+    reference from ``<fixtures_dir>/goal_drift_baseline.json``, falling back to
+    this repo's committed copy when ``fixtures_dir`` is None.
+    """
+    if variant not in HARNESS_CONFIG_VARIANTS:
+        raise ValueError(
+            f"unknown harness config variant {variant!r}; "
+            f"expected one of {list(HARNESS_CONFIG_VARIANTS)}"
+        )
     cfg = Config(
         token_runaway_enabled=True,
         episode_token_budget=HARNESS_TOKEN_BUDGET,
         meltdown_enabled=True,
         silent_abort_enabled=True,
     )
+    if variant == "goal_drift":
+        from snagline.baseline import load_baseline
+
+        base_dir = fixtures_dir if fixtures_dir is not None else _REPO_FIXTURES_DIR
+        path = base_dir / GOAL_DRIFT_BASELINE_FILENAME
+        if not path.is_file():
+            raise ValueError(
+                f"goal_drift variant needs a committed baseline fixture at "
+                f"{path}; generate one with benchmarks/fixtures/generate_fixtures.py"
+            )
+        cfg.goal_drift_enabled = True
+        cfg.goal_drift_baseline = load_baseline(str(path))
+    elif variant == "ml_ensemble":
+        cfg.ml_ensemble_enabled = True
     # Opt-in auto-calibration sweep (issue #101): SNAGLINE_CALIBRATION=auto
     # flips the harness onto calibrated thresholds without touching the
     # fixtures, labels, or scoring. SNAGLINE_CALIBRATION_BASELINE_PATH points
@@ -139,6 +197,7 @@ class Episode:
     episode_id: str
     label_triggers: frozenset[str] | None  # None means healthy control
     events: tuple[StepEvent, ...]
+    config_variant: str = DEFAULT_CONFIG_VARIANT
 
 
 def _parse_event(raw: dict, envelope_id: str) -> StepEvent:
@@ -188,11 +247,14 @@ def parse_episode(line: str, source: str) -> Episode:
         if trig not in SHIPPED_TRIGGERS:
             raise ValueError(f"{source}: unknown labeled trigger {trig!r}")
         label_triggers = frozenset({trig})
+    variant = record.get("config", DEFAULT_CONFIG_VARIANT)
+    if variant not in HARNESS_CONFIG_VARIANTS:
+        raise ValueError(f"{source}: unknown config variant {variant!r}")
     raw_events = record.get("events")
     if not isinstance(raw_events, list) or not raw_events:
         raise ValueError(f"{source}: events must be a non-empty list")
     events = tuple(_parse_event(e, ep_id) for e in raw_events)
-    return Episode(ep_id, label_triggers, events)
+    return Episode(ep_id, label_triggers, events, variant)
 
 
 def iter_fixtures(fixtures_dir: Path) -> Iterator[Episode]:
@@ -220,15 +282,22 @@ class EpisodeOutcome:
     predicted: set[str] = field(default_factory=set)
 
 
-def replay_episode(episode: Episode) -> EpisodeOutcome:
+def replay_episode(
+    episode: Episode, fixtures_dir: Path | None = None
+) -> EpisodeOutcome:
     """Replay one episode through a fresh default-configured Monitor.
 
     A fresh monitor per episode mirrors per-episode state isolation and keeps
-    detector windows/CUSUM baselines from leaking across episodes.
+    detector windows/CUSUM baselines from leaking across episodes. The
+    episode's config variant decides which opt-in flags run (issue #118);
+    ``fixtures_dir`` locates the committed goal-drift baseline for that
+    variant, defaulting to this repo's own fixture directory.
     """
     collector = RiskCollector()
     sinks: list[AlertSink] = [collector]
-    monitor = Monitor.default(config=harness_config(), sinks=sinks)
+    monitor = Monitor.default(
+        config=harness_config(episode.config_variant, fixtures_dir), sinks=sinks
+    )
     for event in episode.events:
         monitor.ingest(event)
     # Finalize pass: judges silent-abort-style completion checks, then tears
@@ -410,7 +479,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     ns = parser.parse_args(argv)
 
-    outcomes = [replay_episode(ep) for ep in iter_fixtures(ns.fixtures)]
+    outcomes = [replay_episode(ep, ns.fixtures) for ep in iter_fixtures(ns.fixtures)]
     report = score(outcomes)
     if ns.format == "json":
         print(json.dumps(report_to_json(report), indent=2, sort_keys=True))

@@ -4,9 +4,15 @@ Writes two JSONL files next to this script:
 
 * ``labeled_episodes.jsonl``  -- four episodes per shipped trigger, each line's
   ``label.trigger`` naming the failure shape injected into that trajectory.
-* ``healthy_controls.jsonl``  -- 30 ``label: null`` trajectories, including
+  Since issue #118 the ``goal_drift`` and ``ml_ensemble`` episodes additionally
+  carry a ``config`` envelope field naming the harness config variant they
+  replay under (see benchmarks/detection_accuracy.py).
+* ``healthy_controls.jsonl``  -- ``label: null`` trajectories, including
   deliberately tricky near-threshold cases (two repeats then recovery,
-  warmup-window latency jitter, tool-choice entropy near 2.3 bits).
+  warmup-window latency jitter, tool-choice entropy near 2.3 bits). The last
+  few controls replay under the ``ml_ensemble`` / ``goal_drift`` variants.
+* ``goal_drift_baseline.json`` -- the committed healthy BaselineProfile the
+  ``goal_drift`` variant replays against (issue #118).
 
 Every episode replays through ``Monitor.default()`` plus the opt-in flags the
 labels require (token_runaway, meltdown, silent_abort, and a fixed episode
@@ -36,7 +42,8 @@ import json
 import random
 from pathlib import Path
 
-from snagline.events import make_signature
+from snagline.baseline import BaselineProfile, save_baseline
+from snagline.events import StepEvent, make_signature
 
 # Fixed epoch so committed timestamps never change between regenerations.
 BASE_TS = 1_700_000_000.0
@@ -68,6 +75,26 @@ CHURN_POOL = (
 # Episode token budget the harness configures; see detection_accuracy.py.
 # Warn fires at >= 40,000 cumulative tokens, breach at >= 50,000.
 EPISODE_TOKEN_BUDGET = 50_000
+
+# --- Goal-drift corpus (issue #118) ---------------------------------------
+# Healthy reference the goal_drift variant replays against: three tools at
+# exactly constant latencies and zero errors, so every spread the detector
+# computes collapses onto its documented relative floor (5% of the mean).
+# Constant values keep every hand arithmetic in comments/test bodies exact.
+GOAL_DRIFT_BASELINE_TOOLS: tuple[tuple[str, float], ...] = (
+    ("search_web", 100.0),
+    ("read_file", 50.0),
+    ("run_sql", 80.0),
+)
+GOAL_DRIFT_BASELINE_CALLS_PER_TOOL = 40
+
+# Near-k healthy control: live means one k multiple above the reference but
+# still inside goal_drift_latency_k = 3 sigmas.
+GOAL_DRIFT_NEAR_K_LATENCIES: dict[str, float] = {
+    "search_web": 110.0,
+    "read_file": 55.0,
+    "run_sql": 88.0,
+}
 
 
 def _tc(
@@ -263,6 +290,169 @@ def build_silent_abort(ep: str, rng: random.Random) -> list[dict]:
     return b.events  # deliberately NOT closed with a message step
 
 
+# --------------------------------------------------------------------------
+# Goal-drift failure shapes (issue #118)
+# --------------------------------------------------------------------------
+
+
+def build_goal_drift_baseline() -> BaselineProfile:
+    """Fit the committed healthy BaselineProfile from synthetic events.
+
+    GOAL_DRIFT_BASELINE_CALLS_PER_TOOL constant-latency calls per tool with
+    zero errors freeze each reference on its exact mean (std 0), so every
+    spread the detector later derives comes from its documented floors:
+    max(std, 1ms, 5% of mean). Deterministic; no RNG.
+    """
+    profile = BaselineProfile()
+    i = 0
+    for tool, ms in GOAL_DRIFT_BASELINE_TOOLS:
+        for _ in range(GOAL_DRIFT_BASELINE_CALLS_PER_TOOL):
+            profile.add_event(
+                StepEvent(
+                    step_id=f"baseline-s{i}",
+                    episode_id="baseline-fit",
+                    timestamp=BASE_TS + i * STEP_GAP_S,
+                    action_type="tool_call",
+                    action_signature=make_signature("tool_call", tool, f"q={i}"),
+                    tool_name=tool,
+                    latency_ms=ms,
+                )
+            )
+            i += 1
+    return profile
+
+
+def _goal_drift_variant(ep: str) -> int:
+    return int(ep.rsplit("-", 1)[1])
+
+
+def _build_goal_drift_latency_shape(ep: str, rng: random.Random) -> list[dict]:
+    """Latency blowout: live per-tool mean doubles the healthy reference.
+
+    Twelve search_web calls at exactly 200ms against a baseline frozen at
+    100.0ms (std 0): the detector's floored spread is max(0, 5% of 100) =
+    5ms, so once goal_drift_min_samples = 10 is reached the z-score is
+    (200 - 100) / 5 = 20 > k = 3 and the contribution is
+    min(1, (20 - 3) / 10) = 1.0 >= score threshold 0.5: fires exactly once
+    (the emission latches). The latency CUSUM sees constant 200ms samples:
+    warmup freezes mu0 = 200 with sigma0 = max(1, 5% of 200) = 10, so every
+    post-freeze increment is max(0, 0 - 0.5) = 0 and it stays silent. Unique
+    args keep loop signatures distinct, no errors keep cascade quiet, and 12
+    tool calls never fill the 20-slot meltdown window.
+    """
+    b = _Builder(ep, rng)
+    for _ in range(12):
+        b.add("search_web", f"q={rng.randrange(10**6)}", latency_ms=200.0)
+    return b.finish_with_output()
+
+
+def _build_goal_drift_unseen_shape(ep: str, rng: random.Random) -> list[dict]:
+    """Unseen-capability drift: a tool absent from the healthy baseline.
+
+    Nine calls cycle the three baseline tools at their exact healthy
+    latencies (100/50/80ms; each collects only 3 CUSUM samples, below the
+    5-sample warmup, so the latency detector stays inert), then one call to
+    deploy_canary, which never appears in the committed baseline. Absent
+    tools contribute a flat 0.6 >= threshold 0.5, and that step is also the
+    tenth live sample, so goal_drift fires there and only there. Known tools
+    match their references exactly (z = 0); unique args, zero errors.
+
+    An error-rate drift shape was considered and rejected: keeping every
+    10-step cascade window at <= 2 errors caps the live error rate near 0.2,
+    whose contribution min(1, (0.2 - 0.1) * 2) = 0.2 can never cross 0.5
+    alone, so such an episode could not fire cleanly by itself.
+    """
+    b = _Builder(ep, rng)
+    for i in range(9):
+        tool, ms = GOAL_DRIFT_BASELINE_TOOLS[i % len(GOAL_DRIFT_BASELINE_TOOLS)]
+        b.add(tool, f"req={rng.randrange(10**6)}", latency_ms=ms)
+    b.add("deploy_canary", f"env={rng.randrange(10**6)}", latency_ms=70.0)
+    return b.finish_with_output()
+
+
+def build_goal_drift(ep: str, rng: random.Random) -> list[dict]:
+    """Dispatch labeled goal_drift episodes across both deviation shapes."""
+    shape = _goal_drift_variant(ep)
+    if shape in (0, 1):
+        return _build_goal_drift_latency_shape(ep, rng)
+    return _build_goal_drift_unseen_shape(ep, rng)
+
+
+# --------------------------------------------------------------------------
+# ML-ensemble failure shapes (issue #118)
+# --------------------------------------------------------------------------
+
+
+def _ml_loop_signal(b: _Builder) -> None:
+    """One signature triple: LoopDetector emits count/threshold*0.5 = 0.5."""
+    b.add("fetch_record", "id=7")
+    b.add("fetch_record", "id=7")
+    b.add("fetch_record", "id=7")
+
+
+def _ml_latency_spike(b: _Builder) -> None:
+    """Post-warmup spike: cusum (2500-400)/20 - 0.5 = 104.5 > h = 5."""
+    for ms in (400.0, 395.0, 405.0, 398.0, 402.0):
+        b.add("search_web", f"q={b.rng.randrange(10**6)}", latency_ms=ms)
+    b.add("search_web", f"q={b.rng.randrange(10**6)}", latency_ms=2500.0)
+
+
+def _ml_cascade_signal(b: _Builder) -> None:
+    """Three consecutive errors: consecutive score min(1, 3/3) = 1.0."""
+    b.add("deploy_service", "svc-a", error=True, error_type="TimeoutError")
+    b.add("deploy_service", "svc-b", error=True, error_type="TimeoutError")
+    b.add("deploy_service", "svc-c", error=True, error_type="TimeoutError")
+
+
+def build_ml_ensemble(ep: str, rng: random.Random) -> list[dict]:
+    """Labeled ml_ensemble episodes; the variant picks the base signals.
+
+    Under the ``ml_ensemble`` harness variant Monitor.default wraps every
+    base detector in the noisy-OR MLOrchestrator, so individual triggers are
+    swallowed into scores and only the combined ``ml_ensemble`` risk reaches
+    sinks. Variant arithmetic:
+
+    * 00 (loop signal): third repeat emits loop score 3/3*0.5 = 0.5;
+      noisy-OR over the lone score is 1-(1-0.5) = 0.5, which is not below
+      the 0.5 ensemble threshold, so exactly one ml_ensemble risk emits.
+    * 01 (latency signal): warmup [400,395,405,398,402] freezes mu0 ~= 400
+      with floored sigma0 = 20ms; the 2500ms spike gives cusum 104.5 > 5 and
+      score min(1, 0.6 + 0.1*(104.5/5 - 1)) = 1.0 -> combined 1.0.
+    * 02 (cascade signal): three consecutive tool errors give consecutive
+      score min(1, 3/3) = 1.0 -> combined 1.0.
+    * 03 (combined): the same event carries BOTH the third id=9 repeat AND
+      a 2500ms spike after a 400ms-class five-sample warmup, so the loop
+      score 0.5 and latency score 1.0 land on ONE step:
+      noisy-OR = 1 - (1 - 0.5)*(1 - 1.0) = 1.0 >= 0.5, one emission.
+
+    Every variant keeps <= 13 tool calls (meltdown window never fills), no
+    token fields (token CUSUM inert), and closes on a message step (silent
+    abort has nothing to judge).
+    """
+    b = _Builder(ep, rng)
+    shape = _goal_drift_variant(ep)
+    if shape == 0:
+        for i in range(2):
+            b.add(_cycle_tool(i), f"q={rng.randrange(10**6)}")
+        _ml_loop_signal(b)
+        b.add(_cycle_tool(2), f"q={rng.randrange(10**6)}")
+    elif shape == 1:
+        _ml_latency_spike(b)
+    elif shape == 2:
+        b.add(_cycle_tool(0), f"q={rng.randrange(10**6)}")
+        _ml_cascade_signal(b)
+        b.add(_cycle_tool(1), f"q={rng.randrange(10**6)}")
+    else:
+        # Warmup samples 400-class on distinct args except two id=9 repeats;
+        # the spike step is ALSO the third id=9 occurrence.
+        for args, ms in (("a=1", 400.0), ("a=2", 395.0), ("a=3", 405.0)):
+            b.add("search_web", args, latency_ms=ms)
+        b.add("search_web", "id=9", latency_ms=398.0)
+        b.add("search_web", "id=9", latency_ms=402.0)  # warmup sample n=5
+        b.add("search_web", "id=9", latency_ms=2500.0)  # loop x3 + spike
+    return b.finish_with_output()
+
+
 LABELED_BUILDERS = {
     "loop": build_loop,
     "error_cascade": build_error_cascade,
@@ -272,6 +462,17 @@ LABELED_BUILDERS = {
     "meltdown_low": build_meltdown_low,
     "meltdown_high": build_meltdown_high,
     "silent_abort": build_silent_abort,
+    # Issue #118 additions: opt-in detectors, replayed under their named
+    # harness config variants (see LABELED_TRIGGER_VARIANTS in main()).
+    "goal_drift": build_goal_drift,
+    "ml_ensemble": build_ml_ensemble,
+}
+
+# Which harness config variant each labeled trigger replays under; anything
+# absent from this map uses the standard flags.
+LABELED_TRIGGER_VARIANTS = {
+    "goal_drift": "goal_drift",
+    "ml_ensemble": "ml_ensemble",
 }
 
 
@@ -511,6 +712,57 @@ HEALTHY_BUILDERS = [
 ]
 
 
+# --------------------------------------------------------------------------
+# Variant healthy controls (issue #118)
+# --------------------------------------------------------------------------
+
+
+def healthy_goal_drift_steady(ep: str, rng: random.Random) -> list[dict]:
+    """Baseline-indistinguishable traffic under the goal_drift variant.
+
+    Twelve calls cycle ONLY baseline tools at their exact healthy latencies:
+    every live per-tool mean equals its reference, so each z-score is 0 and
+    the drift score is exactly 0.0 < threshold 0.5. Four CUSUM samples per
+    tool stay under the 5-sample warmup; unique args keep loop quiet; 12
+    tool calls never fill the meltdown window; closed with a message step.
+    """
+    b = _Builder(ep, rng)
+    for i in range(12):
+        tool, ms = GOAL_DRIFT_BASELINE_TOOLS[i % len(GOAL_DRIFT_BASELINE_TOOLS)]
+        b.add(tool, f"ok={rng.randrange(10**6)}", latency_ms=ms)
+    return b.finish_with_output()
+
+
+def healthy_goal_drift_near_k(ep: str, rng: random.Random) -> list[dict]:
+    """Latency above baseline but inside goal_drift_latency_k stays silent.
+
+    Live means sit exactly two sigmas above their references (below k = 3),
+    so no contribution accumulates and the score is 0.0. Spreads are the
+    documented floors: search_web max(1, 5% of 100) = 5 -> (110-100)/5 = 2;
+    read_file max(1, 5% of 50) = 2.5 -> (55-50)/2.5 = 2; run_sql
+    max(1, 5% of 80) = 4 -> (88-80)/4 = 2. All other detectors quiet for the
+    same reasons as healthy_goal_drift_steady.
+    """
+    b = _Builder(ep, rng)
+    for i in range(12):
+        tool = GOAL_DRIFT_BASELINE_TOOLS[i % len(GOAL_DRIFT_BASELINE_TOOLS)][0]
+        b.add(
+            tool,
+            f"nk={rng.randrange(10**6)}",
+            latency_ms=GOAL_DRIFT_NEAR_K_LATENCIES[tool],
+        )
+    return b.finish_with_output()
+
+
+# Reused under the ml_ensemble variant: both builders already keep every
+# base detector sub-threshold (a pair never reaches repeat count 3; warmup
+# jitter freezes into a CUSUM that cannot accumulate), so the orchestrator
+# collects no scores at all and must stay silent.
+HEALTHY_ML_BUILDERS = [healthy_repeat_pair_recovery, healthy_warmup_jitter]
+
+HEALTHY_GOAL_DRIFT_BUILDERS = [healthy_goal_drift_steady, healthy_goal_drift_near_k]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     here = Path(__file__).resolve().parent
@@ -519,33 +771,43 @@ def main(argv: list[str] | None = None) -> int:
 
     labeled_lines: list[str] = []
     for trigger, builder in LABELED_BUILDERS.items():
-        for variant in range(4):
-            ep = f"{trigger}-{variant:02d}"
+        variant = LABELED_TRIGGER_VARIANTS.get(trigger, "standard")
+        for variant_no in range(4):
+            ep = f"{trigger}-{variant_no:02d}"
             rng = random.Random(f"{ep}/seed")
             events = builder(ep, rng)
-            labeled_lines.append(
-                json.dumps(
-                    {
-                        "episode_id": ep,
-                        "label": {"trigger": trigger},
-                        "events": events,
-                    },
-                    sort_keys=True,
-                )
-            )
+            record: dict = {
+                "episode_id": ep,
+                "label": {"trigger": trigger},
+                "events": events,
+            }
+            # Only variant episodes carry the field so pre-#118 lines stay
+            # byte-identical across regenerations.
+            if variant != "standard":
+                record["config"] = variant
+            labeled_lines.append(json.dumps(record, sort_keys=True))
 
     healthy_lines: list[str] = []
-    for idx, builder in enumerate(HEALTHY_BUILDERS):
-        ep = f"healthy-{idx:02d}"
-        rng = random.Random(f"{ep}/seed")
-        events = builder(ep, rng)
-        healthy_lines.append(
-            json.dumps(
-                {"episode_id": ep, "label": None, "events": events},
-                sort_keys=True,
-            )
-        )
+    idx = 0
+    # Groups in id order: standard controls first so existing ids stay
+    # stable, then the issue-#118 variant groups appended after them.
+    healthy_groups: list[tuple[str, list]] = [
+        ("standard", HEALTHY_BUILDERS),
+        ("ml_ensemble", HEALTHY_ML_BUILDERS),
+        ("goal_drift", HEALTHY_GOAL_DRIFT_BUILDERS),
+    ]
+    for variant, builders in healthy_groups:
+        for builder in builders:
+            ep = f"healthy-{idx:02d}"
+            rng = random.Random(f"{ep}/seed")
+            events = builder(ep, rng)
+            record: dict = {"episode_id": ep, "label": None, "events": events}
+            if variant != "standard":
+                record["config"] = variant
+            healthy_lines.append(json.dumps(record, sort_keys=True))
+            idx += 1
 
+    save_baseline(build_goal_drift_baseline(), str(ns.out / "goal_drift_baseline.json"))
     (ns.out / "labeled_episodes.jsonl").write_text(
         "\n".join(labeled_lines) + "\n", encoding="utf-8"
     )
@@ -553,8 +815,9 @@ def main(argv: list[str] | None = None) -> int:
         "\n".join(healthy_lines) + "\n", encoding="utf-8"
     )
     print(
-        f"wrote {len(labeled_lines)} labeled episodes and "
-        f"{len(healthy_lines)} healthy controls to {ns.out}"
+        f"wrote {len(labeled_lines)} labeled episodes, "
+        f"{len(healthy_lines)} healthy controls, and the goal-drift "
+        f"baseline fixture to {ns.out}"
     )
     return 0
 
