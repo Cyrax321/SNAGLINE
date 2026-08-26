@@ -83,6 +83,24 @@ class HaltDirective:
     timestamp: float = 0.0
 
 
+class _EpisodeClock:
+    """Per-episode time-axis state (issue #92).
+
+    Every field derives ONLY from ``StepEvent.timestamp`` values seen in
+    ``ingest()`` -- no wall-clock reads anywhere, so replaying a trajectory
+    reproduces identical risks. One instance per active episode.
+    """
+
+    __slots__ = ("last_ts", "elapsed", "idle_fired", "warned", "breached")
+
+    def __init__(self, first_ts: float) -> None:
+        self.last_ts = first_ts
+        self.elapsed = 0.0  # sum of positive inter-event deltas
+        self.idle_fired = False  # "idle_gap" fires once per episode
+        self.warned = False  # budget warning fires once per episode
+        self.breached = False  # budget breach fires once per episode
+
+
 def _detector_key(index: int, detector: Any) -> str:
     """Stable per-position key for a detector inside a snapshot payload."""
     return f"{index}:{getattr(detector, 'name', type(detector).__name__)}"
@@ -182,11 +200,20 @@ class Monitor:
         halt_url: str | None = None,
         halt_timeout_s: float = 0.25,
         min_severity_for_halt: float = 0.8,
+        config: Config | None = None,
     ) -> None:
         self._detectors = list(detectors)
         self._sinks = list(sinks)
         self._fail_open = fail_open
         self._state = state_backend or default_state_backend()
+        # Horizon-scale time axis (issue #92). Inert unless one of the opt-in
+        # horizon knobs is set on the config; all state lives in ``_clocks``,
+        # keyed by episode, derived purely from event timestamps.
+        cfg = config or Config()
+        self._max_wall_seconds = cfg.max_episode_wall_seconds
+        self._warn_fraction = cfg.warn_fraction
+        self._idle_warn_seconds = cfg.idle_warn_seconds
+        self._clocks: dict[str, _EpisodeClock] = {}
         # A faulty detector or sink must not spam the logs on every single step
         # (issue #14) -- log each distinct fault exactly once.
         self._fault_lock = threading.Lock()
@@ -281,9 +308,18 @@ class Monitor:
         webhook sink) must not block concurrent ``ingest`` calls, and a sink
         that re-enters ``ingest`` must not deadlock. The enforcement policy
         runs after the sinks, also outside the lock (issue #93).
+
+        Region contract (issue #92): the time-axis head below is the ONLY place
+        that touches event timestamps for idle/budget decisions, and it reads no
+        wall clock, so replay stays deterministic. The dispatch tail belongs to
+        the sinks/policy layer and is left untouched by time-axis logic.
         """
         risks: list[FailureRisk] = []
         with self._state.episode_lock(event.episode_id):
+            # Time-axis head (issue #92): computed from StepEvent timestamps at
+            # the top of ingest(), under the episode lock so concurrent ingests
+            # serialize exactly like detector state does.
+            risks.extend(self._advance_clock(event))
             for detector in self._detectors:
                 try:
                     risk = detector.observe(event)
@@ -303,6 +339,91 @@ class Monitor:
             self._metrics.risks_emitted += len(risks)
         for risk in risks:
             self._dispatch(risk)
+
+    def _advance_clock(self, event: StepEvent) -> list[FailureRisk]:
+        """Time-axis risks from StepEvent timestamps alone (issue #92).
+
+        Fail-open like every other monitoring step: an internal error is logged
+        fault-once and never propagates. Emits at most once per episode per
+        threshold:
+
+        * ``idle_gap`` (score 0.8) when a gap between consecutive ingests
+          reaches ``idle_warn_seconds``;
+        * ``wall_clock_budget`` warning (score 0.7, keeping it inside the
+          "warning" severity band) at ``warn_fraction`` of
+          ``max_episode_wall_seconds``, then a breach (score 1.0) at the limit;
+          a single delta that jumps straight past the limit fires only the
+          breach (mirrors TokenRunawayDetector's envelope ordering).
+        """
+        out: list[FailureRisk] = []
+        try:
+            clock = self._clocks.get(event.episode_id)
+            if clock is None:
+                # First event of the episode establishes the reference point;
+                # there is no delta yet, so nothing can fire.
+                self._clocks[event.episode_id] = _EpisodeClock(event.timestamp)
+                return out
+            delta = event.timestamp - clock.last_ts
+            clock.last_ts = event.timestamp
+            if (
+                self._idle_warn_seconds is not None
+                and not clock.idle_fired
+                and delta >= self._idle_warn_seconds
+            ):
+                clock.idle_fired = True
+                out.append(
+                    FailureRisk(
+                        event.episode_id,
+                        event.step_id,
+                        0.8,
+                        "idle_gap",
+                        f"no events for {delta:.1f}s "
+                        f"(threshold {self._idle_warn_seconds:.1f}s)",
+                        event.timestamp,
+                    )
+                )
+            if delta > 0.0:
+                # Negative deltas (out-of-order or skewed sources) must not
+                # reduce consumed budget; clamp them out of the accumulation.
+                clock.elapsed += delta
+            budget = self._max_wall_seconds
+            if budget is not None:
+                if not clock.breached and clock.elapsed >= budget:
+                    clock.breached = True
+                    out.append(
+                        FailureRisk(
+                            event.episode_id,
+                            event.step_id,
+                            1.0,
+                            "wall_clock_budget",
+                            f"episode exceeded its {budget:.0f}s wall-clock "
+                            f"budget ({clock.elapsed:.0f}s observed)",
+                            event.timestamp,
+                        )
+                    )
+                elif not clock.warned and clock.elapsed >= budget * self._warn_fraction:
+                    clock.warned = True
+                    out.append(
+                        FailureRisk(
+                            event.episode_id,
+                            event.step_id,
+                            # 0.7 keeps the pre-breach signal inside the
+                            # "warning" severity band (>= 0.8 derives
+                            # critical); the breach below is the critical.
+                            0.7,
+                            "wall_clock_budget",
+                            f"episode at {clock.elapsed / budget:.0%} of its "
+                            f"{budget:.0f}s wall-clock budget",
+                            event.timestamp,
+                        )
+                    )
+        except Exception as exc:
+            self._log_fault_once(
+                f"time-axis tracking raised ({exc}); ignoring (fail-open)"
+            )
+            if not self._fail_open:
+                raise
+        return out
 
     def _dispatch(self, risk: FailureRisk) -> None:
         for sink in self._sinks:
@@ -475,6 +596,9 @@ class Monitor:
         """
         finalized: list[FailureRisk] = []
         with self._state.episode_lock(episode_id):
+            # Time-axis state (issue #92) is per-episode like detector state;
+            # drop it here so a reused episode id starts with a clean clock.
+            self._clocks.pop(episode_id, None)
             for detector in self._detectors:
                 finalize = getattr(detector, "finalize", None)
                 if callable(finalize):
@@ -781,4 +905,10 @@ class Monitor:
             halt_timeout_s=cfg.halt_timeout_s,
             min_severity_for_halt=cfg.min_severity_for_halt,
         )
+        # Horizon-scale time axis (issue #92): the same resolved config drives
+        # idle-gap and wall-clock-budget tracking. Assigned post-construction
+        # like _state so subclasses with a fixed __init__ signature keep working.
+        monitor._max_wall_seconds = cfg.max_episode_wall_seconds
+        monitor._warn_fraction = cfg.warn_fraction
+        monitor._idle_warn_seconds = cfg.idle_warn_seconds
         return monitor

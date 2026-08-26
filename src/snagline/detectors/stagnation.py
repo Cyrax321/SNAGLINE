@@ -46,6 +46,7 @@ from collections import deque
 from typing import Any
 
 from snagline.config import Config
+from snagline.detectors.windowing import effective_window_size
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk
 
@@ -99,33 +100,41 @@ class StagnationDetector:
         if self.patience < 1:
             raise ValueError("patience must be >= 1")
         self._windows: dict[str, _EpisodeWindow] = {}
+        # Window auto-scaling (issue #92): inert unless cfg.window_scale_steps
+        # > 0; the novelty window grows toward max_window on long episodes.
+        self._scale_steps = cfg.window_scale_steps
+        self._max_window = cfg.max_window
+        self._counts: dict[str, int] = {}
 
     def observe(self, event: StepEvent) -> FailureRisk | None:
         w = self._windows.setdefault(event.episode_id, _EpisodeWindow())
+        n = self._counts.get(event.episode_id, 0) + 1
+        self._counts[event.episode_id] = n
+        target = effective_window_size(
+            self.window_size, n, self._scale_steps, self._max_window
+        )
         sig = event.action_signature
         novel = sig not in w.seen_all_time
         w.seen_all_time.add(sig)
-        if len(w.flags) == self.window_size and w.flags.popleft():
+        if len(w.flags) >= target and w.flags.popleft():
             w.novel_in_window -= 1
         w.flags.append(novel)
         if novel:
             w.novel_in_window += 1
 
-        if len(w.flags) == self.window_size and (
-            w.novel_in_window / self.window_size < self.min_novelty
-        ):
+        if len(w.flags) >= target and (w.novel_in_window / target < self.min_novelty):
             w.stale_windows += 1
             # Escalate exactly when patience is first reached. Continuing past
             # it must not re-fire (one finding per collapse), and any fresh
             # observation resets ``stale_windows`` below, re-arming us.
             if w.stale_windows == self.patience:
-                rate = w.novel_in_window / self.window_size
+                rate = w.novel_in_window / target
                 return FailureRisk(
                     event.episode_id,
                     event.step_id,
                     0.6,
                     "stagnation",
-                    f"{rate:.0%} new actions in last {self.window_size} steps, "
+                    f"{rate:.0%} new actions in last {target} steps, "
                     f"below {self.min_novelty:.0%} for {self.patience} "
                     "consecutive windows",
                     event.timestamp,
@@ -137,6 +146,7 @@ class StagnationDetector:
     def reset(self, episode_id: str) -> None:
         """Drop the window, the stale counter, and the monotonic seen-set."""
         self._windows.pop(episode_id, None)
+        self._counts.pop(episode_id, None)
 
     def dump_state(self) -> dict[str, Any]:
         """Serialize per-episode windows for ``Monitor.snapshot`` (#91/#149).
@@ -144,7 +154,9 @@ class StagnationDetector:
         JSON-compatible throughout: the novelty ``flags`` deque becomes a plain
         list of booleans and ``seen_all_time`` is sorted so snapshots are
         deterministic; ``load_state`` rebuilds the set from the sorted list
-        (raw sets are not JSON-serializable).
+        (raw sets are not JSON-serializable). The auto-scaler position
+        (``counts``, issue #92) rides along so a restored episode keeps its
+        scaling cadence.
         """
         return {
             "windows": {
@@ -155,7 +167,9 @@ class StagnationDetector:
                     "seen_all_time": sorted(w.seen_all_time),
                 }
                 for ep, w in self._windows.items()
-            }
+            },
+            # Tolerant readers on load: pre-#92 payloads carry no counts.
+            "counts": dict(self._counts),
         }
 
     def load_state(self, state: dict[str, Any]) -> None:
@@ -168,10 +182,17 @@ class StagnationDetector:
             # based eviction never fires again. Mirrors LoopDetector's
             # deque(sigs, maxlen=self.window_size) rebuild; the sliding
             # counter is recomputed from the truncated flags so the two stay
-            # consistent.
+            # consistent. With auto-scaling enabled (issue #92) the deque is
+            # deliberately UNCAPPED: observe() trims at the current effective
+            # target every step, and a base-sized maxlen would silently drop
+            # flags and blind the detector once the target grows past it.
             flags = [bool(b) for b in raw.get("flags", [])][-self.window_size :]
-            w.flags = deque(flags, maxlen=self.window_size)
+            w.flags = deque(
+                flags,
+                maxlen=self.window_size if self._scale_steps <= 0 else None,
+            )
             w.novel_in_window = sum(flags)
             w.stale_windows = int(raw.get("stale_windows", 0))
             w.seen_all_time = set(raw.get("seen_all_time", []))
             self._windows[str(ep)] = w
+        self._counts = {ep: int(n) for ep, n in state.get("counts", {}).items()}

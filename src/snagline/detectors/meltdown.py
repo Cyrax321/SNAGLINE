@@ -35,6 +35,7 @@ from collections import Counter, deque
 from typing import Any
 
 from snagline.config import Config
+from snagline.detectors.windowing import effective_window_size
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk
 
@@ -97,6 +98,12 @@ class MeltdownDetector:
         self._eps: dict[str, _EpisodeWindow] = {}
         self._fired: dict[str, bool] = {}
         self._clear_streak: dict[str, int] = {}
+        # Window auto-scaling (issue #92): inert unless cfg.window_scale_steps
+        # > 0; the effective size is recomputed per step and handed to push(),
+        # which retains more items as the cap grows.
+        self._scale_steps = cfg.window_scale_steps
+        self._max_window = cfg.max_window
+        self._counts: dict[str, int] = {}
 
     @staticmethod
     def _identity(event: StepEvent) -> str:
@@ -106,10 +113,15 @@ class MeltdownDetector:
         if event.action_type != "tool_call":
             return None
         ep = event.episode_id
+        n = self._counts.get(ep, 0) + 1
+        self._counts[ep] = n
+        target = effective_window_size(
+            self.window_size, n, self._scale_steps, self._max_window
+        )
         w = self._eps.setdefault(ep, _EpisodeWindow())
-        w.push(self._identity(event), self.window_size)
+        w.push(self._identity(event), target)
 
-        if len(w.window) < self.window_size:
+        if len(w.window) < target:
             return None
 
         h = w.entropy()
@@ -144,6 +156,7 @@ class MeltdownDetector:
 
     def reset(self, episode_id: str) -> None:
         self._eps.pop(episode_id, None)
+        self._counts.pop(episode_id, None)
         self._fired.pop(episode_id, None)
         self._clear_streak.pop(episode_id, None)
 
@@ -151,6 +164,7 @@ class MeltdownDetector:
         return {
             "window_size": self.window_size,
             "windows": {ep: list(w.window) for ep, w in self._eps.items()},
+            "counts": dict(self._counts),
             "fired": dict(self._fired),
             "clear_streak": dict(self._clear_streak),
         }
@@ -162,6 +176,8 @@ class MeltdownDetector:
             for key in keys:
                 w.push(key, self.window_size)
             self._eps[ep] = w
+        # Tolerant .get(): pre-#92 snapshots carry no scaler positions.
+        self._counts = {ep: int(n) for ep, n in state.get("counts", {}).items()}
         self._fired = {ep: bool(v) for ep, v in state.get("fired", {}).items()}
         self._clear_streak = {
             ep: int(v) for ep, v in state.get("clear_streak", {}).items()

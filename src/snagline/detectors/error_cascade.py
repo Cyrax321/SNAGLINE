@@ -19,6 +19,7 @@ from collections import deque
 from typing import Any
 
 from snagline.config import Config
+from snagline.detectors.windowing import next_window
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk
 
@@ -56,6 +57,11 @@ class ErrorCascadeDetector:
         )
         self._windows: dict[str, deque] = {}
         self._consecutive: dict[str, int] = {}
+        # Window auto-scaling (issue #92): inert unless cfg.window_scale_steps
+        # > 0; see detectors/windowing.py for the growth rule.
+        self._scale_steps = cfg.window_scale_steps
+        self._max_window = cfg.max_window
+        self._counts: dict[str, int] = {}
         # Dedupe: emit at most once per cascade, then stay quiet until the alarm
         # condition clears and re-arms (issue #4).
         self._fired: dict[str, bool] = {}
@@ -72,7 +78,14 @@ class ErrorCascadeDetector:
         # Only *counted* errors feed the cascade window; an LLM/chain error
         # (when excluded) is treated as a clean step so it cannot inflate the
         # cascade signal.
-        w = self._windows.setdefault(event.episode_id, deque(maxlen=self.window_size))
+        w = next_window(
+            self._windows,
+            self._counts,
+            event.episode_id,
+            self.window_size,
+            self._scale_steps,
+            self._max_window,
+        )
         w.append(counted)
         if counted:
             self._consecutive[event.episode_id] = (
@@ -119,12 +132,14 @@ class ErrorCascadeDetector:
 
     def reset(self, episode_id: str) -> None:
         self._windows.pop(episode_id, None)
+        self._counts.pop(episode_id, None)
         self._consecutive.pop(episode_id, None)
         self._fired.pop(episode_id, None)
 
     def dump_state(self) -> dict[str, Any]:
         return {
             "windows": {ep: list(w) for ep, w in self._windows.items()},
+            "counts": dict(self._counts),
             "consecutive": dict(self._consecutive),
             "fired": dict(self._fired),
         }
@@ -134,6 +149,8 @@ class ErrorCascadeDetector:
             ep: deque(flags, maxlen=self.window_size)
             for ep, flags in state.get("windows", {}).items()
         }
+        # Tolerant .get(): pre-#92 snapshots carry no scaler positions.
+        self._counts = {ep: int(n) for ep, n in state.get("counts", {}).items()}
         self._consecutive = {
             ep: int(v) for ep, v in state.get("consecutive", {}).items()
         }

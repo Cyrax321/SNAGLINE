@@ -27,6 +27,13 @@ TriggerType = Literal[
     # adapter-defined action types "compaction" / "constraint_present"; see
     # detectors/compaction_tripwire.py for the contract.
     "governance_decay",
+    # Horizon-scale time axis (issue #92). Derived by the Monitor from
+    # StepEvent timestamps at the top of ingest() -- never from the wall
+    # clock, so replay stays deterministic. "idle_gap" marks a silence
+    # between consecutive ingests; "wall_clock_budget" covers both the
+    # single pre-breach warning (score 0.8) and the breach itself (1.0).
+    "idle_gap",
+    "wall_clock_budget",
 ]
 
 # Severity ordering is informational only; sinks decide what to do with it.

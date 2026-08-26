@@ -102,6 +102,7 @@ The full architecture reference is in [docs/ADAPTER_GUIDE.md](docs/ADAPTER_GUIDE
 | **Goal-drift detector** (opt-in) | A run diverging from its known-healthy behavior | Compares a live run's per-tool error rate and latency against a persisted `BaselineProfile` built by `snagline baseline`. Flags rising error rate, latency blowing past the healthy mean, or tools that never appeared in the baseline. | O(1) amortized |
 | **Semantic goal-drift detector** (opt-in, `snagline[drift]`) | The agent's activity mix drifting from its healthy goal | Embeds structural labels (`action_type`, `tool_name`, `error_type`; never content) with `sentence-transformers` and watches the live episode's running centroid against the persisted `BaselineProfile` embedding centroid; sustained cosine deviation through a CUSUM gate emits `goal_drift`. Import is lazy; missing model or inference failures leave it inert (fail-open). | O(embedding dim) per step, bounded state |
 | **ML ensemble** (opt-in) | A stronger, combined signal | Wraps the base detectors and combines their scores with a transparent noisy-OR. A real model can be injected via `MLOrchestrator(model=...)` (the `ml` extra provides scikit-learn). | O(1) amortized |
+| **Horizon-scale time axis** (opt-in) | Budget exhaustion and silence on multi-day episodes | Wall-clock budget derived from event timestamps: one warning at `warn_fraction` of `max_episode_wall_seconds`, one critical breach at the limit (`wall_clock_budget`). Idle detection fires `idle_gap` when consecutive ingests drift more than `idle_warn_seconds` apart. Every quantity comes from `StepEvent.timestamp`, never the wall clock, so replay stays deterministic. | O(1) per step |
 
 Detection is deterministic and `O(1)` amortized per step. It runs with no network calls and no LLM calls. The CUSUM detector uses only the Python standard library (`statistics` module) -- no numpy required.
 
@@ -151,6 +152,7 @@ in [docs/RETRAIN_CADENCE.md](docs/RETRAIN_CADENCE.md)).
 | **Pluggable sinks** | Console (default, zero dep), webhook (stdlib urllib, fire-and-forget), and extensible. Only `FailureRisk` fields are ever transmitted. |
 | **Optional enforcement** | `Monitor(policy=...)` adds a sanctioned escalation path after the sinks: `"callback"` wraps an in-process callable fail-open; `"halt_webhook"` POSTs the risk and lands its `{"action": "continue"|"pause"}` directive on `monitor.last_directive`. Timeout/error/dead endpoint always falls back to continue; default `policy="observe"` pays nothing (issue #93). |
 | **External agent bridges** | HTTP sidecar, command bridge, and file tail for non-Python agents (Claude Code, OpenClaw, Hermes). |
+| **Heartbeat liveness file** | `snagline watch --heartbeat PATH` touches a file's mtime on every ingest (and every idle follow-poll), so an external supervisor (cron, systemd timer, k8s probe) can alert when silence itself is the failure. In-band detectors structurally cannot see a hung host; this closes that hole from outside. |
 | **Thread-safe** | Per-instance `threading.Lock` supports concurrent multi-episode monitoring. |
 
 ## Configuration
@@ -234,6 +236,12 @@ the path variant below.
 | `SNAGLINE_GOAL_DRIFT_SCORE_THRESHOLD` | `goal_drift_score_threshold` | 0.5 | Emit a goal-drift risk above this score |
 | `SNAGLINE_ML_ENSEMBLE_ENABLED` | `ml_ensemble_enabled` | False | Wrap detectors in MLOrchestrator (noisy-OR) |
 | `SNAGLINE_ML_ENSEMBLE_SCORE_THRESHOLD` | `ml_ensemble_score_threshold` | 0.5 | Emit a combined risk above this score |
+| `SNAGLINE_MAX_EPISODE_WALL_SECONDS` | `max_episode_wall_seconds` | None | Wall-clock budget per episode from event timestamps; unset disables |
+| `SNAGLINE_WARN_FRACTION` | `warn_fraction` | 0.8 | Fraction of the budget where the single pre-breach warning fires |
+| `SNAGLINE_IDLE_WARN_SECONDS` | `idle_warn_seconds` | None | Gap between consecutive ingests that fires one `idle_gap` risk |
+| `SNAGLINE_WINDOW_SCALE_STEPS` | `window_scale_steps` | 0 | Window auto-scaling divisor; 0 keeps fixed windows |
+| `SNAGLINE_MAX_WINDOW` | `max_window` | 512 | Hard cap for scaled windows |
+| `SNAGLINE_CUSUM_REFIT_EVERY` | `cusum_refit_every` | 0 | Latency CUSUM periodic baseline re-fit interval; 0 disables |
 | `SNAGLINE_LOOP_NEAR_DUPLICATE_ENABLED` | `loop_near_duplicate_enabled` | False | Loop hardening: collapse volatile ids before hashing |
 | `SNAGLINE_LOOP_CYCLE_ENABLED` | `loop_cycle_enabled` | False | Loop hardening: periodic A,B,A,B cycle scan |
 | `SNAGLINE_LOOP_CYCLE_WINDOW_SIZE` | `loop_cycle_window_size` | 12 | Window scanned for cycles |
@@ -605,6 +613,7 @@ from snagline import Monitor, StepEvent, FailureRisk, Config, make_signature, wa
 | `snagline bench` | Overhead benchmark (us/step) |
 | `snagline serve --port 8787` | HTTP sidecar for non-Python agents |
 | `snagline watch --sink webhook --webhook-url URL` | Live stdin mode |
+| `snagline watch --follow --file events.jsonl --heartbeat /var/run/snagline/hb` | Tail a file and leave liveness evidence an external supervisor can watch |
 | `snagline hook --url URL` | Command bridge (always exits 0) |
 
 Every command handles errors gracefully. `snagline hook` always exits 0 (fail-open by construction). `snagline watch` skips malformed lines and reports a summary.
@@ -695,7 +704,8 @@ SNAGLINE sits at the overlap of real-time monitoring, anomaly detection, and rel
 - **Not on PyPI.** Install from a clone (see Quick Start).
 - **Overhead is measured, not asserted.** Run `snagline bench` to reproduce on your hardware.
 - **Framework adapters are optional extras; sinks ship in core.** The LangChain, LangGraph, Autogen, and CrewAI adapters are optional installs (`pip install snagline-agent[langchain]`, etc.). The console, webhook, Slack, PagerDuty, and dedup sinks are zero-dependency stdlib and always available.
-- **The latency anomaly detector requires warm-up.** It learns a baseline from `cusum_min_samples` (default 20) events before any alarm can fire. This prevents false positives on normal jitter but means the detector is blind during warm-up.
+- **The latency anomaly detector requires warm-up.** It learns a baseline from `cusum_min_samples` (default 5) events before any alarm can fire. This prevents false positives on normal jitter but means the detector is blind during warm-up; a calibrated `BaselineProfile` (issue #101) removes the blind spot for tools it describes. With `cusum_refit_every` set, the frozen baseline is periodically re-checked against a parallel learner, so drift in the baseline itself becomes visible instead of being learned away silently.
+- **Idle detection and the silence hole.** In-band detectors can never see a hung host: no events means no `observe()` calls, so a deadlocked tool or an OOM-stopped worker produces no signal at all. The opt-in time axis narrows this from inside (`idle_warn_seconds` fires one `idle_gap` risk when consecutive ingests drift too far apart, derived from event timestamps so replay stays deterministic), but only while events were flowing to snagline in the first place. For full coverage pair it with `snagline watch --heartbeat PATH` plus an external watcher (cron, systemd timer, k8s probe): the heartbeat file's mtime going stale is the externally detectable "host is silent" signal.
 - **Goal-drift without the drift extra is structural only.** The built-in detector compares per-tool error rate, latency, and tool-name sets. Semantic (embedding) drift needs `pip install snagline-agent[drift]` (sentence-transformers, issue #81) and a baseline fitted with `fit_semantic_baseline`; without it the semantic side stays inert, logged and fail-open.
 - **No automatic repair.** Detection and escalation only. Repair is a distinct, harder problem.
 - **Alert spam under sustained anomalies.** The loop and error-cascade detectors emit a risk on every step while the triggering condition holds. Wrap a sink in `DedupSink` to suppress repeats within a cooldown window ([#4](https://github.com/Cyrax321/SNAGLINE/issues/4)).
