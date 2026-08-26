@@ -43,6 +43,7 @@ see :meth:`snagline.monitor.Monitor.default`.
 from __future__ import annotations
 
 from collections import deque
+from typing import Any
 
 from snagline.config import Config
 from snagline.events import StepEvent
@@ -136,3 +137,33 @@ class StagnationDetector:
     def reset(self, episode_id: str) -> None:
         """Drop the window, the stale counter, and the monotonic seen-set."""
         self._windows.pop(episode_id, None)
+
+    def dump_state(self) -> dict[str, Any]:
+        """Serialize per-episode windows for ``Monitor.snapshot`` (#91/#149).
+
+        JSON-compatible throughout: the novelty ``flags`` deque becomes a plain
+        list of booleans and ``seen_all_time`` is sorted so snapshots are
+        deterministic; ``load_state`` rebuilds the set from the sorted list
+        (raw sets are not JSON-serializable).
+        """
+        return {
+            "windows": {
+                ep: {
+                    "flags": list(w.flags),
+                    "novel_in_window": w.novel_in_window,
+                    "stale_windows": w.stale_windows,
+                    "seen_all_time": sorted(w.seen_all_time),
+                }
+                for ep, w in self._windows.items()
+            }
+        }
+
+    def load_state(self, state: dict[str, Any]) -> None:
+        self._windows = {}
+        for ep, raw in state.get("windows", {}).items():
+            w = _EpisodeWindow()
+            w.flags = deque(bool(b) for b in raw.get("flags", []))
+            w.novel_in_window = int(raw.get("novel_in_window", 0))
+            w.stale_windows = int(raw.get("stale_windows", 0))
+            w.seen_all_time = set(raw.get("seen_all_time", []))
+            self._windows[str(ep)] = w

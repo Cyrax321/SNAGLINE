@@ -370,5 +370,9 @@ pickle) participate in `Monitor.snapshot(path)` / `Monitor.restore(path)`.
 Snapshots are written atomically (tmp + `os.replace`). Restore is a
 setup-time operation: a version or strict-composition mismatch raises rather
 than failing open -- a monitor that silently starts blank is exactly the quiet
-misbehavior this exists to prevent. All shipped detectors implement it, and
-`DedupSink` persists cooldowns when used with its default key function.
+misbehavior this exists to prevent. Every shipped detector implements it
+(`loop`, `error_cascade`, `latency_anomaly`, `token_runaway`, `silent_abort`,
+`meltdown`, `ml_ensemble`, `goal_drift`, `stagnation`,
+`side_effect_guard`, and `compaction_tripwire` -- the last two added by
+issue #149), and `DedupSink` persists cooldowns when used with its default
+key function.

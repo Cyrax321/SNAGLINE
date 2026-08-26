@@ -47,6 +47,8 @@ pins (small by construction). Memory: one small state object per episode;
 
 from __future__ import annotations
 
+from typing import Any
+
 from snagline.config import Config
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk
@@ -151,6 +153,43 @@ class CompactionTripwireDetector:
     def reset(self, episode_id: str) -> None:
         """Drop the event ordinal and any pending window for the episode."""
         self._episodes.pop(episode_id, None)
+
+    def dump_state(self) -> dict[str, Any]:
+        """Serialize per-episode ordinals and pending windows (#91/#149).
+
+        All primitives are JSON-compatible; pin sets become sorted lists (raw
+        sets are not JSON-serializable) and ``load_state`` rebuilds the set.
+        Pins are hashes by contract, so serialization carries no content risk.
+        A restart between a compaction and its confirmations must not let the
+        grace deadline vanish silently: the pending set, its deadline ordinal,
+        and the fired latch all survive.
+        """
+        episodes: dict[str, Any] = {}
+        for ep, st in self._episodes.items():
+            entry: dict[str, Any] = {"ordinal": st.ordinal, "pending": None}
+            if st.pending is not None:
+                entry["pending"] = {
+                    "pins": sorted(st.pending.pins),
+                    "deadline_ordinal": st.pending.deadline_ordinal,
+                    "fired": st.pending.fired,
+                }
+            episodes[ep] = entry
+        return {"episodes": episodes}
+
+    def load_state(self, state: dict[str, Any]) -> None:
+        self._episodes = {}
+        for ep, entry in state.get("episodes", {}).items():
+            st = _EpisodeState()
+            st.ordinal = int(entry.get("ordinal", 0))
+            raw_pending = entry.get("pending")
+            if raw_pending is not None:
+                pending = _PendingPins(
+                    set(raw_pending.get("pins", [])),
+                    int(raw_pending.get("deadline_ordinal", 0)),
+                )
+                pending.fired = bool(raw_pending.get("fired", False))
+                st.pending = pending
+            self._episodes[str(ep)] = st
 
     def _open_window(self, metadata: dict, ordinal: int) -> _PendingPins | None:
         """Build the pending window for a compaction event, or None when the
