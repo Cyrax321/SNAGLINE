@@ -136,6 +136,26 @@ enterprise-grade alerting. Concretely:
     or `SNAGLINE_METRICS_FORMAT=classic`. Scrape config: point Prometheus at
     the sidecar with `metrics_path: /metrics` (same port and auth token as
     the event endpoints). Structured logging remains.
+
+    **End-of-episode signal (#123):** `snagline_episodes_active` counts
+    distinct episode ids seen through the sidecar since process start
+    (capped at 10,000, least-recently-seen eviction). A host that knows an
+    episode is finished should tell the sidecar so the gauge drops the id
+    immediately instead of waiting for cap eviction:
+
+    ```bash
+    curl -X POST http://127.0.0.1:8787/episodes/end \
+      -H "Authorization: Bearer $SNAGLINE_SERVE_AUTH_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{"episode_id": "run-42"}'
+    # -> {"status": "ended", "episode_id": "run-42"}
+    ```
+
+    The endpoint runs behind the same auth token as every other POST,
+    forwards to `Monitor.end_episode()` (running detector finalizers and
+    releasing per-episode detector state), and answers `400` on malformed
+    bodies without crashing or retaining anything beyond the id itself.
+    Ending an unknown id is an idempotent no-op.
 11. Integration matrix document plus a prominent "10-line custom adapter"
     path. **Done:** `docs/INTEGRATION_MATRIX.md` (#49).
 
