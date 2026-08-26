@@ -195,7 +195,4 @@ class StagnationDetector:
             w.stale_windows = int(raw.get("stale_windows", 0))
             w.seen_all_time = set(raw.get("seen_all_time", []))
             self._windows[str(ep)] = w
-        self._counts = {
-            ep: int(n)
-            for ep, n in state.get("counts", {}).items()
-        }
+        self._counts = {ep: int(n) for ep, n in state.get("counts", {}).items()}
