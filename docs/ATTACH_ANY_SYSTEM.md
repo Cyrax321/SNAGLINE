@@ -287,8 +287,13 @@ SNAGLINE_SERVE_AUTH_TOKEN=... snagline serve \
   --keyfile /etc/snagline/key.pem
 
 # Acceptance check against a self-signed pair (-k). With a real certificate,
-# use --cacert so the chain is actually verified instead of skipped:
+# verify the chain instead of skipping it (--cacert) and map the certificate's
+# hostname to loopback for local checks (--resolve); a plain
+# https://127.0.0.1:8787 would fail hostname validation against any real cert:
 curl -k https://127.0.0.1:8787/health
+curl --cacert /etc/snagline/ca.pem \
+  --resolve snagline.internal:8787:127.0.0.1 \
+  https://snagline.internal:8787/health
 ```
 
 Auth semantics are unchanged over TLS: `Authorization: Bearer` and
