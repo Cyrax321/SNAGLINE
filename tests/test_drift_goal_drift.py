@@ -94,3 +94,37 @@ def test_profile_structural_to_dict_is_byte_identical_to_legacy_shape():
 def test_profile_from_dict_rejects_non_numeric_centroids():
     with pytest.raises((TypeError, ValueError)):
         BaselineProfile.from_dict({"embedding_centroid": ["x"]})
+
+
+# ---------------------------------------------------------------------------
+# Config keys (scalar coercion must cover the new opt-in fields)
+
+
+def test_semantic_drift_keys_coerce_from_environment():
+    from snagline.config import Config
+
+    cfg = Config.from_env(
+        {
+            "SNAGLINE_SEMANTIC_DRIFT_ENABLED": "true",
+            "SNAGLINE_SEMANTIC_DRIFT_MODEL": "custom/model",
+            "SNAGLINE_SEMANTIC_DRIFT_MIN_SAMPLES": "7",
+            "SNAGLINE_SEMANTIC_DRIFT_TOLERANCE": "0.4",
+        }
+    )
+    assert cfg.semantic_drift_enabled is True
+    assert cfg.semantic_drift_model == "custom/model"
+    assert cfg.semantic_drift_min_samples == 7
+    assert cfg.semantic_drift_tolerance == pytest.approx(0.4)
+
+
+def test_semantic_drift_defaults_keep_preset_off():
+    from snagline.config import Config
+
+    cfg = Config()
+    assert cfg.semantic_drift_enabled is False
+    # Hand-computed expectation of the shipped defaults (not read back from
+    # the same object): documented in README and DETECTOR_GUIDE.
+    assert cfg.semantic_drift_min_samples == 10
+    assert cfg.semantic_drift_tolerance == 0.3
+    assert cfg.semantic_drift_cusum_k == 0.05
+    assert cfg.semantic_drift_cusum_h == 0.5

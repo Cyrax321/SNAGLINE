@@ -139,6 +139,22 @@ class Config:
     ml_ensemble_enabled: bool = False
     ml_ensemble_score_threshold: float = 0.5  # emit a combined risk above this
 
+    # --- Optional semantic goal-drift detector (issue #81, ``drift`` extra) --
+    # Embeds structural labels only (action_type, tool_name, error_type; never
+    # prompt/response content, metadata is never read) and compares the live
+    # episode's running embedding centroid against the persisted
+    # BaselineProfile's embedding_centroid through cosine distance. A CUSUM
+    # over the deviation keeps it silent unless the divergence is sustained.
+    # Requires ``pip install snagline-agent[drift]`` AND a baseline fitted with
+    # snagline.drift.fit_semantic_baseline; anything missing degrades fail-open
+    # to an inert, logged detector and the zero-dep preset is untouched.
+    semantic_drift_enabled: bool = False
+    semantic_drift_model: str = "all-MiniLM-L6-v2"  # provenance + load target
+    semantic_drift_min_samples: int = 10  # live steps before scoring starts
+    semantic_drift_tolerance: float = 0.3  # cosine deviation treated as noise
+    semantic_drift_cusum_k: float = 0.05  # slack subtracted per evaluation
+    semantic_drift_cusum_h: float = 0.5  # sustained-deviation alarm threshold
+
     # --- Loop hardening modes (issue #89, opt-in) ----------------------------
     # Each mode extends LoopDetector with one more failure shape beyond plain
     # single-signature repetition. All default off so the plain-loop path is
