@@ -118,7 +118,15 @@ class SemanticGoalDriftDetector:
         # A profile fitted structurally only carries no reference vectors:
         # inert by design rather than guessing a semantics-free fallback.
         if centroid:
-            self._baseline_centroid: list[float] | None = [float(v) for v in centroid]
+            converted = [float(v) for v in centroid]
+            if not all(math.isfinite(v) for v in converted):
+                logger.warning(
+                    "snagline: semantic goal-drift inert; baseline "
+                    "embedding_centroid contains non-finite values"
+                )
+                self._baseline_centroid = None
+            else:
+                self._baseline_centroid = converted
         else:
             self._baseline_centroid = None
             logger.info(
@@ -181,6 +189,13 @@ class SemanticGoalDriftDetector:
         if embed is None:
             return None
         vec = [float(v) for v in embed(event)]
+        if not all(math.isfinite(v) for v in vec):
+            logger.warning(
+                "snagline: semantic goal-drift skipping non-finite "
+                "embedding for step %r",
+                event.step_id,
+            )
+            return None
         if len(vec) != len(self._baseline_centroid):
             logger.warning(
                 "snagline: semantic goal-drift disabled; embedder dimension %d "
@@ -310,6 +325,8 @@ def fit_semantic_baseline(
     for ev in events:
         profile.add_event(ev)
         vec = [float(v) for v in embedder(ev)]
+        if not all(math.isfinite(v) for v in vec):
+            raise ValueError("embedding contains non-finite values")
         if centroid is None:
             centroid = [0.0] * len(vec)
         elif len(vec) != len(centroid):

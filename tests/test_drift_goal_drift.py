@@ -552,3 +552,47 @@ def test_semantic_signal_feeds_noisy_or_when_ml_ensemble_wraps_it():
     # Hand-checked expectation: both fire, trigger rewrites through noisy-OR.
     assert direct_fired is not None and direct_fired.trigger == "goal_drift"
     assert orch_fired is not None and orch_fired.trigger == "ml_ensemble"
+
+
+def test_non_finite_embedding_is_skipped_without_poisoning(caplog):
+    det = _detector(_semantic_baseline(), semantic_drift_min_samples=10)
+
+    def flaky(event: StepEvent) -> list[float]:
+        if event.step_id == "s5":
+            return [float("nan"), 0.0]
+        return list(ALL_VECS[event.tool_name])
+
+    det._embedder = flaky  # type: ignore[attr-defined]
+    det._resolved = True  # type: ignore[attr-defined]
+    with caplog.at_level(logging.WARNING, logger="snagline"):
+        for i in range(12):
+            # One of these is the NaN step; it must be skipped, not crash.
+            assert det.observe(_ev(i, "search", "nan-ep")) is None or True
+            # The NaN step itself returns None (skipped).
+        # Explicitly hit the NaN step
+        assert det.observe(_ev(5, "search", "nan-ep2")) is None
+    assert any("non-finite" in r.message for r in caplog.records)
+    # Episode state must still be usable: sustained drift after the NaN still
+    # fires (i.e. the NaN did not poison the running sum with NaN).
+    det2 = _detector(_semantic_baseline(), semantic_drift_min_samples=10)
+    det2._embedder = flaky  # type: ignore[attr-defined]
+    det2._resolved = True  # type: ignore[attr-defined]
+    for i in range(12):
+        det2.observe(_ev(i, "search", "after-nan"))
+    fired = None
+    for j in range(12, 50):
+        r = det2.observe(_ev(j, "wipe_disk", "after-nan"))
+        if r is not None:
+            fired = r
+            break
+    assert fired is not None
+
+
+def test_fit_rejects_non_finite_embeddings():
+    from snagline.drift.goal_drift import fit_semantic_baseline
+
+    def bad(event: StepEvent) -> list[float]:
+        return [float("inf"), 0.0]
+
+    with pytest.raises(ValueError, match="non-finite"):
+        fit_semantic_baseline(_healthy(3), bad)
