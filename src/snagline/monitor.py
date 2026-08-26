@@ -417,6 +417,7 @@ class Monitor:
         from snagline.detectors.loop import LoopDetector
         from snagline.detectors.meltdown import MeltdownDetector
         from snagline.detectors.ml_ensemble import MLOrchestrator
+        from snagline.detectors.side_effect_guard import SideEffectGuardDetector
         from snagline.detectors.silent_abort import SilentAbortDetector
         from snagline.detectors.stagnation import StagnationDetector
         from snagline.detectors.token_runaway import TokenRunawayDetector
@@ -461,6 +462,11 @@ class Monitor:
             base.append(MeltdownDetector(config=cfg))
         if cfg.silent_abort_enabled:
             base.append(SilentAbortDetector(config=cfg))
+        # Side-effect guard is opt-in (issue #88): duplicate non-idempotent
+        # action detection, default-off so the zero-dependency preset and the
+        # published bench numbers are untouched.
+        if cfg.side_effect_guard_enabled:
+            base.append(SideEffectGuardDetector(config=cfg))
         if cfg.ml_ensemble_enabled:
             # Optional ml extra: add the one-class ESN + CUSUM detector to the
             # ensemble when numpy is importable (issue #80). The import is

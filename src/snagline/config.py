@@ -174,6 +174,19 @@ class Config:
     # arXiv:2608.02464 that caught 7/7 organic failures-of-omission there.
     silent_abort_enabled: bool = False
 
+    # --- Side-effect guard detector (issue #88, opt-in) ----------------------
+    # Duplicate detection for host-declared non-idempotent actions
+    # (``StepEvent.side_effect``): a second identical (tool_name,
+    # action_signature) pair within one episode fires "side_effect_duplicate"
+    # immediately. Deliberately stricter than the loop detector, which waits
+    # for ``loop_repeat_threshold`` hits inside a sliding window and targets
+    # wasted-work loops; here one repeated payment/send/deploy is already the
+    # incident. Default off so the zero-dependency preset and its published
+    # bench numbers are untouched.
+    side_effect_guard_enabled: bool = False
+    side_effect_allowed_repeats: int = 1  # occurrences tolerated before firing
+    side_effect_score: float = 0.9  # routes as critical severity
+
     # --- Opt-in auto-calibration from a fitted BaselineProfile (issue #101) --
     # calibration="auto" derives error-cascade thresholds and the CUSUM latency
     # reference from a healthy-run profile (see snagline.calibration) instead
