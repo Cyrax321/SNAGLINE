@@ -14,6 +14,7 @@ import socket
 import ssl
 import subprocess
 import threading
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -157,6 +158,56 @@ def test_plaintext_probe_is_not_served_and_server_survives(tmp_path):
         assert body == {"status": "ok"}
     finally:
         probe.close()
+        server.shutdown()
+        server.server_close()
+
+
+@requires_openssl
+def test_silent_peer_does_not_hold_a_tls_worker_thread(tmp_path):
+    """The read timeout also bounds the handshake (#130).
+
+    ``setup()`` runs only after the connection is wrapped, so the handler's
+    own timeout cannot cover ``wrap_socket``. A peer that opens a socket and
+    never sends a ClientHello would otherwise hold its worker thread for as
+    long as it liked -- the same retention #130 closes for body reads.
+    """
+    server, _ = _start_tls_server(tmp_path, read_timeout=0.5)
+    host, port = server.server_address[0], server.server_address[1]
+    baseline = threading.active_count()
+    try:
+        assert server.snagline_handshake_timeout == 0.5
+        probe = socket.create_connection((host, port), timeout=10)
+        try:
+            started = time.perf_counter()
+            leftover = probe.recv(1024)  # ends when the server gives up
+            elapsed = time.perf_counter() - started
+        finally:
+            probe.close()
+        assert leftover == b"", leftover
+        assert elapsed < 10.0  # the client timeout never had to fire
+        deadline = time.perf_counter() + 10.0
+        while threading.active_count() > baseline and time.perf_counter() < deadline:
+            time.sleep(0.02)
+        assert threading.active_count() <= baseline, "worker thread was not released"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+@requires_openssl
+def test_tls_handshake_timeout_opt_out_still_serves(tmp_path):
+    """``read_timeout=0`` is the documented opt-out, TLS included (#130).
+
+    With no budget configured the handshake is left unbounded, exactly as it
+    was before, and normal clients are served as usual.
+    """
+    server, base = _start_tls_server(tmp_path, read_timeout=0)
+    try:
+        assert server.snagline_handshake_timeout is None
+        status, body = _request_tls("GET", base, "/health")
+        assert status == 200
+        assert body == {"status": "ok"}
+    finally:
         server.shutdown()
         server.server_close()
 

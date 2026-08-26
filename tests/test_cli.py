@@ -234,11 +234,14 @@ def test_main_serve_starts_server(monkeypatch):
     monkeypatch.setattr("snagline.server.http_server.serve", _fake_serve)
     assert main(["serve"]) == 0
     assert started.get("ok") == ("127.0.0.1", 8787)
-    # Defaults: no token, 1 MB body cap, 1000 retained risks.
+    # Defaults: no token, 1 MB body cap, 1000 retained risks, and read_timeout
+    # left unset so http_server resolves it from env then its 30s default
+    # (issue #130) -- the CLI does not duplicate that default.
     assert started["kwargs"] == {
         "auth_token": None,
         "max_body_bytes": 1_000_000,
         "max_risks": 1000,
+        "read_timeout": None,
     }
 
 
@@ -268,6 +271,20 @@ def test_main_serve_passes_auth_token_and_limits(monkeypatch):
     assert started["auth_token"] == "s3cret"
     assert started["max_body_bytes"] == 4096
     assert started["max_risks"] == 7
+
+
+def test_main_serve_passes_read_timeout(monkeypatch):
+    """--read-timeout must reach serve(), including the 0 opt-out (#130)."""
+    started: dict = {}
+
+    def _fake_serve(monitor, host="127.0.0.1", port=8787, **kwargs):
+        started.update(kwargs)
+
+    monkeypatch.setattr("snagline.server.http_server.serve", _fake_serve)
+    assert main(["serve", "--read-timeout", "5"]) == 0
+    assert started["read_timeout"] == 5.0
+    assert main(["serve", "--read-timeout", "0"]) == 0
+    assert started["read_timeout"] == 0.0
 
 
 def test_main_serve_reads_auth_token_from_the_environment(monkeypatch):

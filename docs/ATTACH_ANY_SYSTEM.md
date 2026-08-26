@@ -342,6 +342,17 @@ them is purely operational.
   oversized payloads are dropped at the edge instead of consuming sidecar
   memory and CPU. The cap exists to bound per-request memory while still
   admitting batched `StepEvent` arrays.
+- **Leave the read timeout on.** A sender that promises a large
+  `Content-Length`, writes a few bytes and goes quiet would otherwise hold one
+  handler thread for as long as it likes -- slowloris-style retention, and the
+  body-size cap does not help because the bytes never arrive.
+  `--read-timeout` (default 30, or `$SNAGLINE_SERVE_READ_TIMEOUT_S`) bounds
+  how long any single read may wait before the connection is dropped and its
+  thread released. The budget is per read, not per request, so a slow client
+  that keeps making progress is still served. Raise it if you genuinely have
+  senders slower than that; `0` restores the old unbounded behavior. With TLS
+  terminated in the sidecar the same budget also bounds the handshake, which
+  a silent peer could otherwise stall indefinitely.
 - **Remember nothing sensitive is retained.** Events carry hashes, timings,
   counts, and booleans, never prompt or response content. `GET /risks`
   retains the most recent 1000 `FailureRisk` records (ids, scores, trigger

@@ -305,6 +305,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "[default: 1000].",
     )
     p_serve.add_argument(
+        "--read-timeout",
+        type=float,
+        default=None,
+        help="Seconds any single read on a connection may wait before the "
+        "sidecar drops it, so a stalled sender cannot pin a handler thread "
+        "(issue #130). Falls back to $SNAGLINE_SERVE_READ_TIMEOUT_S, then 30. "
+        "Use 0 to wait indefinitely.",
+    )
+    p_serve.add_argument(
         "--sink",
         choices=["console", "webhook", "slack", "pagerduty"],
         default="console",
@@ -849,6 +858,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             auth_token=auth_token,
             max_body_bytes=args.max_body_bytes,
             max_risks=args.max_risks,
+            read_timeout=args.read_timeout,
             **tls_kwargs,
         )
     return 0

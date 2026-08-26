@@ -20,6 +20,14 @@ POST bodies are capped at ``max_body_bytes`` (default 1 MB); larger payloads
 get 413. This keeps the sidecar safe to expose and able to absorb buffered
 telemetry from any host.
 
+Every accepted connection also carries a read timeout (issue #130):
+``read_timeout=`` seconds, or ``SNAGLINE_SERVE_READ_TIMEOUT_S``, defaulting to
+30. Without it a client could declare ``Content-Length: 500000``, send seven
+bytes and go quiet, holding one handler thread of the ``ThreadingHTTPServer``
+indefinitely. The budget applies per read rather than per request, so a slow
+sender that keeps making progress is never cut off; a sender that stops is
+dropped and its thread released. Pass a value at or below zero to disable.
+
 Optionally protect the endpoints with a shared secret by passing
 ``auth_token=`` to ``make_server``/``serve``. When set, requests must carry the
 token via ``Authorization: Bearer <token>`` or ``X-Snagline-Token: <token>``;
@@ -59,6 +67,7 @@ one-way telemetry, and callers should not block on detection results.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import math
@@ -68,7 +77,7 @@ import threading
 import time
 from collections import OrderedDict, deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
+from typing import Any, ClassVar
 from urllib.parse import parse_qs, urlsplit
 
 from snagline.adapters.claude_code import HookTracker, ingest_payload
@@ -111,6 +120,41 @@ def _format_sample_value(value: float | int) -> str:
     if math.isinf(number):
         return "+Inf" if number > 0 else "-Inf"
     return repr(float(value))
+
+
+def _resolve_read_timeout(explicit: float | None) -> float | None:
+    """Pick the socket read timeout for sidecar connections (issue #130).
+
+    Precedence mirrors ``_resolve_metrics_format``: explicit argument, then
+    SNAGLINE_SERVE_READ_TIMEOUT_S via Config, then the built-in Config
+    default. A value at or below zero means "no timeout" and returns None,
+    which restores the pre-#130 behavior of blocking until the promised bytes
+    arrive; unusable values are logged and fall back to the default rather
+    than taking the sidecar down (fail-open).
+    """
+    candidate = explicit
+    if candidate is None:
+        try:
+            candidate = Config.from_env_overrides().get("serve_read_timeout_s")
+        except Exception:
+            logger.debug(
+                "snagline: env lookup for serve_read_timeout_s failed", exc_info=True
+            )
+            candidate = None
+    if candidate is None:
+        candidate = Config().serve_read_timeout_s
+    try:
+        seconds = float(candidate)
+    except (TypeError, ValueError):
+        logger.warning(
+            "snagline: unusable read timeout %r; using %ss",
+            candidate,
+            Config().serve_read_timeout_s,
+        )
+        seconds = Config().serve_read_timeout_s
+    if seconds <= 0 or math.isnan(seconds):
+        return None  # explicitly disabled
+    return seconds
 
 
 def _resolve_metrics_format(explicit: str | None) -> str:
@@ -326,12 +370,22 @@ def make_handler(
     max_body_bytes: int = 1_000_000,
     max_risks: int = 1000,
     metrics_format: str | None = None,
+    read_timeout: float | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     """Build a request-handler class bound to ``monitor``.
 
     ``metrics_format`` pins the default GET /metrics body; when omitted the
     SNAGLINE_METRICS_FORMAT environment variable decides, then the built-in
     "prometheus" default (see ``_resolve_metrics_format``).
+
+    ``read_timeout`` is the per-read socket timeout applied to every accepted
+    connection (issue #130); when omitted SNAGLINE_SERVE_READ_TIMEOUT_S
+    decides, then the 30s Config default. Pass a value at or below zero to
+    disable it. Assigning ``timeout`` on the handler class is all that is
+    needed: stdlib ``StreamRequestHandler.setup`` puts it on the connection
+    and ``handle_one_request`` already turns the resulting TimeoutError --
+    from the request line or from a body read inside ``do_POST`` alike -- into
+    a logged message plus a closed connection.
     """
     tracker = HookTracker()
 
@@ -344,6 +398,11 @@ def make_handler(
         snagline_max_body: int = 1_000_000
         snagline_collector: Any = None
         snagline_metrics_format: str = "prometheus"
+        # Read timeout for this connection, applied by StreamRequestHandler.
+        # setup(); None keeps the stdlib default of blocking forever (#130).
+        # ClassVar to match the base declaration: this is set once on the
+        # class below, never per instance.
+        timeout: ClassVar[float | None] = None
 
         def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
             # Route http.server's access log through logging, not stderr raw.
@@ -638,6 +697,7 @@ def make_handler(
     _Handler.snagline_collector = SidecarMetricsCollector()
     _attach_metrics_collector(monitor, _Handler.snagline_collector)
     _Handler.snagline_metrics_format = _resolve_metrics_format(metrics_format)
+    _Handler.timeout = _resolve_read_timeout(read_timeout)
     return _Handler
 
 
@@ -685,20 +745,31 @@ class _TLSThreadingHTTPServer(ThreadingHTTPServer):
         self,
         *args: Any,
         snagline_ssl_context: ssl.SSLContext,
+        snagline_handshake_timeout: float | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
         self.snagline_ssl_context = snagline_ssl_context
+        self.snagline_handshake_timeout = snagline_handshake_timeout
 
     def finish_request(self, request: Any, client_address: Any) -> None:
+        # The handler's read timeout cannot cover the handshake: setup() only
+        # runs once the connection is wrapped. So bound it here too, or a peer
+        # that opens a socket and never speaks TLS holds this worker thread
+        # forever -- the same retention #130 closes for body reads. Cleared
+        # afterwards so setup() applies the handler timeout as usual.
+        if self.snagline_handshake_timeout is not None:
+            with contextlib.suppress(OSError):
+                request.settimeout(self.snagline_handshake_timeout)
         try:
             tls_request = self.snagline_ssl_context.wrap_socket(
                 request, server_side=True
             )
         except (ssl.SSLError, OSError):
             # Failed handshake (plaintext probe against the TLS port, port
-            # scan, stale client): drop this one connection and keep serving.
-            # Fail-open per project.md §1.2; never surface as a serving error.
+            # scan, stale client, or a handshake that outran the timeout
+            # above): drop this one connection and keep serving. Fail-open
+            # per project.md §1.2; never surface as a serving error.
             logger.debug(
                 "snagline sidecar: TLS handshake failed from %s:%s",
                 client_address[0],
@@ -706,6 +777,8 @@ class _TLSThreadingHTTPServer(ThreadingHTTPServer):
                 exc_info=True,
             )
             return
+        with contextlib.suppress(OSError):
+            tls_request.settimeout(None)
         # Annotated locally: typeshed binds this call's server parameter to
         # Self, which the subclass indirection here trips over.
         handler_class: Any = self.RequestHandlerClass
@@ -723,6 +796,7 @@ def make_server(
     ssl_context: ssl.SSLContext | None = None,
     certfile: str | None = None,
     keyfile: str | None = None,
+    read_timeout: float | None = None,
 ) -> ThreadingHTTPServer:
     """Construct a ready-to-``serve_forever()`` sidecar server.
 
@@ -730,15 +804,27 @@ def make_server(
     HTTPS directly (issue #120): connections are wrapped server-side via
     stdlib ``ssl`` with the handshake running on each connection's own
     worker thread. Without them the server is plain HTTP, exactly as before.
+
+    ``read_timeout`` bounds how long any single read on an accepted
+    connection may wait (issue #130); see ``make_handler`` for how it is
+    resolved. On a TLS listener the same budget also bounds the handshake,
+    which runs before the handler exists and so cannot be covered by the
+    handler's own timeout.
     """
     tls_context = _resolve_ssl_context(ssl_context, certfile, keyfile)
     handler = make_handler(
-        monitor, auth_token, max_body_bytes, max_risks, metrics_format
+        monitor, auth_token, max_body_bytes, max_risks, metrics_format, read_timeout
     )
     if tls_context is None:
         return ThreadingHTTPServer((host, port), handler)
     return _TLSThreadingHTTPServer(
-        (host, port), handler, snagline_ssl_context=tls_context
+        (host, port),
+        handler,
+        snagline_ssl_context=tls_context,
+        # Read back the value make_handler resolved rather than resolving a
+        # second time, so the handshake and the request share one budget even
+        # when it came from the environment.
+        snagline_handshake_timeout=handler.timeout,
     )
 
 
@@ -753,6 +839,7 @@ def serve(
     ssl_context: ssl.SSLContext | None = None,
     certfile: str | None = None,
     keyfile: str | None = None,
+    read_timeout: float | None = None,
 ) -> None:
     """Run the sidecar server in the foreground until interrupted."""
     tls_enabled = ssl_context is not None or certfile is not None
@@ -767,6 +854,7 @@ def serve(
         ssl_context,
         certfile,
         keyfile,
+        read_timeout,
     )
     logger.info(
         "snagline sidecar listening on %s://%s:%d (POST /events, GET /health)%s",

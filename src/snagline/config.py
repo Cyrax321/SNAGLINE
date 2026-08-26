@@ -334,6 +334,19 @@ class Config:
     # ?format=prometheus; environment override SNAGLINE_METRICS_FORMAT.
     metrics_format: str = "prometheus"
 
+    # --- Sidecar socket read timeout (issue #130) ----------------------------
+    # How long one sidecar connection may go without producing the bytes it
+    # promised before the server drops it. Without a timeout every
+    # ``rfile.read(n)`` blocks until exactly n bytes arrive, so a client that
+    # declares ``Content-Length: 500000`` and then sends seven bytes holds a
+    # handler thread of the ThreadingHTTPServer for as long as it likes --
+    # slowloris-style resource retention against the sidecar. Applies per read,
+    # not per request, so a genuinely slow sender that keeps making progress is
+    # never cut off; the ceiling is deliberately generous for that reason.
+    # Values <= 0 restore the pre-#130 unbounded behavior for anyone who needs
+    # it. Environment override SNAGLINE_SERVE_READ_TIMEOUT_S.
+    serve_read_timeout_s: float = 30.0
+
     # --- Enforcement policy (issue #93) ---------------------------------------
     # Optional escalation layer that runs AFTER the sinks on every dispatched
     # risk (documented ordering: detectors -> sinks -> policy). "observe" (the
