@@ -124,9 +124,11 @@ def test_make_server_accepts_ready_ssl_context(tmp_path):
         port=0,
         ssl_context=context,
     )
+    # Start serving before asserting anything so a failed assertion still
+    # tears the server down cleanly instead of deadlocking on shutdown().
+    threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         assert isinstance(server.socket, ssl.SSLSocket)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
         base = f"https://127.0.0.1:{server.server_address[1]}"
         status, body = _request_tls("GET", base, "/health")
         assert status == 200
@@ -178,10 +180,12 @@ def test_auth_is_enforced_over_the_tls_listener(tmp_path):
 
 def test_plain_mode_is_untouched_when_no_tls_arguments_are_given():
     server = make_server(Monitor.default(), host="127.0.0.1", port=0)
+    # Start serving before asserting anything so a failed assertion still
+    # tears the server down cleanly instead of deadlocking on shutdown().
+    threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         assert not isinstance(server.socket, ssl.SSLSocket)
         base = f"http://127.0.0.1:{server.server_address[1]}"
-        threading.Thread(target=server.serve_forever, daemon=True).start()
         with urllib.request.urlopen(base + "/health", timeout=5) as resp:
             assert resp.status == 200
             assert json.loads(resp.read()) == {"status": "ok"}
