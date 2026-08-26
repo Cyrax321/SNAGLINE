@@ -254,6 +254,18 @@ def _build_parser() -> argparse.ArgumentParser:
         "Unset means all endpoints are open.",
     )
     p_serve.add_argument(
+        "--certfile",
+        default=None,
+        help="PEM certificate enabling stdlib TLS on the sidecar listener "
+        "(issue #120); requires --keyfile unless the file bundles its key. "
+        "Omit for plain HTTP.",
+    )
+    p_serve.add_argument(
+        "--keyfile",
+        default=None,
+        help="PEM private key matching --certfile.",
+    )
+    p_serve.add_argument(
         "--max-body-bytes",
         type=int,
         default=1_000_000,
@@ -702,8 +714,10 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     # Prefer the flag, fall back to the environment so the secret need not
     # appear in argv (visible to every other process via ps).
     auth_token = args.auth_token or os.environ.get("SNAGLINE_SERVE_AUTH_TOKEN") or None
+    scheme = "https" if (args.certfile or args.keyfile) else "http"
     print(
-        f"snagline serve: listening on http://{args.host}:{args.port} (POST /events, GET /health)",
+        f"snagline serve: listening on {scheme}://{args.host}:{args.port} "
+        "(POST /events, GET /health)",
         file=sys.stderr,
     )
     if not auth_token:
@@ -713,6 +727,13 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
     with suppress(KeyboardInterrupt):
+        # TLS kwargs are forwarded only when requested: with no --certfile/
+        # --keyfile the serve() call is exactly what it was before issue #120.
+        tls_kwargs = (
+            {"certfile": args.certfile, "keyfile": args.keyfile}
+            if (args.certfile or args.keyfile)
+            else {}
+        )
         serve(
             Monitor.default(config=_build_config(args), sinks=sinks),
             host=args.host,
@@ -720,6 +741,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             auth_token=auth_token,
             max_body_bytes=args.max_body_bytes,
             max_risks=args.max_risks,
+            **tls_kwargs,
         )
     return 0
 

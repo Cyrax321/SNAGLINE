@@ -215,3 +215,38 @@ def test_unloadable_certfile_raises_at_startup(tmp_path):
     bad.write_text("this is not a certificate\n")
     with pytest.raises((ssl.SSLError, OSError)):
         make_server(Monitor.default(), host="127.0.0.1", port=0, certfile=str(bad))
+
+
+def test_cli_serve_forwards_tls_flags(monkeypatch):
+    from snagline.cli import main
+
+    captured: dict = {}
+
+    def _fake_serve(monitor, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr("snagline.server.http_server.serve", _fake_serve)
+    assert (
+        main(
+            ["serve", "--port", "0", "--certfile", "/t/c.pem", "--keyfile", "/t/k.pem"]
+        )
+        == 0
+    )
+    assert captured["certfile"] == "/t/c.pem"
+    assert captured["keyfile"] == "/t/k.pem"
+
+
+def test_cli_serve_without_tls_flags_passes_none(monkeypatch):
+    # Plain-mode regression on the CLI path: with absent flags serve() is
+    # called without any TLS kwargs at all, byte-for-byte the old invocation.
+    from snagline.cli import main
+
+    captured: dict = {}
+
+    def _fake_serve(monitor, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr("snagline.server.http_server.serve", _fake_serve)
+    assert main(["serve", "--port", "0"]) == 0
+    assert "certfile" not in captured
+    assert "keyfile" not in captured
