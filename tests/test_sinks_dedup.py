@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 
 from snagline.risk import (
@@ -172,6 +173,118 @@ class _SweepCountingDedup(DedupSink):
     def _sweep(self, now: float) -> None:
         self.sweeps += 1
         super()._sweep(now)
+
+
+# --- snapshot restore across a host reboot (issue #136) ----------------------
+
+
+def _dumped_snapshot(cooldown: float = 300.0):
+    inner = _RecordingSink()
+    sink = DedupSink(inner, cooldown_seconds=cooldown)
+    sink.emit(_risk(0.9))
+    sink.emit(_risk(0.9))
+    assert len(inner.emitted) == 1, "second immediate emit must be suppressed"
+    dumped = sink.dump_state()
+    assert dumped is not None
+    assert dumped["wall"], "wall-clock companion must be recorded"
+    return dumped
+
+
+def test_dedup_snapshot_restored_after_reboot_delivers(monkeypatch, caplog):
+    """Issue #136 verification sketch: restored monotonic timestamps from before
+    a reboot sit in the fresh clock's future; the duplicate risk emitted after
+    the simulated reboot must be DELIVERED, not suppressed for roughly the
+    previous uptime.
+    """
+    dumped = _dumped_snapshot()
+    # Simulate the reboot: fresh monotonic clock starts near zero. Wall time is
+    # untouched, exactly as on real hardware.
+    monkeypatch.setattr(time, "monotonic", lambda: 5.0)
+    inner_b = _RecordingSink()
+    s2 = DedupSink(inner_b, cooldown_seconds=300.0)
+    with caplog.at_level("WARNING", logger="snagline"):
+        s2.load_state(dumped)
+    assert any("clock-reset" in r.message for r in caplog.records), "drop must log once"
+    s2.emit(_risk(0.9))
+    assert len(inner_b.emitted) == 1, "duplicate after reboot must be delivered"
+
+
+def test_dedup_snapshot_same_boot_restart_still_suppresses(monkeypatch):
+    """The fix must not throw away what #91 shipped: within one boot the
+    monotonic clock is continuous, so a process restart mid-window keeps
+    suppressing for the remainder of the cooldown."""
+    dumped = _dumped_snapshot()
+    stored_mono = dumped["last"][0][1]
+    monkeypatch.setattr(time, "monotonic", lambda: stored_mono + 10.0)
+    inner_b = _RecordingSink()
+    s2 = DedupSink(inner_b, cooldown_seconds=300.0)
+    s2.load_state(dumped)
+    assert len(s2._last) == 1, "same-boot entry must survive restore"
+    s2.emit(_risk(0.9))
+    assert len(inner_b.emitted) == 0, "cooldown continues across same-boot restart"
+
+
+def test_dedup_snapshot_wall_stale_entries_dropped(monkeypatch, caplog):
+    """An entry older than the cooldown by wall clock (long shutdown) is dead
+    weight even when its monotonic value happens to still be in the fresh
+    clock's past; it must be dropped so the alert re-delivers."""
+    dumped = _dumped_snapshot()
+    stored_mono = dumped["last"][0][1]
+    # Monotonic continuous and ahead of the entry, but a day has passed by wall.
+    monkeypatch.setattr(time, "monotonic", lambda: stored_mono + 10.0)
+    real_wall = time.time()
+    monkeypatch.setattr(time, "time", lambda: real_wall + 86_400.0)
+    inner_b = _RecordingSink()
+    s2 = DedupSink(inner_b, cooldown_seconds=300.0)
+    with caplog.at_level("WARNING", logger="snagline"):
+        s2.load_state(dumped)
+    assert len(s2._last) == 0, "wall-stale entry must not be restored"
+    assert any("stale" in r.message for r in caplog.records)
+    s2.emit(_risk(0.9))
+    assert len(inner_b.emitted) == 1
+
+
+def test_dedup_legacy_snapshot_without_wall_fails_open(caplog):
+    """Snapshots written before the wall companion (#136) carry no provenance;
+    they cannot prove same-boot continuity, so their entries are dropped with
+    one warning instead of risking silent over-suppression."""
+    legacy = {
+        "cooldown_seconds": 300.0,
+        "last": [[["ep", "loop", "critical"], time.monotonic()]],
+    }
+    inner = _RecordingSink()
+    s = DedupSink(inner, cooldown_seconds=300.0)
+    with caplog.at_level("WARNING", logger="snagline"):
+        s.load_state(legacy)
+    assert len(s._last) == 0
+    s.emit(_risk(0.9))
+    assert len(inner.emitted) == 1, "unprovenanced entries fail open to delivery"
+
+
+def test_dedup_malformed_snapshot_does_not_raise_and_delivers(caplog):
+    inner = _RecordingSink()
+    s = DedupSink(inner, cooldown_seconds=300.0)
+    garbage = {
+        "cooldown_seconds": 300.0,
+        "last": [["ep", "loop", "critical"]],  # missing timestamp element
+        "wall": [["ep", "loop", "critical", None]],  # wrong shape entirely
+    }
+    with caplog.at_level("WARNING", logger="snagline"):
+        s.load_state(garbage)
+    assert len(s._last) == 0
+    s.emit(_risk(0.9))
+    assert len(inner.emitted) == 1, "garbage snapshot never breaks setup or ingest"
+
+
+def test_dedup_snapshot_survives_json_round_trip():
+    dumped = _dumped_snapshot()
+    round_tripped = json.loads(json.dumps(dumped))
+    inner_b = _RecordingSink()
+    s2 = DedupSink(inner_b, cooldown_seconds=300.0)
+    s2.load_state(round_tripped)
+    assert len(s2._last) == 1, "JSON-compatible state restores cleanly"
+    s2.emit(_risk(0.9))
+    assert len(inner_b.emitted) == 0, "restored suppression still works"
 
 
 def test_dedup_non_positive_cooldown_is_pass_through():
