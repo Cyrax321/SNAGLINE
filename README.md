@@ -149,6 +149,7 @@ in [docs/RETRAIN_CADENCE.md](docs/RETRAIN_CADENCE.md)).
 | **No content retention** | Detectors reason about hashes, timings, counts, and booleans -- never prompt or response content. Adoption blocker if left ambiguous. |
 | **Streaming-first, batch-capable** | Primary use is live monitoring of a running agent. The same event schema and detectors also work over an exported trajectory file for offline analysis. |
 | **Pluggable sinks** | Console (default, zero dep), webhook (stdlib urllib, fire-and-forget), and extensible. Only `FailureRisk` fields are ever transmitted. |
+| **Optional enforcement** | `Monitor(policy=...)` adds a sanctioned escalation path after the sinks: `"callback"` wraps an in-process callable fail-open; `"halt_webhook"` POSTs the risk and lands its `{"action": "continue"|"pause"}` directive on `monitor.last_directive`. Timeout/error/dead endpoint always falls back to continue; default `policy="observe"` pays nothing (issue #93). |
 | **External agent bridges** | HTTP sidecar, command bridge, and file tail for non-Python agents (Claude Code, OpenClaw, Hermes). |
 | **Thread-safe** | Per-instance `threading.Lock` supports concurrent multi-episode monitoring. |
 
@@ -262,6 +263,10 @@ the path variant below.
 | `SNAGLINE_FAIL_OPEN` | `fail_open` | True | Swallow detector/sink exceptions instead of propagating |
 | `SNAGLINE_LOG_FORMAT` | `log_format` | text | text or json; json installs LoggingSink next to ConsoleSink |
 | `SNAGLINE_METRICS_FORMAT` | `metrics_format` | prometheus | Sidecar GET /metrics body: prometheus or classic |
+| `SNAGLINE_POLICY` | `policy` | observe | Enforcement layer: observe, callback (needs a code-supplied `on_risk`), or halt_webhook |
+| `SNAGLINE_HALT_URL` | `halt_url` | *(unset)* | Halt webhook endpoint; required when policy is halt_webhook |
+| `SNAGLINE_HALT_TIMEOUT_S` | `halt_timeout_s` | 0.25 | Halt webhook round-trip budget in seconds; timeout fails open to continue |
+| `SNAGLINE_MIN_SEVERITY_FOR_HALT` | `min_severity_for_halt` | 0.8 | Minimum risk score that pays the halt-webhook cost |
 
 A handful of variables sit outside `Config` because they are consumed
 directly by one component each:
@@ -285,11 +290,17 @@ SNAGLINE is verified not just with unit tests, but against real LLM agents, live
 ### Automated Test Suite and Benchmarks
 
 ```
-tests : 390 passed, 2 skipped  (pytest, Python 3.14, 2026-08-26;
+tests : 531 passed, 2 skipped  (pytest, Python 3.14, 2026-08-26;
 skip = langchain integrations without optional extras)
 bench : median 2.43 us/step, p99 27.71 us/step over 200,000 synthetic steps
         (measured 2026-08-26 on Apple M1, arm64, CPython 3.14.5;
          earlier 1.91 / 33.90 on same hardware 2026-08-15)
+enforcement (issue #93): added latency per halting step, halt_timeout_s=250ms,
+        Apple M1 / CPython 3.14 / 2026-08-26: responding localhost endpoint
+        median 264 us/step, refused (dead) endpoint median 57 us/step,
+        stalled endpoint median 252.7 ms/step = the full timeout envelope;
+        observe baseline unchanged at ~2 us/step. Reproduce with
+        python benchmarks/enforcement_benchmark.py
 ```
 
 Coverage spans:
@@ -303,6 +314,7 @@ Coverage spans:
 | **Adapters** | Raw adapter builds and ingests events. LangChain callbacks map correctly. LangGraph stream wrapper passes through unchanged. Claude Code payloads map correctly. |
 | **HTTP sidecar** | Health endpoint returns 200. Events endpoint ingests and fires detectors. Malformed body returns 400. Unknown paths return 404. |
 | **Webhook sink** | Emits correct payload with no metadata. Never raises on network failure. Never raises on HTTP 500. |
+| **Enforcement policy (#93)** | Callback exceptions don't propagate (parity with fail-open tests), are logged and counted. Halt webhook timeout/dead endpoint/malformed body/unknown action/HTTP error all fall back to continue. Ordering is detectors -> sinks -> policy; the webhook runs outside the episode lock. `last_directive` is thread-safe under concurrent ingest. Default `policy="observe"` construction is unchanged. |
 | **CLI** | Replay detects loops, cascades, and latency spikes. Watch ingests stdin. Malformed lines are skipped. Webhook requires URL. |
 | **Integration** | Full agent run triggers all three detectors. Clean run stays silent. |
 
@@ -464,6 +476,36 @@ class MySink:
         ...
 ```
 
+### Enforcement policy (issue #93)
+
+Detection-only is the right default, but production harnesses sometimes need teeth: pause the session on a confirmed loop, trip an in-process circuit breaker on a budget breach. `Monitor` supports two optional escalation policies that run AFTER the sinks on every dispatched risk (documented ordering: detectors -> sinks -> policy), outside every episode lock:
+
+```python
+from snagline import Monitor
+
+# In-process circuit breaker: your callback sets a flag your agent loop checks.
+# Exceptions in the callback are swallowed exactly like sink errors.
+monitor = Monitor([...], [...], policy="callback", on_risk=my_fn)
+
+# Halt webhook: every risk with score >= min_severity_for_halt (default 0.8)
+# is POSTed to halt_url; the response {"action": "continue"|"pause",
+# "reason": ...} is surfaced thread-safely as monitor.last_directive.
+monitor = Monitor(
+    [...],
+    [...],
+    policy="halt_webhook",
+    halt_url="http://127.0.0.1:9100/halt",
+    halt_timeout_s=0.25,
+)
+...
+if monitor.last_directive.action == "pause":
+    ...  # your host decides what pausing means; snagline never raises into your loop
+```
+
+Fail-open survives enforcement by construction: a callback exception is logged, counted under `metrics()["policy_errors"]`, and swallowed (unless `fail_open=False`); a webhook timeout, dead endpoint, malformed body, unknown action, or HTTP error leaves the directive at continue. Worst-case added latency per halting step is bounded by the explicit `halt_timeout_s` envelope (default 250ms) and is paid only by the dispatching thread -- other episodes keep ingesting. Measured numbers (Apple M1, CPython 3.14, 2026-08-26; run `python benchmarks/enforcement_benchmark.py`): observe baseline ~2 us/step, responding localhost endpoint ~264 us/step median, refused endpoint ~57 us/step, stalled endpoint ~252.7 ms/step, i.e. the full timeout budget plus a small epsilon.
+
+The equivalent for sidecar consumers: `snagline serve --halt-forward URL` runs the identical policy inside the HTTP sidecar (`--halt-timeout` and `--min-severity-for-halt` tune it). Configuration is 12-factor too: `SNAGLINE_POLICY`, `SNAGLINE_HALT_URL`, `SNAGLINE_HALT_TIMEOUT_S`, `SNAGLINE_MIN_SEVERITY_FOR_HALT`. Note `on_risk` is code-only: callables cannot arrive via env vars or config files.
+
 ## External Agent Bridges
 
 Claude Code, OpenClaw, and Hermes are processes, not Python libraries, so SNAGLINE bridges at the process level with three universal mechanisms, HTTP, command, and file, documented with copy-paste wiring for each framework in [docs/FRAMEWORK_BRIDGES.md](docs/FRAMEWORK_BRIDGES.md).
@@ -575,6 +617,7 @@ Detectors reason only about **hashes, timings, counts, and booleans** -- never r
 - **FailureRisk** deliberately carries no `metadata` field. An alerting channel (webhook, Slack) cannot become an accidental data-exfiltration path.
 - **The `metadata` dict** on `StepEvent` is the one place raw content could leak if an adapter author puts it there. Detectors never read `metadata`, and sinks should not forward it by default.
 - **The webhook sink** transmits only `FailureRisk` fields (ids, score, trigger, detail, timestamp) -- never `StepEvent.content` or `StepEvent.metadata`.
+- **The halt webhook (enforcement, issue #93)** deserves special respect: unlike the alerting webhook, its response holds CONTROL -- a `"pause"` directive can stop your agent. Treat that endpoint as privileged infrastructure: bind it to localhost or reach it through an authenticated reverse proxy (same guidance as the sidecar below, copy-paste configs in [docs/ATTACH_ANY_SYSTEM.md](docs/ATTACH_ANY_SYSTEM.md#sidecar-tls-reverse-proxy-termination-issue-103)), and never expose it to networks you do not control. The POST body carries only `FailureRisk` fields, but whoever can answer it can steer the host. The fail-open contract still applies to the client side: timeout or error defaults to continue, so a DOWNED halt endpoint degrades to detection-only rather than blocking the agent.
 - **The HTTP sidecar** serves plain HTTP and accepts arbitrary `StepEvent` JSON from any caller. For production use, front it with a reverse proxy that enforces authentication and terminates TLS; copy-paste nginx and Caddy configs are in [docs/ATTACH_ANY_SYSTEM.md](docs/ATTACH_ANY_SYSTEM.md#sidecar-tls-reverse-proxy-termination-issue-103). In-process TLS is the documented future option ([#103](https://github.com/Cyrax321/SNAGLINE/issues/103)).
 
 ## What SNAGLINE Is Not
