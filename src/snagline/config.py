@@ -77,6 +77,41 @@ def _load_toml(text: str) -> dict[str, Any]:
 LOG_FORMATS: tuple[str, ...] = ("text", "json")
 
 
+def _validated_horizon(cfg: Config) -> None:
+    """Validate the horizon-scale knobs (issue #92); raise when invalid.
+
+    Mirrors the ``log_format`` precedent (issue #119): an out-of-range value is
+    a configuration error and fails loudly at construction/resolve time rather
+    than being silently ignored downstream. All knobs are opt-in (defaults off)
+    so validation only bites operators who turned the feature on.
+    """
+    if not 0.0 < cfg.warn_fraction <= 1.0:
+        raise ValueError(
+            f"warn_fraction must be within (0, 1]; got {cfg.warn_fraction!r}"
+        )
+    if cfg.max_episode_wall_seconds is not None and cfg.max_episode_wall_seconds <= 0:
+        raise ValueError(
+            "max_episode_wall_seconds must be positive when set; "
+            f"got {cfg.max_episode_wall_seconds!r}"
+        )
+    if cfg.idle_warn_seconds is not None and cfg.idle_warn_seconds <= 0:
+        raise ValueError(
+            f"idle_warn_seconds must be positive when set; got {cfg.idle_warn_seconds!r}"
+        )
+    if cfg.window_scale_steps < 0:
+        raise ValueError(
+            f"window_scale_steps must be >= 0 (0 disables scaling); "
+            f"got {cfg.window_scale_steps!r}"
+        )
+    if cfg.max_window < 1:
+        raise ValueError(f"max_window must be >= 1; got {cfg.max_window!r}")
+    if cfg.cusum_refit_every < 0:
+        raise ValueError(
+            f"cusum_refit_every must be >= 0 (0 disables refits); "
+            f"got {cfg.cusum_refit_every!r}"
+        )
+
+
 def _validated_log_format(value: str) -> str:
     """Normalize and validate a ``log_format`` value; raise when invalid.
 
@@ -317,11 +352,42 @@ class Config:
     # risk still reaches sinks/callback as usual but no halt round-trip happens.
     min_severity_for_halt: float = 0.8
 
+    # --- Horizon-scale time axis (issue #92, opt-in) -------------------------
+    # Fixed step-count assumptions break on multi-day episodes where step rates
+    # vary by orders of magnitude between phases. Every knob below defaults off
+    # and leaves behavior byte-identical when unset; all timing is derived from
+    # StepEvent.timestamp inside ingest(), never from the wall clock, so replay
+    # stays deterministic by construction.
+    #
+    # Wall-clock budget: one warning risk at warn_fraction of the budget and a
+    # single critical breach risk at the limit, each fired at most once per
+    # episode. Trigger name for both: "wall_clock_budget", scored 0.7 (keeps
+    # the pre-breach signal in the "warning" severity band) and 1.0.
+    max_episode_wall_seconds: float | None = None
+    warn_fraction: float = 0.8  # single warning risk before breach
+    # Idle detection: a gap of at least this many seconds between consecutive
+    # ingests (event timestamps again) fires one "idle_gap" risk per episode.
+    idle_warn_seconds: float | None = None
+    # Window auto-scaling for window-based detectors: the effective window grows
+    # as base * ceil(episode_len / window_scale_steps), capped at max_window,
+    # refitted lazily as it grows. 0 disables scaling entirely (the default).
+    window_scale_steps: int = 0
+    max_window: int = 512  # hard cap for scaled windows
+    # Latency CUSUM periodic baseline re-fit: every N post-warm-up samples the
+    # detector starts a fresh Welford learner while the frozen baseline keeps
+    # scoring; when the learner completes, its stats are compared against the
+    # frozen baseline and a sustained shift in the baseline itself emits one
+    # latency_anomaly risk before the new baseline is adopted. 0 disables.
+    cusum_refit_every: int = 0
+
     def __post_init__(self) -> None:
         # Issue #119: invalid closed-set values are configuration errors and
         # must fail loudly here instead of being silently ignored downstream.
         self.log_format = _validated_log_format(self.log_format)
         self.policy = validate_policy(self.policy)
+        # Issue #92: same policy for the horizon-scale knobs. All default off,
+        # so stock configurations never hit these checks.
+        _validated_horizon(self)
 
     # --- 12-factor configuration (project.md §5.4, ATTACH_ANY_SYSTEM P0) -----
     @classmethod
@@ -420,4 +486,7 @@ class Config:
         # a closed value set after env layering (issue #119).
         cfg.log_format = _validated_log_format(cfg.log_format)
         cfg.policy = validate_policy(cfg.policy)
+        # Same re-validation for the horizon-scale knobs set from env/file
+        # (issue #92): SNAGLINE_WARN_FRACTION=5 must fail loudly, not silently.
+        _validated_horizon(cfg)
         return cfg

@@ -17,7 +17,7 @@ import json
 import os
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import suppress
 from pathlib import Path
 
@@ -254,6 +254,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Suppress repeated alerts of the same key for this many seconds "
         "(issue #4). 0 disables (default).",
     )
+    p_watch.add_argument(
+        "--heartbeat",
+        metavar="PATH",
+        default=None,
+        help="Touch this file's mtime on every ingest (and on every idle "
+        "follow-poll) so an external supervisor can alert when it goes stale; "
+        "silence becomes detectable outside the event stream (issue #92).",
+    )
 
     p_serve = sub.add_parser(
         "serve",
@@ -449,8 +457,17 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _iter_lines(path: str | None, follow: bool) -> Iterator[str]:
-    """Yield lines from stdin, or from a file; with ``follow``, tail like -f."""
+def _iter_lines(
+    path: str | None,
+    follow: bool,
+    on_wait: Callable[[], None] | None = None,
+) -> Iterator[str]:
+    """Yield lines from stdin, or from a file; with ``follow``, tail like -f.
+
+    ``on_wait`` (issue #92) fires on every empty follow-poll so a heartbeat
+    can keep proving liveness while the watched file is silent. Failures are
+    the callback's own problem; this loop never inspects them.
+    """
     if path is None:
         yield from sys.stdin
         return
@@ -460,6 +477,8 @@ def _iter_lines(path: str | None, follow: bool) -> Iterator[str]:
             if line:
                 yield line
             elif follow:
+                if on_wait is not None:
+                    on_wait()
                 time.sleep(0.2)
             else:
                 return
@@ -480,11 +499,24 @@ def _cmd_watch(args: argparse.Namespace) -> int:
         # diverge from serve, which passes _build_sinks through untouched.
         sinks=sinks,
     )
+    # External liveness evidence (issue #92): touched per ingest and on every
+    # idle follow-poll so silence becomes externally detectable. Construction
+    # cannot fail; touch failures inside log once and never raise (fail-open).
+    heartbeat = None
+    if args.heartbeat:
+        from snagline.sinks.heartbeat import HeartbeatSink
+
+        heartbeat = HeartbeatSink(args.heartbeat)
+        heartbeat.touch()  # evidence of life from startup
     episode = args.episode_id or (args.file or "stdin")
     steps = 0
     try:
         with suppress(KeyboardInterrupt):
-            for line in _iter_lines(args.file, args.follow):
+            for line in _iter_lines(
+                args.file,
+                args.follow,
+                on_wait=heartbeat.touch if heartbeat is not None else None,
+            ):
                 line = line.strip()
                 if not line:
                     continue
@@ -499,6 +531,8 @@ def _cmd_watch(args: argparse.Namespace) -> int:
                     continue
                 monitor.ingest(event)
                 steps += 1
+                if heartbeat is not None:
+                    heartbeat.touch()
     finally:
         monitor.end_episode(episode)
     print(f"snagline watch: ingested {steps} step(s)", file=sys.stderr)

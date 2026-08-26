@@ -45,6 +45,7 @@ from collections.abc import Callable
 from typing import Any, cast
 
 from snagline.config import Config
+from snagline.detectors.windowing import next_window
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk, TriggerType
 
@@ -122,6 +123,13 @@ class LoopDetector:
         self.loop_stall_enabled = cfg.loop_stall_enabled
         self.loop_stall_steps = cfg.loop_stall_steps
         self._normalize = normalizer or default_normalizer
+        # Window auto-scaling (issue #92): inert unless cfg.window_scale_steps
+        # > 0, in which case every window grows as base * ceil(len/steps),
+        # capped at max_window. Per-episode event counts feed the scale factor.
+        self._scale_steps = cfg.window_scale_steps
+        self._max_window = cfg.max_window
+        self._counts: dict[str, int] = {}
+        self._cycle_counts: dict[str, int] = {}
         self._any_mode = (
             self.loop_near_duplicate_enabled
             or self.loop_cycle_enabled
@@ -144,7 +152,14 @@ class LoopDetector:
         return plain if plain is not None else hardened
 
     def _observe_plain(self, event: StepEvent) -> FailureRisk | None:
-        w = self._windows.setdefault(event.episode_id, deque(maxlen=self.window_size))
+        w = next_window(
+            self._windows,
+            self._counts,
+            event.episode_id,
+            self.window_size,
+            self._scale_steps,
+            self._max_window,
+        )
         w.append(event.action_signature)
         count = w.count(event.action_signature)
         fired = self._fired.get(event.episode_id)
@@ -217,8 +232,13 @@ class LoopDetector:
 
     def _observe_near_duplicate(self, event: StepEvent) -> FailureRisk | None:
         key = _normalized_key(self._normalize, event.action_signature)
-        w = self._near_windows.setdefault(
-            event.episode_id, deque(maxlen=self.window_size)
+        w = next_window(
+            self._near_windows,
+            self._counts,
+            event.episode_id,
+            self.window_size,
+            self._scale_steps,
+            self._max_window,
         )
         w.append(key)
         count = w.count(key)
@@ -245,8 +265,13 @@ class LoopDetector:
         )
 
     def _observe_cycle(self, event: StepEvent) -> FailureRisk | None:
-        w = self._cycle_windows.setdefault(
-            event.episode_id, deque(maxlen=self.loop_cycle_window_size)
+        w = next_window(
+            self._cycle_windows,
+            self._cycle_counts,
+            event.episode_id,
+            self.loop_cycle_window_size,
+            self._scale_steps,
+            self._max_window,
         )
         w.append(event.action_signature)
         period = self._minimal_period(w)
@@ -322,10 +347,12 @@ class LoopDetector:
 
     def reset(self, episode_id: str) -> None:
         self._windows.pop(episode_id, None)
+        self._counts.pop(episode_id, None)
         self._fired.pop(episode_id, None)
         self._near_windows.pop(episode_id, None)
         self._near_fired.pop(episode_id, None)
         self._cycle_windows.pop(episode_id, None)
+        self._cycle_counts.pop(episode_id, None)
         self._cycle_fired.pop(episode_id, None)
         self._stall_sig.pop(episode_id, None)
         self._stall_count.pop(episode_id, None)
@@ -339,10 +366,12 @@ class LoopDetector:
         # silently reset an in-progress stall streak or cycle track.
         return {
             "windows": {ep: list(w) for ep, w in self._windows.items()},
+            "counts": dict(self._counts),
             "fired": {ep: sorted(sigs) for ep, sigs in self._fired.items()},
             "near_windows": {ep: list(w) for ep, w in self._near_windows.items()},
             "near_fired": {ep: sorted(sigs) for ep, sigs in self._near_fired.items()},
             "cycle_windows": {ep: list(w) for ep, w in self._cycle_windows.items()},
+            "cycle_counts": dict(self._cycle_counts),
             "cycle_fired": dict(self._cycle_fired),
             "stall_sig": dict(self._stall_sig),
             "stall_count": dict(self._stall_count),
@@ -355,6 +384,9 @@ class LoopDetector:
             ep: deque(sigs, maxlen=self.window_size)
             for ep, sigs in state.get("windows", {}).items()
         }
+        # Tolerant .get() so pre-#92 snapshots restore cleanly; the counts only
+        # position the auto-scaler and default to the window they imply.
+        self._counts = {ep: int(n) for ep, n in state.get("counts", {}).items()}
         self._fired = {ep: set(sigs) for ep, sigs in state.get("fired", {}).items()}
         self._near_windows = {
             ep: deque(sigs, maxlen=self.window_size)
@@ -366,6 +398,9 @@ class LoopDetector:
         self._cycle_windows = {
             ep: deque(sigs, maxlen=self.loop_cycle_window_size)
             for ep, sigs in state.get("cycle_windows", {}).items()
+        }
+        self._cycle_counts = {
+            ep: int(n) for ep, n in state.get("cycle_counts", {}).items()
         }
         self._cycle_fired = dict(state.get("cycle_fired", {}))
         self._stall_sig = dict(state.get("stall_sig", {}))
