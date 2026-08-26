@@ -11,10 +11,13 @@ healthy sequence that stays silent.
 from __future__ import annotations
 
 import json
+import logging
+import sys
 
 import pytest
 
 from snagline.baseline import BaselineProfile, save_baseline
+from snagline.config import Config
 from snagline.events import StepEvent
 
 # ---------------------------------------------------------------------------
@@ -128,3 +131,299 @@ def test_semantic_drift_defaults_keep_preset_off():
     assert cfg.semantic_drift_tolerance == 0.3
     assert cfg.semantic_drift_cusum_k == 0.05
     assert cfg.semantic_drift_cusum_h == 0.5
+
+
+# ---------------------------------------------------------------------------
+# Detector: geometry helpers and fakes
+
+
+# Hand-built embedding families. Healthy tools point along +x; the drifted
+# tool points along -x, i.e. cosine similarity -1 territory.
+HEALTHY_VECS = {"search": [1.0, 0.1], "summarize": [0.9, 0.2]}
+DRIFT_VEC = [-1.0, 0.05]
+ALL_VECS = {**HEALTHY_VECS, "wipe_disk": DRIFT_VEC}
+
+
+def _map_embedder(table):
+    def _embed(event: StepEvent) -> list[float]:
+        return list(table[event.tool_name])
+
+    return _embed
+
+
+def _healthy(n: int, start: int = 0, episode: str = "ep") -> list[StepEvent]:
+    tools = list(HEALTHY_VECS)
+    return [_ev(start + i, tools[i % len(tools)], episode) for i in range(n)]
+
+
+def _detector(
+    baseline: BaselineProfile,
+    embedder=None,
+    **overrides,
+) -> object:
+    from snagline.drift.goal_drift import SemanticGoalDriftDetector
+
+    cfg = Config(**{"semantic_drift_model": "fake-model", **overrides})
+    return SemanticGoalDriftDetector(
+        baseline,
+        config=cfg,
+        embedder=embedder if embedder is not None else _map_embedder(ALL_VECS),
+    )
+
+
+def _semantic_baseline(n: int = 30) -> object:
+    from snagline.drift.goal_drift import fit_semantic_baseline
+
+    return fit_semantic_baseline(
+        _healthy(n), _map_embedder(HEALTHY_VECS), model="fake-model"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Detector: pure math, labels, privacy
+
+
+def test_cosine_hand_computed_values():
+    from snagline.drift.goal_drift import _cosine
+
+    assert _cosine([1.0, 0.0], [0.0, 1.0]) == pytest.approx(0.0)
+    # Orthogonal-ish pair [1,0] vs [1,1]: dot 1, norms 1 and sqrt(2).
+    assert _cosine([1.0, 0.0], [1.0, 1.0]) == pytest.approx(1.0 / 2**0.5)
+    assert _cosine([1.0, 0.0], [-1.0, 0.0]) == pytest.approx(-1.0)
+    # Degenerate vectors carry no direction: guard must stay silent (1.0).
+    assert _cosine([0.0, 0.0], [1.0, 0.0]) == 1.0
+    assert _cosine([1.0, 0.0], [0.0, 0.0]) == 1.0
+
+
+def test_event_label_is_structural_and_ignores_content_fields():
+    from snagline.drift.goal_drift import _event_label
+
+    base = _ev(0, "search")
+    with_meta = StepEvent(
+        step_id=base.step_id,
+        episode_id=base.episode_id,
+        timestamp=base.timestamp,
+        action_type=base.action_type,
+        action_signature="totally-different-hash",
+        tool_name="search",
+        metadata={"prompt": "SECRET PROMPT TEXT", "response": "SECRET"},
+    )
+    # Same structure, different hash/metadata: identical label, so identical
+    # embeddings downstream. Content never leaks into the semantic channel.
+    assert _event_label(base) == _event_label(with_meta)
+    assert _event_label(base) == "tool_call search"
+    err = StepEvent(
+        step_id="e",
+        episode_id="ep",
+        timestamp=0.0,
+        action_type="tool_call",
+        action_signature="h",
+        tool_name="search",
+        error_type="TimeoutError",
+    )
+    assert _event_label(err) == "tool_call search TimeoutError"
+
+
+def test_fit_metadata_neutrality_identical_centroids():
+    from snagline.drift.goal_drift import fit_semantic_baseline
+
+    plain = _healthy(10)
+    tagged = [
+        StepEvent(
+            step_id=e.step_id,
+            episode_id=e.episode_id,
+            timestamp=e.timestamp,
+            action_type=e.action_type,
+            action_signature=e.action_signature,
+            tool_name=e.tool_name,
+            metadata={"note": f"private-{i}"},
+        )
+        for i, e in enumerate(plain)
+    ]
+    emb = _map_embedder(HEALTHY_VECS)
+    a = fit_semantic_baseline(plain, emb)
+    b = fit_semantic_baseline(tagged, emb)
+    assert a.embedding_centroid == b.embedding_centroid
+
+
+def test_fit_hand_computed_mean_and_provenance():
+    from snagline.drift.goal_drift import fit_semantic_baseline
+
+    events = [_ev(0, "search", "fit"), _ev(1, "wipe_disk", "fit")]
+    profile = fit_semantic_baseline(events, _map_embedder(ALL_VECS), model="m1")
+    # Mean of [1.0, 0.1] and [-1.0, 0.05], computed by hand.
+    assert profile.embedding_centroid == pytest.approx([0.0, 0.075])
+    assert profile.embedding_count == 2
+    assert profile.embedding_model == "m1"
+    # Structural stats ride along untouched.
+    assert profile.tools["search"].count == 1
+    assert profile.tools["wipe_disk"].count == 1
+
+
+def test_fit_rejects_dimension_changes():
+    from snagline.drift.goal_drift import fit_semantic_baseline
+
+    def unstable(event: StepEvent) -> list[float]:
+        return [1.0, 0.0] if event.timestamp < 1 else [1.0, 2.0, 3.0]
+
+    with pytest.raises(ValueError, match="dimension"):
+        fit_semantic_baseline(_healthy(4), unstable)
+
+
+# ---------------------------------------------------------------------------
+# Detector: both-sided behavior (fires on sustained drift / silent on healthy)
+
+
+def test_sustained_drift_fires_exact_goal_drift_trigger():
+    det = _detector(_semantic_baseline(), semantic_drift_min_samples=10)
+    episode = "live"
+    for i, ev in enumerate(_healthy(12, episode=episode)):
+        assert det.observe(ev) is None  # warm-up plus two scored healthy steps
+    fired = None
+    for j in range(12, 60):
+        risk = det.observe(_ev(j, "wipe_disk", episode))
+        if risk is not None:
+            fired = risk
+            break
+    assert fired is not None, "sustained semantic drift never fired"
+    assert fired.trigger == "goal_drift"
+    assert fired.episode_id == episode
+    assert 0.0 < fired.score <= 1.0
+
+
+def test_long_healthy_stream_stays_silent():
+    det = _detector(_semantic_baseline(), semantic_drift_min_samples=10)
+    for ev in _healthy(200, episode="calm"):
+        assert det.observe(ev) is None
+
+
+def test_single_outlier_step_among_healthy_stays_silent():
+    # The CUSUM gate exists precisely so one odd step cannot page anyone:
+    # deviation must be sustained. Hand-checked: a single signal pulse minus
+    # slack k decays back to zero long before reaching h.
+    det = _detector(_semantic_baseline(), semantic_drift_min_samples=10)
+    stream = _healthy(80, episode="blip")
+    stream[40] = _ev(40, "wipe_disk", "blip")
+    for ev in stream:
+        assert det.observe(ev) is None
+
+
+def test_warmup_below_min_samples_stays_silent_even_on_pure_drift():
+    det = _detector(_semantic_baseline(), semantic_drift_min_samples=10)
+    for i in range(9):
+        assert det.observe(_ev(i, "wipe_disk", "short")) is None
+
+
+def test_rearms_and_fires_again_while_drift_continues():
+    det = _detector(_semantic_baseline(), semantic_drift_min_samples=10)
+    fires = 0
+    for i in range(120):
+        if det.observe(_ev(i, "wipe_disk", "relapse")) is not None:
+            fires += 1
+    assert fires >= 2, "persistent drift must re-alarm after re-arming"
+
+
+def test_empty_embedding_vectors_keep_detector_inert(caplog):
+    baseline = BaselineProfile()
+    baseline.embedding_centroid = []  # fitted but degenerate: no direction
+    with caplog.at_level(logging.INFO, logger="snagline"):
+        det = _detector(baseline)
+        for ev in _healthy(30, episode="x"):
+            assert det.observe(ev) is None
+    assert any("embedding_centroid" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Detector: fail-open guarantees (dedicated, per task rules)
+
+
+def test_fail_open_embedder_exceptions_swallowed_and_logged(caplog):
+    def boom(event: StepEvent) -> list[float]:
+        raise RuntimeError("inference backend exploded")
+
+    det = _detector(_semantic_baseline(), embedder=boom)
+    with caplog.at_level(logging.ERROR, logger="snagline"):
+        for ev in _healthy(30, episode="host"):
+            assert det.observe(ev) is None  # host keeps running, no raise
+    assert any("semantic_goal_drift" in r.message for r in caplog.records)
+
+
+def test_model_load_failure_latches_inert_after_exactly_one_attempt(caplog):
+    attempts = {"n": 0}
+
+    def broken_loader():
+        attempts["n"] += 1
+        raise ImportError("torch not installed")
+
+    det = _detector(_semantic_baseline())
+    det._model_loader = broken_loader  # type: ignore[attr-defined]
+    det._resolved = False
+    with caplog.at_level(logging.WARNING, logger="snagline"):
+        for ev in _healthy(25, episode="z"):
+            assert det.observe(ev) is None
+    assert attempts["n"] == 1, "broken setup must not retry on the hot path"
+    assert any("unavailable" in r.message for r in caplog.records)
+
+
+def test_default_loader_missing_extra_is_inert_with_pip_hint(monkeypatch, caplog):
+    monkeypatch.setitem(sys.modules, "sentence_transformers", None)
+    from snagline.drift.goal_drift import SemanticGoalDriftDetector
+
+    det = SemanticGoalDriftDetector(
+        _semantic_baseline(), config=Config(semantic_drift_model="any")
+    )
+    with caplog.at_level(logging.WARNING, logger="snagline"):
+        for ev in _healthy(15, episode="q"):
+            assert det.observe(ev) is None
+    assert any(
+        "snagline-agent[drift]" in r.message
+        for r in caplog.records
+        if r.levelno >= logging.WARNING
+    )
+
+
+def test_explicit_embedder_never_touches_sentence_transformers(monkeypatch):
+    # Laziness proof: even with the heavy package poisoned away, an injected
+    # embedder runs the full detection path (this whole suite relies on it;
+    # this test makes the guarantee explicit).
+    monkeypatch.setitem(sys.modules, "sentence_transformers", None)
+    det = _detector(_semantic_baseline(), semantic_drift_min_samples=10)
+    for i, ev in enumerate(_healthy(12, episode="ok")):
+        assert det.observe(ev) is None
+    fired = None
+    for j in range(12, 40):
+        fired = det.observe(_ev(j, "wipe_disk", "ok")) or fired
+    assert fired is not None
+
+
+def test_dump_state_round_trip_preserves_episode_state():
+    from snagline.drift.goal_drift import SemanticGoalDriftDetector
+
+    det = _detector(_semantic_baseline(), semantic_drift_min_samples=10)
+    for ev in _healthy(12, episode="snap"):
+        det.observe(ev)
+    for i in range(12, 18):
+        det.observe(_ev(i, "wipe_disk", "snap"))
+    state = det.dump_state()
+    assert state["episodes"]["snap"]["n"] == 18
+    restored = SemanticGoalDriftDetector(
+        _semantic_baseline(),
+        config=Config(semantic_drift_min_samples=10),
+        embedder=_map_embedder(ALL_VECS),
+    )
+    restored.load_state(json.loads(json.dumps(state)))
+    assert restored.dump_state() == state
+    # Both detectors must behave identically going forward (same verdicts).
+    verdicts_a = [det.observe(_ev(18, "wipe_disk", "snap")) for _ in range(1)]
+    verdicts_b = [restored.observe(_ev(18, "wipe_disk", "snap")) for _ in range(1)]
+    assert [(v is not None) for v in verdicts_a] == [
+        (v is not None) for v in verdicts_b
+    ]
+
+
+def test_reset_clears_episode_state():
+    det = _detector(_semantic_baseline(), semantic_drift_min_samples=10)
+    for ev in _healthy(12, episode="gone"):
+        det.observe(ev)
+    det.reset("gone")
+    assert det.dump_state() == {"episodes": {}}
