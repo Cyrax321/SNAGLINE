@@ -18,6 +18,10 @@ import json
 import logging
 import os
 import threading
+import time
+import urllib.request
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from snagline.calibration import (
@@ -25,7 +29,7 @@ from snagline.calibration import (
     build_plan,
     resolve_baseline_profile,
 )
-from snagline.config import Config
+from snagline.config import Config, validate_policy
 from snagline.detectors.base import Detector
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk
@@ -36,6 +40,46 @@ logger = logging.getLogger("snagline")
 
 # Bump when the snapshot payload shape changes incompatibly (issue #91).
 SNAPSHOT_FORMAT_VERSION = 1
+
+# --- Enforcement policy (issue #93) -----------------------------------------
+#
+# Optional escalation layer that runs AFTER the sinks on every dispatched risk
+# (documented ordering: detectors -> sinks -> policy), outside every episode
+# lock. Three policies:
+#
+#   "observe"      detection only; today's behavior, zero added work.
+#   "callback"     invoke a host-supplied callable wrapped fail-open.
+#   "halt_webhook" POST the FailureRisk JSON to halt_url and surface the
+#                  response directive as ``monitor.last_directive``.
+#
+# The halt webhook NEVER raises into the host loop and never blocks other
+# episodes' ingest: on timeout, error, or dead endpoint the directive simply
+# stays/defaults to "continue" (fail-open). We deliberately do not pause
+# anything ourselves; the host decides what its own loop does with the
+# directive (project.md §1.2).
+DEFAULT_POLICY = "observe"
+HALT_ACTION_CONTINUE = "continue"
+HALT_ACTION_PAUSE = "pause"
+VALID_HALT_ACTIONS = (HALT_ACTION_CONTINUE, HALT_ACTION_PAUSE)
+# Cap on how many response-body bytes one halt consultation will read: the
+# endpoint holds control, but a runaway body still cannot balloon memory.
+_MAX_HALT_RESPONSE_BYTES = 65_536
+
+
+@dataclass(frozen=True, slots=True)
+class HaltDirective:
+    """The latest control directive returned by the halt webhook (issue #93).
+
+    ``action`` is ``"continue"`` or ``"pause"``; ``reason`` is the short
+    string the endpoint supplied (structure only, no event content);
+    ``timestamp`` is when the directive was received. Immutable and swapped
+    atomically under a lock, so concurrent multi-episode use always reads a
+    complete directive.
+    """
+
+    action: str = HALT_ACTION_CONTINUE
+    reason: str = ""
+    timestamp: float = 0.0
 
 
 def _detector_key(index: int, detector: Any) -> str:
@@ -91,6 +135,9 @@ class MonitorMetrics:
         self.risks_emitted = 0
         self.detector_errors = 0
         self.sink_errors = 0
+        # Enforcement faults (issue #93): callback raises and halt-webhook
+        # timeouts/errors, counted separately from sink errors.
+        self.policy_errors = 0
 
     def as_dict(self) -> dict:
         return {
@@ -98,6 +145,7 @@ class MonitorMetrics:
             "risks_emitted": self.risks_emitted,
             "detector_errors": self.detector_errors,
             "sink_errors": self.sink_errors,
+            "policy_errors": self.policy_errors,
         }
 
 
@@ -112,6 +160,14 @@ class Monitor:
     distinct episodes can be observed concurrently, while a single episode's
     events serialize. This removes the single global ingest lock that would
     bottleneck a high-throughput service (P1, item 4).
+
+    Enforcement (issue #93): with ``policy="callback"`` an ``on_risk``
+    callable is invoked after the sinks, wrapped fail-open; with
+    ``policy="halt_webhook"`` every risk scoring at or above
+    ``min_severity_for_halt`` is POSTed to ``halt_url`` and the response
+    directive is surfaced thread-safely as :attr:`last_directive`. The
+    default ``policy="observe"`` keeps construction byte-identical to the
+    pre-#93 behavior: no callback, no network, zero overhead.
     """
 
     def __init__(
@@ -120,6 +176,11 @@ class Monitor:
         sinks: list[AlertSink],
         fail_open: bool = True,
         state_backend: StateBackend | None = None,
+        policy: str = DEFAULT_POLICY,
+        on_risk: Callable[[FailureRisk], None] | None = None,
+        halt_url: str | None = None,
+        halt_timeout_s: float = 0.25,
+        min_severity_for_halt: float = 0.8,
     ) -> None:
         self._detectors = list(detectors)
         self._sinks = list(sinks)
@@ -131,6 +192,70 @@ class Monitor:
         self._fault_logged: set[str] = set()
         self._metrics = MonitorMetrics()
         self._metrics_lock = threading.Lock()
+        self._configure_policy(
+            policy=policy,
+            on_risk=on_risk,
+            halt_url=halt_url,
+            halt_timeout_s=halt_timeout_s,
+            min_severity_for_halt=min_severity_for_halt,
+        )
+
+    def _configure_policy(
+        self,
+        *,
+        policy: str = DEFAULT_POLICY,
+        on_risk: Callable[[FailureRisk], None] | None = None,
+        halt_url: str | None = None,
+        halt_timeout_s: float = 0.25,
+        min_severity_for_halt: float = 0.8,
+    ) -> None:
+        """Validate and install the enforcement configuration (issue #93).
+
+        Called from ``__init__`` and re-callable from ``Monitor.default`` so
+        subclasses with a fixed ``__init__`` signature keep working (same
+        rationale as the post-construction ``_state`` assignment there).
+        Invalid values are configuration errors and raise here -- loudly, at
+        setup time, like log_format (issue #119) -- never at ingest time.
+        """
+        normalized = validate_policy(policy)
+        if normalized == "callback" and on_risk is None:
+            logger.warning(
+                "snagline: policy='callback' without an on_risk callable; "
+                "no enforcement action will run"
+            )
+        if normalized == "halt_webhook":
+            if not halt_url:
+                raise ValueError("policy='halt_webhook' requires halt_url")
+            if halt_timeout_s <= 0:
+                raise ValueError("halt_timeout_s must be positive")
+        self._policy = normalized
+        self._on_risk = on_risk
+        self._halt_url = halt_url
+        self._halt_timeout_s = halt_timeout_s
+        self._min_severity_for_halt = min_severity_for_halt
+        self._directive_lock = threading.Lock()
+        self._last_directive = HaltDirective()
+
+    @property
+    def policy(self) -> str:
+        """The active enforcement policy (issue #93)."""
+        return self._policy
+
+    @property
+    def halt_url(self) -> str | None:
+        """The halt webhook endpoint, or None when not in halt_webhook mode."""
+        return self._halt_url
+
+    @property
+    def last_directive(self) -> HaltDirective:
+        """The latest halt-webhook directive, thread-safe (issue #93).
+
+        Starts at action="continue" so consumers always read a valid
+        directive; on timeout/error/dead endpoint it stays at or falls back
+        to continue (fail-open).
+        """
+        with self._directive_lock:
+            return self._last_directive
 
     def ingest(self, event: StepEvent) -> None:
         """Run all detectors against ``event`` and dispatch any risks.
@@ -141,7 +266,8 @@ class Monitor:
         Detection runs under a per-instance lock, but dispatch to sinks happens
         *outside* that lock (issue #8): a slow or network-bound sink (e.g. the
         webhook sink) must not block concurrent ``ingest`` calls, and a sink
-        that re-enters ``ingest`` must not deadlock.
+        that re-enters ``ingest`` must not deadlock. The enforcement policy
+        runs after the sinks, also outside the lock (issue #93).
         """
         risks: list[FailureRisk] = []
         with self._state.episode_lock(event.episode_id):
@@ -176,6 +302,96 @@ class Monitor:
                 )
                 if not self._fail_open:
                     raise
+        # Documented ordering (issue #93): detectors -> sinks -> policy. The
+        # tail runs outside every episode lock; see _enforce.
+        self._enforce(risk)
+
+    # --- Enforcement policy tail (issue #93) ---------------------------------
+
+    def _enforce(self, risk: FailureRisk) -> None:
+        """Run the configured enforcement policy for one dispatched risk.
+
+        Called strictly AFTER the sink loop, outside every episode lock, so a
+        slow halt webhook delays only its own dispatch thread, never other
+        episodes' ingest. With the default ``policy="observe"`` this is a
+        single string comparison: no behavior change, no overhead.
+        """
+        if self._policy == "observe":
+            return
+        if self._policy == "callback":
+            self._run_risk_callback(risk)
+        else:
+            self._run_halt_webhook(risk)
+
+    def _run_risk_callback(self, risk: FailureRisk) -> None:
+        """Invoke the host callback wrapped exactly like a sink (issue #93).
+
+        Exceptions are counted under ``policy_errors``, logged fault-once, and
+        swallowed unless ``fail_open=False`` -- identical semantics to the
+        sink loop in ``_dispatch``, verified by parity tests against
+        tests/test_monitor_fail_open.py.
+        """
+        callback = self._on_risk
+        if callback is None:
+            return
+        try:
+            callback(risk)
+        except Exception:
+            self._incr("policy_errors")
+            self._log_fault_once("risk callback raised; ignoring (fail-open)")
+            if not self._fail_open:
+                raise
+
+    def _run_halt_webhook(self, risk: FailureRisk) -> None:
+        """Fire-and-collect POST of one risk to the halt endpoint (issue #93).
+
+        Only risks scoring at or above ``min_severity_for_halt`` pay the
+        round-trip cost. The response JSON ``{"action": ..., "reason": ...}``
+        becomes ``monitor.last_directive``; anything unexpected -- timeout,
+        connection error, malformed body, unknown action -- leaves the
+        directive at continue (fail-open) and counts one ``policy_error``.
+        Never raises into the host loop while ``fail_open=True``.
+        """
+        if risk.score < self._min_severity_for_halt:
+            return
+        payload = {
+            "episode_id": risk.episode_id,
+            "step_id": risk.step_id,
+            "score": risk.score,
+            "trigger": risk.trigger,
+            "detail": risk.detail,
+            "timestamp": risk.timestamp,
+            "severity": risk.severity,
+        }
+        try:
+            req = urllib.request.Request(
+                self._halt_url or "",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=self._halt_timeout_s) as resp:
+                body = resp.read(_MAX_HALT_RESPONSE_BYTES)
+            parsed = json.loads(body.decode("utf-8"))
+            if not isinstance(parsed, dict):
+                raise ValueError("halt response must be a JSON object")
+            action = str(parsed.get("action", HALT_ACTION_CONTINUE)).strip().lower()
+            if action not in VALID_HALT_ACTIONS:
+                raise ValueError(f"unknown halt action {action!r}")
+            reason = str(parsed.get("reason", ""))
+            directive = HaltDirective(
+                action=action, reason=reason, timestamp=time.time()
+            )
+        except Exception:
+            self._incr("policy_errors")
+            self._log_fault_once(
+                f"halt webhook {self._halt_url} failed; continuing (fail-open)"
+            )
+            if not self._fail_open:
+                raise
+            return
+        with self._directive_lock:
+            self._last_directive = directive
 
     def _incr(self, name: str) -> None:
         with self._metrics_lock:
@@ -539,4 +755,17 @@ class Monitor:
         # Set after construction so subclasses with a fixed __init__ signature
         # (e.g. test doubles) still work; base Monitor.__init__ also sets it.
         monitor._state = state_backend or default_state_backend()
+        # Enforcement layer (issue #93): applied through _configure_policy for
+        # the same subclass-compatibility reason as _state above. on_risk is
+        # deliberately absent from Config (callables cannot arrive via env or
+        # config files), so callback mode through default() runs inert unless
+        # a callable is attached directly afterwards; _configure_policy warns
+        # about exactly that case.
+        monitor._configure_policy(
+            policy=cfg.policy,
+            on_risk=None,
+            halt_url=cfg.halt_url,
+            halt_timeout_s=cfg.halt_timeout_s,
+            min_severity_for_halt=cfg.min_severity_for_halt,
+        )
         return monitor
