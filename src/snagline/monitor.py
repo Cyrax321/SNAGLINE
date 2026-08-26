@@ -186,6 +186,30 @@ class Monitor:
         with self._metrics_lock:
             return self._metrics.as_dict()
 
+    def add_sink(self, sink: AlertSink) -> None:
+        """Register one more sink at runtime (issue #122).
+
+        The sink joins dispatch under the same rules as construction: every
+        registered sink sees every dispatched risk, in registration order,
+        and its exceptions are swallowed exactly like any other sink's
+        (fail-open). Safe to call while ingests run from other threads;
+        dispatch tolerates a concurrent append.
+        """
+        self._sinks.append(sink)
+
+    def remove_sink(self, sink: AlertSink) -> bool:
+        """Unregister ``sink`` (issue #122); returns True when removed.
+
+        Matching follows ``list.remove`` semantics, so a sink registered
+        twice must be removed once per registration. Returns False when the
+        sink was never registered.
+        """
+        try:
+            self._sinks.remove(sink)
+        except ValueError:
+            return False
+        return True
+
     def _log_fault_once(self, key: str) -> None:
         """Log a fail-open fault, but only the first time we see this exact
         message (issue #14). Avoids dumping a traceback on every step when a
@@ -394,6 +418,7 @@ class Monitor:
         from snagline.detectors.meltdown import MeltdownDetector
         from snagline.detectors.ml_ensemble import MLOrchestrator
         from snagline.detectors.silent_abort import SilentAbortDetector
+        from snagline.detectors.stagnation import StagnationDetector
         from snagline.detectors.token_runaway import TokenRunawayDetector
         from snagline.sinks.console import ConsoleSink
 
@@ -418,6 +443,12 @@ class Monitor:
                 ErrorCascadeDetector(config=cfg),
                 LatencyAnomalyDetector(config=cfg),
             ]
+        # Stagnation is opt-in (issue #87): novelty-rate collapse detection,
+        # default-off so the zero-dependency preset and the published bench
+        # numbers are untouched. Appended to ``base`` so a concurrent
+        # MLOrchestrator wraps it like any other signal.
+        if cfg.stagnation_enabled:
+            base.append(StagnationDetector(config=cfg))
         # Goal-drift is opt-in: only when explicitly enabled and a baseline is
         # supplied, so the zero-dependency default is unchanged (step 2).
         if cfg.goal_drift_enabled and cfg.goal_drift_baseline is not None:
@@ -431,6 +462,20 @@ class Monitor:
         if cfg.silent_abort_enabled:
             base.append(SilentAbortDetector(config=cfg))
         if cfg.ml_ensemble_enabled:
+            # Optional ml extra: add the one-class ESN + CUSUM detector to the
+            # ensemble when numpy is importable (issue #80). The import is
+            # guarded so a missing or broken extra degrades fail-open to the
+            # zero-dependency noisy-OR over the deterministic detectors.
+            try:
+                from snagline.ml.esn_ensemble import EsnCusumDetector
+
+                base.append(EsnCusumDetector(baseline=cfg.goal_drift_baseline))
+            except Exception:
+                logger.debug(
+                    "snagline: ml extra unavailable; noisy-OR runs over the "
+                    "deterministic detectors only",
+                    exc_info=True,
+                )
             # Combine the base detectors into one orchestrated signal (step 3).
             detectors: list[Detector] = [MLOrchestrator(base, config=cfg)]
         else:

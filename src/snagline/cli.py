@@ -18,6 +18,7 @@ import sys
 import time
 from collections.abc import Iterator
 from contextlib import suppress
+from pathlib import Path
 
 from snagline.config import Config
 from snagline.events import StepEvent
@@ -333,7 +334,34 @@ def _build_parser() -> argparse.ArgumentParser:
         "baseline",
         help="Fit a healthy-run baseline (per-tool latency/error profile) from a trajectory.",
     )
-    sp.add_argument("trajectory", help="Path to a .jsonl trajectory of a healthy run.")
+    sp.add_argument(
+        "trajectory",
+        metavar="trajectory|retrain",
+        help="Path to a .jsonl trajectory of a healthy run, or the literal "
+        "keyword 'retrain' to refit from the newest JSONL window and bump "
+        "the BaselineStore version atomically (issue #102; see docs/RETRAIN_CADENCE.md).",
+    )
+    sp.add_argument(
+        "--jsonl",
+        default=None,
+        help="With 'retrain': refit from exactly this JSONL window file "
+        "(overrides --windows-dir).",
+    )
+    sp.add_argument(
+        "--windows-dir",
+        default=None,
+        help="With 'retrain': directory of rotated window .jsonl files; the "
+        "newest by modification time is used.",
+    )
+    sp.add_argument(
+        "--max-age",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="With 'retrain': warn on stderr when the currently active stored "
+        "baseline is older than this many seconds (staleness guard for the "
+        "host-side cadence).",
+    )
     sp.add_argument(
         "--output",
         default="baseline.json",
@@ -499,13 +527,121 @@ def _event_to_json(event: StepEvent) -> dict:
     }
 
 
+def _newest_window(windows_dir: str) -> str | None:
+    """Return the newest ``*.jsonl`` window file in ``windows_dir``, or None.
+
+    Newest means largest modification time; ties break alphabetically so the
+    pick is deterministic. Non-recursive by design: windows are rotated into
+    one flat directory (issue #102).
+    """
+    root = Path(windows_dir)
+    candidates = [p for p in root.glob("*.jsonl") if p.is_file()]
+    if not candidates:
+        return None
+    return str(max(candidates, key=lambda p: (p.stat().st_mtime_ns, p.name)))
+
+
+def _active_baseline_age(store, tenant: str, deployment: str) -> float | None:
+    """Age in seconds of the newest stored version, or None if unknowable.
+
+    Version ids written by ``save()`` are wall-clock timestamps, so the id
+    doubles as the fit time. Non-numeric (custom) ids are skipped fail-open;
+    staleness is a warning aid, never a hard dependency.
+    """
+    for version_id in reversed(store.list_versions(tenant, deployment)):
+        try:
+            fitted_at = float(version_id)
+        except ValueError:
+            continue
+        return max(0.0, time.time() - fitted_at)
+    return None
+
+
+def _cmd_baseline_retrain(args: argparse.Namespace) -> int:
+    """Refit from the newest JSONL window and atomically bump the store.
+
+    Usage: ``snagline baseline retrain --store-dir ROOT [--tenant T]
+    [--deployment D] (--jsonl FILE | --windows-dir DIR) [--max-age SECONDS]
+    [--max-versions N]``. Exits 0 on success, 2 on usage errors, 3 when the
+    window cannot be resolved or read.
+    """
+    if not args.store_dir:
+        print(
+            "snagline baseline retrain: --store-dir is required (versioned store root)",
+            file=sys.stderr,
+        )
+        return 2
+    if bool(args.jsonl) == bool(args.windows_dir):
+        print(
+            "snagline baseline retrain: give exactly one of --jsonl FILE or "
+            "--windows-dir DIR",
+            file=sys.stderr,
+        )
+        return 2
+
+    from snagline.baseline_store import BaselineStore, retrain_from_jsonl
+
+    store = BaselineStore(args.store_dir, max_versions=args.max_versions or 10)
+
+    # Staleness guard on the previously active baseline, before it is
+    # replaced: this is the signal that the host-side cadence slipped.
+    if args.max_age is not None:
+        age = _active_baseline_age(store, args.tenant, args.deployment)
+        if age is not None and age > args.max_age:
+            print(
+                f"snagline baseline: WARNING: active baseline for "
+                f"{args.tenant}/{args.deployment} is {age / 3600.0:.1f}h old "
+                f"(max-age {args.max_age / 3600.0:.1f}h); consider tightening "
+                f"the retrain cadence",
+                file=sys.stderr,
+            )
+
+    window = args.jsonl or _newest_window(args.windows_dir)
+    if window is None:
+        print(
+            f"snagline baseline retrain: no .jsonl window files found in "
+            f"{args.windows_dir}",
+            file=sys.stderr,
+        )
+        return 3
+    try:
+        version = retrain_from_jsonl(
+            store,
+            window,
+            tenant=args.tenant,
+            deployment=args.deployment,
+            max_versions=args.max_versions,
+        )
+    except OSError as exc:
+        print(
+            f"snagline baseline retrain: cannot read {window}: {exc}", file=sys.stderr
+        )
+        return 3
+
+    profile = store.load_version(args.tenant, args.deployment, version)
+    tools = len(profile.tools) if profile is not None else 0
+    steps = profile.total_steps if profile is not None else 0
+    print(
+        f"snagline baseline retrain: stored version {version} for "
+        f"{args.tenant}/{args.deployment} from {window} "
+        f"({tools} tool(s), {steps} step(s))"
+    )
+    return 0
+
+
 def _cmd_baseline(args: argparse.Namespace) -> int:
     """Fit a healthy-run baseline from a trajectory and persist it.
 
     With ``--store-dir`` the baseline is stored versioned and per-tenant in a
     ``BaselineStore``; ``--list-versions`` just lists what is already stored.
     Otherwise it writes a single JSON file (``--output``).
+
+    The literal keyword ``retrain`` instead of a trajectory path dispatches to
+    the scheduled-retrain contract (issue #102).
     """
+    if getattr(args, "trajectory", None) == "retrain":
+        return _cmd_baseline_retrain(args)
+
     if args.store_dir:
         from snagline.baseline_store import (
             BaselineStore,

@@ -16,6 +16,7 @@ TriggerType = Literal[
     "latency_anomaly",
     "goal_drift",
     "ml_ensemble",
+    "stagnation",
     # Horizon detectors (issues #84/#85/#86). Trigger names are API: the
     # CONTINUUM risk-policy proposal maps them to recovery modes by string.
     "token_runaway",

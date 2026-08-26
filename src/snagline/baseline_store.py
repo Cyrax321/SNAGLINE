@@ -14,6 +14,7 @@ later; the core stays stdlib-only.
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 from typing import IO
@@ -24,6 +25,22 @@ from snagline.baseline import BaselineProfile, fit_baseline_from_jsonl
 def _write_json(stream: IO[str], data: dict) -> None:
     json.dump(data, stream, indent=2, sort_keys=True)
     stream.write("\n")
+
+
+def _atomic_write_json(path: Path, data: dict) -> None:
+    """Write ``data`` as JSON so readers see either the old or new file.
+
+    The payload lands in a sibling temp file first, is flushed and fsynced,
+    then moved into place with ``os.replace`` (atomic on POSIX and Windows).
+    A crash mid-write can therefore never leave a torn or half-written JSON
+    file behind; issue #102 relies on this for the version bump.
+    """
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        _write_json(fh, data)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
 
 
 class BaselineStore:
@@ -52,21 +69,25 @@ class BaselineStore:
         """Persist ``profile`` and return the version id used.
 
         Writes both a timestamped history entry and a ``latest.json`` pointer.
-        Old versions beyond ``max_versions`` (this call, else the store
-        default) are pruned oldest-first.
+        Both files are written atomically (temp + fsync + rename): the history
+        entry first, then the pointer flip, so a reader of ``latest.json``
+        always sees one complete profile, never a partial write. Old versions
+        beyond ``max_versions`` (this call, else the store default) are pruned
+        oldest-first.
         """
         version = version or f"{time.time():.6f}"
         scope = self._scope_dir(tenant, deployment)
         versions_dir = scope / "versions"
         versions_dir.mkdir(parents=True, exist_ok=True)
 
-        with open(
-            self._version_path(tenant, deployment, version), "w", encoding="utf-8"
-        ) as fh:
-            _write_json(fh, profile.to_dict())
-        # Latest pointer.
-        with open(scope / "latest.json", "w", encoding="utf-8") as fh:
-            _write_json(fh, profile.to_dict())
+        # History entry first: durable even if the process dies before the
+        # pointer flip, in which case latest.json still resolves to the
+        # previous complete version (issue #102).
+        _atomic_write_json(
+            self._version_path(tenant, deployment, version), profile.to_dict()
+        )
+        # Atomic pointer flip to the new version.
+        _atomic_write_json(scope / "latest.json", profile.to_dict())
 
         limit = max_versions if max_versions is not None else self._max_versions
         self._prune(tenant, deployment, limit)
@@ -126,6 +147,29 @@ def capture_from_jsonl(
         tenant=tenant,
         deployment=deployment,
         version=version,
+        max_versions=max_versions,
+    )
+
+
+def retrain_from_jsonl(
+    store: BaselineStore,
+    window_path: str,
+    tenant: str = "default",
+    deployment: str = "default",
+    max_versions: int | None = None,
+) -> str:
+    """Refit a baseline from a JSONL window and atomically bump the store.
+
+    This is the library-side primitive behind ``snagline baseline retrain``
+    (issue #102): fit a fresh ``BaselineProfile`` from the newest healthy-run
+    window, then persist it as a new timestamped version whose pointer flip is
+    atomic (see ``BaselineStore.save``). Returns the new version id; the
+    previous version stays loadable for rollback.
+    """
+    return store.save(
+        fit_baseline_from_jsonl(window_path),
+        tenant=tenant,
+        deployment=deployment,
         max_versions=max_versions,
     )
 

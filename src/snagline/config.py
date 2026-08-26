@@ -117,6 +117,32 @@ class Config:
     ml_ensemble_enabled: bool = False
     ml_ensemble_score_threshold: float = 0.5  # emit a combined risk above this
 
+    # --- Loop hardening modes (issue #89, opt-in) ----------------------------
+    # Each mode extends LoopDetector with one more failure shape beyond plain
+    # single-signature repetition. All default off so the plain-loop path is
+    # unchanged and the zero-dependency preset keeps its bench numbers.
+    # Triggers emitted (API strings): "near_duplicate_loop", "cycle", "stall".
+    loop_near_duplicate_enabled: bool = False  # collapse volatile ids, recount
+    loop_cycle_enabled: bool = False  # A,B,A,B,... periodicity scan
+    loop_cycle_window_size: int = 12  # window scanned for periodicity
+    loop_cycle_min_period: int = 2  # shortest repeating period considered
+    loop_cycle_max_period: int = 6  # longest repeating period considered
+    loop_stall_enabled: bool = False  # identical signature, zero progress
+    loop_stall_steps: int = 25  # consecutive identical steps before firing
+
+    # --- Stagnation detector (issue #87) --------------------------------------
+    # Opt-in novelty-rate tracker: flags an episode whose share of never-
+    # before-seen action signatures collapses, i.e. the agent is busy but
+    # discovering nothing. Distinct from the loop detector, which needs exact
+    # repeats: near-duplicate actions with slightly varied arguments produce
+    # fresh signatures and evade exact matching while still being stuck.
+    # Default off so the zero-dependency preset and the published bench
+    # numbers are untouched.
+    stagnation_enabled: bool = False
+    stagnation_window_size: int = 50  # steps per novelty window
+    stagnation_min_novelty: float = 0.05  # stale when fewer than this share new
+    stagnation_patience: int = 2  # consecutive stale windows before firing
+
     # Token-runaway detector (issue #84, opt-in). Sustained-burn CUSUM over
     # per-step token volume plus an optional hard per-episode budget envelope.
     # Needs adapters that report tokens_in/tokens_out; disabled by default so
@@ -169,6 +195,22 @@ class Config:
 
     # Global
     fail_open: bool = True
+
+    # --- Structured logging sink (issue #99) ---------------------------------
+    # Emission format for the logging sink (``sinks/logging_sink.py``):
+    # "text" keeps plain lines, "json" emits one compact JSON object per risk
+    # with exactly the keys ts, episode_id, step_id, trigger, severity, score,
+    # detail. Selectable via env ``SNAGLINE_LOG_FORMAT`` or a config-file
+    # ``log_format`` key; values other than "text"/"json" are undefined.
+    # Structure only: the emitted object never carries prompt/response content.
+    log_format: str = "text"
+
+    # --- Sidecar /metrics exposition (issue #98) -----------------------------
+    # Format served by GET /metrics on the sidecar: "prometheus" serves text
+    # exposition version 0.0.4 (the default), "classic" serves the legacy JSON
+    # counters body. Per-request override via ?format=classic or
+    # ?format=prometheus; environment override SNAGLINE_METRICS_FORMAT.
+    metrics_format: str = "prometheus"
 
     # --- 12-factor configuration (project.md §5.4, ATTACH_ANY_SYSTEM P0) -----
     @classmethod

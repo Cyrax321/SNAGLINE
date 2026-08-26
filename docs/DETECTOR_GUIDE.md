@@ -61,6 +61,7 @@ monitor._detectors.append(MyDetector())   # or: Monitor(default_detectors + [min
 - `detectors/loop.py` - sliding-window repetition count on `action_signature`
 - `detectors/error_cascade.py` - consecutive and windowed error counts
 - `detectors/latency_anomaly.py` - Welford baseline + CUSUM deviation per tool
+- `detectors/stagnation.py` - all-time novelty set plus a sliding novelty share
 - `detectors/goal_drift.py` - compares a live run to a persisted `BaselineProfile`
 - `detectors/ml_ensemble.py` - `MLOrchestrator` combining base detector scores
 - `detectors/token_runaway.py` - token-volume CUSUM + per-episode budget envelope
@@ -70,6 +71,45 @@ monitor._detectors.append(MyDetector())   # or: Monitor(default_detectors + [min
 Each has a matching test in `tests/detectors/` showing the synthetic-sequence
 pattern (injected failure fires; healthy sequence stays silent). Copy that
 test shape for your own detector.
+
+### Loop hardening modes (issue #89)
+
+`LoopDetector` has three opt-in extensions for failure shapes that plain
+repetition counting misses. All are off by default: with stock config the
+detector's behavior is exactly the plain path above.
+
+- **Near-duplicate** (`Config(loop_near_duplicate_enabled=True)`): retries
+  whose signatures differ only by volatile identifiers (uuid-shaped
+  substrings, digit runs) collapse onto one normalized key before hashing,
+  then feed the same window and threshold logic as the plain path. Trigger:
+  `near_duplicate_loop`. The default normalizer is a documented heuristic
+  (uuid-like substrings become one token, remaining digit runs become `#`);
+  it is deliberately blunt, and against opaque hex digests collapsing digits
+  raises collision odds, so treat enabling it as a deliberate choice. Swap in
+  your own strategy with `LoopDetector(config=cfg, normalizer=fn)`, where
+  `fn` maps a signature string to its normalized form.
+- **Cycle** (`Config(loop_cycle_enabled=True)`): A,B,A,B,... periodicity that
+  never repeats one action often enough to trip `repeat_threshold`. After
+  each step an ascending scan (O(window)) finds the window content's minimal
+  period p; it fires once when p lies inside the configured band
+  (`loop_cycle_min_period` to `loop_cycle_max_period`, default 2..6) and the
+  recent `loop_cycle_window_size` window holds at least two full periods,
+  then re-arms when periodicity breaks. Filtering on the true minimum means a
+  custom band genuinely suppresses faster loops instead of re-flagging them
+  through a multiple, and uniform repetition (minimal period 1) is always
+  ignored: single-action loops belong to the plain loop/stall modes.
+  Trigger: `cycle`.
+- **Stall** (`Config(loop_stall_enabled=True)`): N consecutive identical
+  signatures with no progress fires after `loop_stall_steps` (default 25).
+  Wall-clock deltas never reset the streak: zero-delta steps count toward it
+  (a frozen clock is itself evidence of a stall), and positive deltas do not
+  reset it either (tight retries burn real time while going nowhere); only a
+  different signature restarts the count. Trigger: `stall`.
+
+The trigger strings `near_duplicate_loop`, `cycle`, and `stall` are API:
+downstream policy layers map them by name. When several shapes fire on the
+same step the plain-loop risk keeps precedence; each mode still advances its
+state every step, so nothing is lost.
 
 ## Optional detectors: baseline, goal-drift, ensemble, and horizon set
 
@@ -128,6 +168,38 @@ with `Config(ml_ensemble_enabled=True)`; `Monitor.default()` then wraps the
 base detectors in one orchestrator so there is no double counting. The
 orchestrator forwards `finalize`, `dump_state`, and `load_state` to its bases,
 so orchestrated completion checks and snapshots keep working.
+
+### `StagnationDetector` (issue #87)
+
+`StagnationDetector(config=cfg)` asks a question the loop detector cannot:
+not "is it repeating?" but "is it discovering anything?". It tracks the share
+of never-before-seen `action_signature` values in the last
+`stagnation_window_size` steps (default 50). When that novelty share stays
+below `stagnation_min_novelty` (default 0.05) for `stagnation_patience`
+(default 2) consecutive full-window observations, it emits exactly one risk
+(score 0.6, trigger `stagnation`). Novelty recovering resets the stale
+counter, so a later collapse fires again: one alert per stagnation period,
+never one per step.
+
+The two detectors are complementary by construction. Near-duplicate actions
+with slightly varied arguments produce fresh signatures each time and evade
+exact-match loop windows entirely; the all-time novelty set still collapses
+because the agent keeps drawing from the same small template space. The tests
+in `tests/detectors/test_stagnation.py` prove a sequence that trips
+stagnation while the loop detector stays silent.
+
+Memory, stated honestly: the per-episode `seen_all_time` set grows
+monotonically by design and only `reset(episode_id)` (called by
+`Monitor.end_episode()`) releases it. Signatures are full 64-character hex
+digests since issue #15; measured on CPython 3.14, retaining one costs about
+105 bytes plus roughly 70 bytes of amortized set overhead, so budget around
+175 bytes per unique action: a pathological all-unique 100k-step episode
+holds on the order of 17 MB. Typical episodes repeat heavily and cost far
+less. The sliding counter itself is bounded (`window_size` booleans per
+episode).
+
+Enable it with `Config(stagnation_enabled=True)`. It ships opt-in so the
+zero-dependency preset and the published bench numbers are untouched.
 
 ## The horizon detectors (long-run set, issues #84/#85/#86)
 
