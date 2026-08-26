@@ -146,6 +146,31 @@ def test_stagnation_already_fired_collapse_stays_quiet_after_restore():
     assert _risks(d1, _repeats(12, 4)) == []
 
 
+def test_stagnation_restore_clamps_flags_to_current_window_size():
+    """Review-bot finding on #168: restore is tolerant by default (config is
+    not carried), so a snapshot written with a larger window_size must clamp
+    to the loading detector's window. An overlong deque would defeat the
+    equality-based eviction in observe() and grow without bound."""
+    d_big = StagnationDetector(window_size=8, min_novelty=0.25, patience=2)
+    d_big.observe(_ev(0, signature="n0"))
+    d_big.observe(_ev(1, signature="n1"))
+    d_big.observe(_ev(2, signature="stale"))
+    for i in range(3, 8):
+        d_big.observe(_ev(i, signature="stale"))
+    dumped = d_big.dump_state()
+    assert len(dumped["windows"]["ep"]["flags"]) == 8
+
+    d_small = StagnationDetector(window_size=4, min_novelty=0.25, patience=2)
+    d_small.load_state(json.loads(json.dumps(dumped)))
+    w = d_small._windows["ep"]
+    assert len(w.flags) == 4, "restored flags must clamp to current window"
+    assert w.novel_in_window == sum(w.flags), "counter must match truncated flags"
+    # The window stays bounded afterwards: equality eviction still engages.
+    for i in range(10):
+        d_small.observe(_ev(100 + i, signature="stale"))
+    assert len(d_small._windows["ep"].flags) == 4
+
+
 def test_stagnation_recovery_rearms_after_restore():
     d1 = _stagnation_detector()
     _warm_unique(d1)

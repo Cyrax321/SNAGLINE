@@ -162,8 +162,16 @@ class StagnationDetector:
         self._windows = {}
         for ep, raw in state.get("windows", {}).items():
             w = _EpisodeWindow()
-            w.flags = deque(bool(b) for b in raw.get("flags", []))
-            w.novel_in_window = int(raw.get("novel_in_window", 0))
+            # Clamp to the CURRENT window_size: restore is tolerant by default
+            # (matches by name, ignores config), so a snapshot taken with a
+            # larger window must not leave an overlong deque whose equality-
+            # based eviction never fires again. Mirrors LoopDetector's
+            # deque(sigs, maxlen=self.window_size) rebuild; the sliding
+            # counter is recomputed from the truncated flags so the two stay
+            # consistent.
+            flags = [bool(b) for b in raw.get("flags", [])][-self.window_size :]
+            w.flags = deque(flags, maxlen=self.window_size)
+            w.novel_in_window = sum(flags)
             w.stale_windows = int(raw.get("stale_windows", 0))
             w.seen_all_time = set(raw.get("seen_all_time", []))
             self._windows[str(ep)] = w
