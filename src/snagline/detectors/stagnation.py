@@ -95,8 +95,15 @@ class StagnationDetector:
         self.patience = patience if patience is not None else cfg.stagnation_patience
         if self.window_size < 1:
             raise ValueError("window_size must be >= 1")
-        if not 0.0 <= self.min_novelty <= 1.0:
-            raise ValueError("min_novelty must be within [0.0, 1.0]")
+        # Mirrors Config._validated_stagnation (issue #132): 0.0 would make the
+        # fire condition unreachable, so the range is open at zero. Direct
+        # construction with explicit kwargs skips the Config check, hence the
+        # duplicate guard here.
+        if not 0.0 < self.min_novelty <= 1.0:
+            raise ValueError(
+                "min_novelty must be within (0.0, 1.0]; 0.0 would make the "
+                "fire condition unreachable and silently disable the detector"
+            )
         if self.patience < 1:
             raise ValueError("patience must be >= 1")
         self._windows: dict[str, _EpisodeWindow] = {}

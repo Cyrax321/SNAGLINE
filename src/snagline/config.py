@@ -149,6 +149,35 @@ def validate_policy(value: str) -> str:
     return normalized
 
 
+def _validated_stagnation(cfg: Config) -> None:
+    """Validate the stagnation-detector knobs (issue #132); raise when invalid.
+
+    Same contract as the horizon knobs (issue #92): an out-of-range value is a
+    configuration error and fails loudly at construction/resolve time instead
+    of silently disabling detection downstream. The one deliberate tightening
+    against ``StagnationDetector``'s old range: ``min_novelty=0.0`` used to be
+    accepted but made the fire condition unreachable (a novelty rate is always
+    >= 0, so ``rate < 0.0`` can never hold), i.e. a silently disabled safety
+    net. "Alert me when novelty hits exactly zero" needs a small positive floor
+    instead: with the default window of 50 the share moves in steps of 0.02,
+    so e.g. ``0.01`` fires precisely when nothing in the window was new.
+    """
+    if cfg.stagnation_window_size < 1:
+        raise ValueError(
+            f"stagnation_window_size must be >= 1; got {cfg.stagnation_window_size!r}"
+        )
+    if not 0.0 < cfg.stagnation_min_novelty <= 1.0:
+        raise ValueError(
+            "stagnation_min_novelty must be within (0.0, 1.0]; 0.0 would make "
+            "the fire condition unreachable and silently disable the detector; "
+            f"got {cfg.stagnation_min_novelty!r}"
+        )
+    if cfg.stagnation_patience < 1:
+        raise ValueError(
+            f"stagnation_patience must be >= 1; got {cfg.stagnation_patience!r}"
+        )
+
+
 @dataclass
 class Config:
     # Loop detector
@@ -232,10 +261,20 @@ class Config:
     # fresh signatures and evade exact matching while still being stuck.
     # Default off so the zero-dependency preset and the published bench
     # numbers are untouched.
+    #
+    # Validation contract (issue #132): these three knobs are range-checked in
+    # _validated_stagnation() at construction and after env/file layering, so
+    # an invalid value aborts startup loudly instead of silently disabling the
+    # detector. This means invalid monitoring config is a configuration error:
+    # Monitor.default() may raise ValueError during construction when handed
+    # one. Runtime detection stays fail-open (project.md §1.2); only startup
+    # with a broken config fails, and it fails with a message naming the knob.
     stagnation_enabled: bool = False
-    stagnation_window_size: int = 50  # steps per novelty window
-    stagnation_min_novelty: float = 0.05  # stale when fewer than this share new
-    stagnation_patience: int = 2  # consecutive stale windows before firing
+    stagnation_window_size: int = 50  # steps per novelty window; must be >= 1
+    stagnation_min_novelty: float = 0.05  # stale when fewer than this share new; must be within (0.0, 1.0]; 0.0 would make firing unreachable
+    stagnation_patience: int = (
+        2  # consecutive stale windows before firing; must be >= 1
+    )
 
     # Token-runaway detector (issue #84, opt-in). Sustained-burn CUSUM over
     # per-step token volume plus an optional hard per-episode budget envelope.
@@ -396,6 +435,9 @@ class Config:
         # Issue #92: same policy for the horizon-scale knobs. All default off,
         # so stock configurations never hit these checks.
         _validated_horizon(self)
+        # Issue #132: same policy for the stagnation knobs. The defaults are
+        # always valid, so stock configurations never hit these checks.
+        _validated_stagnation(self)
 
     # --- 12-factor configuration (project.md §5.4, ATTACH_ANY_SYSTEM P0) -----
     @classmethod
@@ -497,4 +539,9 @@ class Config:
         # Same re-validation for the horizon-scale knobs set from env/file
         # (issue #92): SNAGLINE_WARN_FRACTION=5 must fail loudly, not silently.
         _validated_horizon(cfg)
+        # Same re-validation for the stagnation knobs set from env/file
+        # (issue #132): SNAGLINE_STAGNATION_MIN_NOVELTY=99 must abort startup
+        # with a clear error, not crash later inside StagnationDetector or,
+        # worse, run silently mis-configured.
+        _validated_stagnation(cfg)
         return cfg

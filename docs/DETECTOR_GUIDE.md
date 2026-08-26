@@ -258,6 +258,22 @@ episode).
 Enable it with `Config(stagnation_enabled=True)`. It ships opt-in so the
 zero-dependency preset and the published bench numbers are untouched.
 
+Validation contract (issue #132): `stagnation_window_size`,
+`stagnation_min_novelty`, and `stagnation_patience` are validated centrally
+in `Config` at construction and after env/file layering, following the same
+precedent as `log_format` (issue #119) and the horizon knobs (issue #92). An
+out-of-range value is a configuration error that aborts startup loudly with
+`ValueError` instead of running silently misconfigured. In particular
+`stagnation_min_novelty` must be within `(0.0, 1.0]`; `0.0` is rejected
+because the fire condition `novel_share < min_novelty` would then be
+unreachable (a share is always >= 0), i.e. a silently disabled detector. Use
+a small positive floor such as `0.01` when you need near-total staleness:
+with the default window of 50 the share moves in steps of 0.02, so `0.01`
+fires precisely when nothing in the window was new. This means
+`Monitor.default()` may raise `ValueError` during construction when handed an
+invalid config; runtime detection stays fail-open, only broken startup config
+fails.
+
 ### `SideEffectGuardDetector` (`side_effect_guard_enabled=True`, issue #88)
 
 `SideEffectGuardDetector(config=cfg)` watches steps the *host* marked as

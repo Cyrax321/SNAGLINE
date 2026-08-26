@@ -248,4 +248,54 @@ def test_invalid_constructor_arguments_raise():
     with pytest.raises(ValueError):
         StagnationDetector(min_novelty=1.5)
     with pytest.raises(ValueError):
+        StagnationDetector(min_novelty=0.0)  # unreachable fire condition
+    with pytest.raises(ValueError):
         StagnationDetector(patience=0)
+
+
+# --- Validation contract (issue #132) ----------------------------------------
+
+
+def test_config_rejects_degenerate_stagnation_values():
+    """Issue #132: degenerate stagnation settings are configuration errors.
+
+    They fail loudly at Config construction instead of silently disabling the
+    detector (min_novelty=0.0 made the fire condition unreachable because a
+    novelty rate is always >= 0)."""
+    with pytest.raises(ValueError, match="stagnation_window_size must be >= 1"):
+        Config(stagnation_window_size=0)
+    with pytest.raises(ValueError, match=r"stagnation_min_novelty must be within"):
+        Config(stagnation_min_novelty=0.0)
+    with pytest.raises(ValueError, match=r"stagnation_min_novelty must be within"):
+        Config(stagnation_min_novelty=-0.1)
+    with pytest.raises(ValueError, match=r"stagnation_min_novelty must be within"):
+        Config(stagnation_min_novelty=1.5)
+    with pytest.raises(ValueError, match="stagnation_patience must be >= 1"):
+        Config(stagnation_patience=0)
+
+
+def test_config_accepts_valid_stagnation_extremes():
+    cfg = Config(
+        stagnation_enabled=True,
+        stagnation_window_size=1,
+        stagnation_min_novelty=1.0,
+        stagnation_patience=1,
+    )
+    d = StagnationDetector(config=cfg)
+    risks = _feed(d, [_sig(0), _sig(0)])
+    assert len(risks) == 1 and risks[0].trigger == "stagnation"
+
+
+def test_valid_config_driven_detector_still_fires():
+    """Accepted-and-functional side of the contract: tuned-through-Config
+    knobs keep detecting (window 4 / 0.02 / 1 fires once novelty collapses)."""
+    cfg = Config(
+        stagnation_enabled=True,
+        stagnation_window_size=4,
+        stagnation_min_novelty=0.02,
+        stagnation_patience=1,
+    )
+    d = StagnationDetector(config=cfg)
+    seq = [_sig(i) for i in range(4)] + [_sig(0)] * 4
+    risks = _feed(d, seq)
+    assert risks and risks[0].trigger == "stagnation"
