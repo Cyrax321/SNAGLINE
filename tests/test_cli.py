@@ -7,6 +7,7 @@ import json
 from argparse import Namespace
 
 from snagline.cli import main
+from snagline.config import Config
 from snagline.sinks.dedup import DedupSink
 from snagline.sinks.pagerduty import PagerDutySink
 from snagline.sinks.slack import SlackSink
@@ -30,7 +31,7 @@ def test_build_sinks_console_default():
     from snagline.cli import _build_sinks
     from snagline.sinks.console import ConsoleSink
 
-    sinks = _build_sinks(_args())
+    sinks = _build_sinks(_args(), Config())
     assert len(sinks) == 1
     assert isinstance(sinks[0], ConsoleSink)
 
@@ -38,9 +39,11 @@ def test_build_sinks_console_default():
 def test_build_sinks_slack_and_pagerduty():
     from snagline.cli import _build_sinks
 
-    assert isinstance(_build_sinks(_args(sink="slack", slack_url="u")).pop(), SlackSink)
     assert isinstance(
-        _build_sinks(_args(sink="pagerduty", pagerduty_key="k")).pop(),
+        _build_sinks(_args(sink="slack", slack_url="u"), Config()).pop(), SlackSink
+    )
+    assert isinstance(
+        _build_sinks(_args(sink="pagerduty", pagerduty_key="k"), Config()).pop(),
         PagerDutySink,
     )
 
@@ -51,17 +54,17 @@ def test_build_sinks_requires_url():
     from snagline.cli import _build_sinks
 
     with pytest.raises(SystemExit) as exc:
-        _build_sinks(_args(sink="slack"))
+        _build_sinks(_args(sink="slack"), Config())
     assert exc.value.code == 2
     with pytest.raises(SystemExit) as exc:
-        _build_sinks(_args(sink="pagerduty"))
+        _build_sinks(_args(sink="pagerduty"), Config())
     assert exc.value.code == 2
 
 
 def test_build_sinks_cooldown_wraps():
     from snagline.cli import _build_sinks
 
-    sinks = _build_sinks(_args(sink="console", cooldown_seconds=60.0))
+    sinks = _build_sinks(_args(sink="console", cooldown_seconds=60.0), Config())
     assert len(sinks) == 1
     assert isinstance(sinks[0], DedupSink)
 
