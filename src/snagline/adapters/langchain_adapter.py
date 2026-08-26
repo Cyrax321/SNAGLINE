@@ -50,11 +50,22 @@ class SnaglineCallbackHandler(BaseCallbackHandler):
         agent_name: str | None = None,
         clock: Callable[[], float] | None = None,
     ) -> None:
+        """Wire the handler to ``monitor`` for one ``episode_id``.
+
+        ``clock`` defaults to :func:`time.perf_counter`: monotonic and
+        high-resolution on every platform. The previous default,
+        :func:`time.time`, advances in ~15.6 ms ticks on Windows, which
+        quantized sub-tick latencies to zero and starved the CUSUM latency
+        detector of usable samples (issue #155). Note that ``perf_counter``
+        has no meaningful epoch: event timestamps produced with it are only
+        comparable within one process. Detectors consume them solely as
+        in-process latency differences, which is exactly what it guarantees.
+        """
         super().__init__()
         self._monitor = monitor
         self._episode_id = episode_id
         self._agent_name = agent_name
-        self._clock = clock or time.time
+        self._clock = clock or time.perf_counter
         self._counter = itertools.count()
         self._runs: dict[str, dict] = {}
 

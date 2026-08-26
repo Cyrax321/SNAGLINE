@@ -20,6 +20,12 @@ or low-level observation without wrapping::
 The adapter is duck-typed and import-safe: it works without ``openai``
 installed and never hard-couples to a specific SDK release. All
 ``StepEvent`` construction is fail-open and never raises into the host.
+
+Latency measurement and event timestamps use :func:`time.perf_counter`, not
+:func:`time.time`: the wall clock advances in ~15.6 ms ticks on Windows,
+quantizing sub-tick latencies to zero (issue #155). ``perf_counter`` has no
+meaningful epoch, so these timestamps are only comparable within one process;
+detectors consume them solely as in-process latency differences.
 """
 
 from __future__ import annotations
@@ -87,7 +93,7 @@ def observe_openai_call(
     event = StepEvent(
         step_id=step_id or "openai",
         episode_id=episode_id,
-        timestamp=time.time(),
+        timestamp=time.perf_counter(),
         action_type="tool_call",
         action_signature=sig,
         tool_name=model or "openai",
@@ -171,7 +177,7 @@ class _SyncStreamWrapper:
         if self._emitted:
             return
         self._emitted = True
-        latency = (time.time() - self._start) * 1000.0
+        latency = (time.perf_counter() - self._start) * 1000.0
         tokens_in, tokens_out = (None, None)
         if not error and self._last is not None:
             tokens_in, tokens_out = _extract_tokens(self._last)
@@ -183,7 +189,7 @@ class _SyncStreamWrapper:
         event = StepEvent(
             step_id=str(next(self._counter)),
             episode_id=self._episode_id,
-            timestamp=time.time(),
+            timestamp=time.perf_counter(),
             action_type="tool_call",
             action_signature=sig,
             tool_name=str(self._model),
@@ -265,7 +271,7 @@ class _AsyncStreamWrapper:
         if self._emitted:
             return
         self._emitted = True
-        latency = (time.time() - self._start) * 1000.0
+        latency = (time.perf_counter() - self._start) * 1000.0
         tokens_in, tokens_out = (None, None)
         if not error and self._last is not None:
             tokens_in, tokens_out = _extract_tokens(self._last)
@@ -275,7 +281,7 @@ class _AsyncStreamWrapper:
         event = StepEvent(
             step_id=str(next(self._counter)),
             episode_id=self._episode_id,
-            timestamp=time.time(),
+            timestamp=time.perf_counter(),
             action_type="tool_call",
             action_signature=sig,
             tool_name=str(self._model),
@@ -302,7 +308,7 @@ def _emit_now(
     error_type: str | None,
     result: Any,
 ) -> None:
-    latency = (time.time() - start) * 1000.0
+    latency = (time.perf_counter() - start) * 1000.0
     tokens_in, tokens_out = (None, None)
     if not error:
         tokens_in, tokens_out = _extract_tokens(result)
@@ -310,7 +316,7 @@ def _emit_now(
     event = StepEvent(
         step_id=str(next(counter)),
         episode_id=episode_id,
-        timestamp=time.time(),
+        timestamp=time.perf_counter(),
         action_type="tool_call",
         action_signature=sig,
         tool_name=str(model),
@@ -331,7 +337,7 @@ def _wrap_one(monitor: Any, original: Any, episode_id: str, counter: Any) -> Any
     def _sync(*args: Any, **kwargs: Any) -> Any:
         model = kwargs.get("model", "unknown")
         sig_text = str(kwargs.get("messages") or kwargs.get("prompt") or args)
-        start = time.time()
+        start = time.perf_counter()
         try:
             result = original(*args, **kwargs)
         except Exception as e:
@@ -368,7 +374,7 @@ def _wrap_one(monitor: Any, original: Any, episode_id: str, counter: Any) -> Any
     async def _async(*args: Any, **kwargs: Any) -> Any:
         model = kwargs.get("model", "unknown")
         sig_text = str(kwargs.get("messages") or kwargs.get("prompt") or args)
-        start = time.time()
+        start = time.perf_counter()
         try:
             result = await original(*args, **kwargs)
         except Exception as e:
