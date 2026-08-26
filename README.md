@@ -512,7 +512,7 @@ if monitor.last_directive.action == "pause":
 
 Fail-open survives enforcement by construction: a callback exception is logged, counted under `metrics()["policy_errors"]`, and swallowed (unless `fail_open=False`); a webhook timeout, dead endpoint, malformed body, unknown action, or HTTP error leaves the directive at continue. Worst-case added latency per halting step is bounded by the explicit `halt_timeout_s` envelope (default 250ms) and is paid only by the dispatching thread -- other episodes keep ingesting. Measured numbers (Apple M1, CPython 3.14, 2026-08-26; run `python benchmarks/enforcement_benchmark.py`): observe baseline ~2 us/step, responding localhost endpoint ~264 us/step median, refused endpoint ~57 us/step, stalled endpoint ~252.7 ms/step, i.e. the full timeout budget plus a small epsilon.
 
-The equivalent for sidecar consumers: `snagline serve --halt-forward URL` runs the identical policy inside the HTTP sidecar (`--halt-timeout` and `--min-severity-for-halt` tune it). Configuration is 12-factor too: `SNAGLINE_POLICY`, `SNAGLINE_HALT_URL`, `SNAGLINE_HALT_TIMEOUT_S`, `SNAGLINE_MIN_SEVERITY_FOR_HALT`. Note `on_risk` is code-only: callables cannot arrive via env vars or config files.
+The equivalent for sidecar consumers: `snagline serve --halt-forward URL` runs the identical policy inside the HTTP sidecar (`--halt-timeout` and `--min-severity-for-halt` tune it). Non-Python hosts read the answer back with `GET /directive`, which returns `{"action": "continue"|"pause", "reason": ..., "timestamp": ...}` and is auth-gated like `GET /risks`. Configuration is 12-factor too: `SNAGLINE_POLICY`, `SNAGLINE_HALT_URL`, `SNAGLINE_HALT_TIMEOUT_S`, `SNAGLINE_MIN_SEVERITY_FOR_HALT`. Note `on_risk` is code-only: callables cannot arrive via env vars or config files.
 
 ## External Agent Bridges
 
@@ -527,6 +527,7 @@ snagline serve --host 127.0.0.1 --port 8787
 # POST /events              body: StepEvent JSON   -> 202, ingested
 # POST /hooks/claude-code   body: native hook payload -> 202, mapped + ingested
 # GET  /health                                     -> 200
+# GET  /directive                                  -> 200, latest halt directive
 ```
 
 ### Claude Code integration
