@@ -20,6 +20,11 @@ import os
 import threading
 from typing import Any
 
+from snagline.calibration import (
+    CalibrationPlan,
+    build_plan,
+    resolve_baseline_profile,
+)
 from snagline.config import Config
 from snagline.detectors.base import Detector
 from snagline.events import StepEvent
@@ -36,6 +41,41 @@ SNAPSHOT_FORMAT_VERSION = 1
 def _detector_key(index: int, detector: Any) -> str:
     """Stable per-position key for a detector inside a snapshot payload."""
     return f"{index}:{getattr(detector, 'name', type(detector).__name__)}"
+
+
+def _auto_calibration_plan(cfg: Config) -> CalibrationPlan | None:
+    """Resolve the auto-calibration plan for ``cfg``, fail-open (issue #101).
+
+    Returns None unless ``cfg.calibration == "auto"`` AND a usable baseline
+    resolves; every failure mode (unknown value, missing baseline, unreadable
+    file, derivation error) logs and falls back to the hand-tuned defaults so
+    monitoring can never become worse than today because of calibration.
+    """
+    if str(getattr(cfg, "calibration", "") or "").strip().lower() != "auto":
+        return None
+    try:
+        profile = resolve_baseline_profile(cfg)
+    except Exception as exc:
+        logger.warning(
+            "snagline: auto-calibration baseline unavailable (%s); "
+            "using hand-tuned thresholds",
+            exc,
+        )
+        return None
+    if profile is None:
+        logger.info(
+            "snagline: calibration=auto without a BaselineProfile; "
+            "keeping hand-tuned thresholds"
+        )
+        return None
+    try:
+        return build_plan(profile, cfg)
+    except Exception as exc:
+        logger.warning(
+            "snagline: auto-calibration failed (%s); using hand-tuned thresholds",
+            exc,
+        )
+        return None
 
 
 class MonitorMetrics:
@@ -383,11 +423,26 @@ class Monitor:
         from snagline.sinks.console import ConsoleSink
 
         cfg = config or Config()
-        base: list[Any] = [
-            LoopDetector(config=cfg),
-            ErrorCascadeDetector(config=cfg),
-            LatencyAnomalyDetector(config=cfg),
-        ]
+        # Auto-calibration (issue #101): opt-in via calibration="auto" plus a
+        # healthy BaselineProfile; None keeps every hand-tuned constant.
+        cal = _auto_calibration_plan(cfg)
+        if cal is not None:
+            base: list[Any] = [
+                LoopDetector(config=cfg),
+                ErrorCascadeDetector(
+                    error_threshold=cal.cascade_error_threshold,
+                    consecutive_threshold=cal.cascade_consecutive_threshold,
+                    config=cfg,
+                ),
+                # Seeded CUSUM: healthy mean/spread replace live warm-up.
+                LatencyAnomalyDetector(baseline=cal.baseline, config=cfg),
+            ]
+        else:
+            base = [
+                LoopDetector(config=cfg),
+                ErrorCascadeDetector(config=cfg),
+                LatencyAnomalyDetector(config=cfg),
+            ]
         # Stagnation is opt-in (issue #87): novelty-rate collapse detection,
         # default-off so the zero-dependency preset and the published bench
         # numbers are untouched. Appended to ``base`` so a concurrent
@@ -407,6 +462,20 @@ class Monitor:
         if cfg.silent_abort_enabled:
             base.append(SilentAbortDetector(config=cfg))
         if cfg.ml_ensemble_enabled:
+            # Optional ml extra: add the one-class ESN + CUSUM detector to the
+            # ensemble when numpy is importable (issue #80). The import is
+            # guarded so a missing or broken extra degrades fail-open to the
+            # zero-dependency noisy-OR over the deterministic detectors.
+            try:
+                from snagline.ml.esn_ensemble import EsnCusumDetector
+
+                base.append(EsnCusumDetector(baseline=cfg.goal_drift_baseline))
+            except Exception:
+                logger.debug(
+                    "snagline: ml extra unavailable; noisy-OR runs over the "
+                    "deterministic detectors only",
+                    exc_info=True,
+                )
             # Combine the base detectors into one orchestrated signal (step 3).
             detectors: list[Detector] = [MLOrchestrator(base, config=cfg)]
         else:

@@ -26,7 +26,7 @@ from snagline.events import StepEvent, make_signature
 try:  # optional dependency
     from langchain_core.callbacks import BaseCallbackHandler
 except Exception:  # pragma: no cover - exercised only without LangChain
-    BaseCallbackHandler = object
+    BaseCallbackHandler = object  # type: ignore[assignment,misc]
 
 
 class SnaglineCallbackHandler(BaseCallbackHandler):

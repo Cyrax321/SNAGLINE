@@ -20,6 +20,13 @@ rel_floor * |mu0|)`` so that even a constant baseline has a meaningful deviation
 scale. This makes a single large spike alarm immediately instead of requiring
 several sustained spikes. Only ``latency_ms`` and ``tool_name`` are read -- no
 content (project.md §1.4).
+
+Calibrated start (issue #101): passing a fitted ``BaselineProfile`` replaces
+the live warm-up for tools it describes well enough (``count >=
+min_samples``): the CUSUM starts frozen at the profile's healthy mean and
+floored spread instead of learning from early live samples. Episodes shorter
+than the warm-up are therefore monitorable from their first step, with no new
+knobs: k/h stay as configured.
 """
 
 from __future__ import annotations
@@ -27,6 +34,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from snagline.baseline import BaselineProfile, ToolBaseline
 from snagline.config import Config
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk
@@ -65,14 +73,26 @@ class _WelfordCUSUM:
     def freeze(self) -> None:
         """Snapshot the baseline mean/variance as the fixed CUSUM target."""
         var = self._m2 / (self.n - 1) if self.n >= 2 else 0.0
-        std = math.sqrt(var)
+        std = math.sqrt(max(0.0, var))
         self.mu0 = self.mean
-        if self.mean != 0.0:
-            floor = max(self.sigma_floor_abs, self.sigma_floor_rel * abs(self.mean))
-        else:
-            floor = self.sigma_floor_abs
-        self.sigma0 = max(std, floor)
+        self.sigma0 = self._floored_sigma(self.mean, std)
         self.frozen = True
+
+    def seed(self, mean: float, std: float) -> None:
+        """Start from an externally fitted healthy baseline (no warm-up).
+
+        Used by auto-calibration (issue #101): the profile's healthy mean and
+        spread become the fixed CUSUM target immediately.
+        """
+        self.mu0 = mean
+        self.sigma0 = self._floored_sigma(mean, std)
+        self.frozen = True
+
+    def _floored_sigma(self, mean: float, std: float) -> float:
+        """Reference spread: observed std floored per the configured floors."""
+        if mean != 0.0:
+            return max(std, self.sigma_floor_abs, self.sigma_floor_rel * abs(mean))
+        return max(std, self.sigma_floor_abs)
 
     def update(self, x: float) -> bool:
         """Advance the CUSUM against the frozen baseline. Returns True if it alarms."""
@@ -91,6 +111,7 @@ class LatencyAnomalyDetector:
         min_samples: int | None = None,
         sigma_floor_abs: float | None = None,
         sigma_floor_rel: float | None = None,
+        baseline: BaselineProfile | None = None,
         config: Config | None = None,
     ) -> None:
         cfg = config or Config()
@@ -109,6 +130,9 @@ class LatencyAnomalyDetector:
             if sigma_floor_rel is not None
             else cfg.cusum_sigma_floor_rel
         )
+        # Healthy reference for calibrated starts (issue #101). Aggregate
+        # per-tool stats only; no content is retained or consulted.
+        self._baseline = baseline
         self._states: dict[tuple[str, str], _WelfordCUSUM] = {}
 
     def observe(self, event: StepEvent) -> FailureRisk | None:
@@ -126,6 +150,17 @@ class LatencyAnomalyDetector:
             state = _WelfordCUSUM(
                 self.k, self.h, self.sigma_floor_abs, self.sigma_floor_rel
             )
+            # Calibrated start (issue #101): when a healthy profile describes
+            # this tool well enough, skip warm-up and freeze onto its stats.
+            # Tools without a sufficient entry keep today's learn-then-freeze
+            # behavior.
+            seeded: ToolBaseline | None = None
+            if self._baseline is not None:
+                candidate = self._baseline.tools.get(key[1])
+                if candidate is not None and candidate.count >= self.min_samples:
+                    seeded = candidate
+            if seeded is not None:
+                state.seed(seeded.mean_latency, seeded.std_latency)
             self._states[key] = state
 
         if not state.frozen:

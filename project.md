@@ -449,6 +449,16 @@ class LoopDetector:
         self._windows.pop(episode_id, None)
 ```
 
+Issue #89 adds three opt-in hardening modes to this detector, all default-off
+so the path above is unchanged: near-duplicate (collapses volatile uuid-like
+and digit substrings before hashing, a documented heuristic with a replaceable
+`normalizer` hook), cycle (ascending scan for the window's true minimal period;
+fires when it lies inside the configured band, default p in 2..6, and the recent
+window holds two full periods of the pattern), and stall (N
+consecutive identical signatures, default 25, wall-clock deltas never reset the
+streak). New trigger strings (`near_duplicate_loop`, `cycle`, `stall`) are API;
+config lives in the labeled loop-hardening block in `config.py`.
+
 ### 5.2 Error-cascade detector (`detectors/error_cascade.py`)
 
 Same sliding-window shape, tracks `error` booleans instead of signatures.
