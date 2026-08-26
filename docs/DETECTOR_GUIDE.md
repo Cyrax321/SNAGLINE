@@ -330,6 +330,38 @@ a detector implements the duck-typed `finalize(episode_id)` method
 (`detectors.base.EpisodeFinalizer`); `end_episode` discovers it by attribute,
 so ordinary detectors are unaffected and fail-open applies as always.
 
+### `CompactionTripwireDetector` (`compaction_tripwire_enabled=True`, issue #90)
+
+Governance-decay detection across context compactions. Motivation comes from
+arXiv:2606.22528, which studies how compaction (summarization, truncation,
+eviction) can silently drop governance constraints from an agent's context
+and measurably raises policy-violation rates afterwards. Their finding is
+cited as motivation only; SNAGLINE claims no benchmark numbers of its own
+for this detector.
+
+The contract uses two adapter-defined action types that core otherwise treats
+opaquely:
+
+    step("compaction", metadata={"pinned": ["<sha256>", ...]})  # just compacted
+    step("constraint_present", metadata={"pin": "<sha256>"})     # pin re-seen
+
+After a `compaction` event the host has `compaction_tripwire_grace_steps`
+(default 3) subsequent events to re-confirm every pinned hash. Pins still
+unconfirmed at the deadline produce exactly one `FailureRisk(score=0.9,
+trigger="governance_decay")` naming 16-hex prefixes of the missing pins; a
+later compaction replaces the pending set and restarts the grace window.
+
+Privacy: hashes only. The adapter hashes canonical constraint text itself,
+so constraint text never reaches snagline. This detector is also the ONE
+documented exception to "detectors never read metadata": it reads exactly
+two keys (`pinned` on compaction events, `pin` on confirmations) and nothing
+else.
+
+Honest limits: the tripwire is inert by design wherever the host offers no
+compaction hooks or no way to observe constraint presence. See ADAPTER_GUIDE
+and FRAMEWORK_BRIDGES for what adapters must do, and what they honestly
+cannot.
+
 ## Restart-survivable state: snapshot/restore (issue #91)
 
 Detectors that implement the duck-typed `dump_state()` / `load_state(state)`

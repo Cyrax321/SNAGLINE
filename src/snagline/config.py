@@ -225,6 +225,18 @@ class Config:
     side_effect_allowed_repeats: int = 1  # occurrences tolerated before firing
     side_effect_score: float = 0.9  # routes as critical severity
 
+    # Compaction tripwire (issue #90, opt-in). Governance-decay detection
+    # across context compactions: adapters whose host exposes compaction hooks
+    # emit step("compaction", metadata={"pinned": ["<sha256>", ...]}) and
+    # step("constraint_present", metadata={"pin": "<sha256>"}); pins still
+    # unconfirmed grace_steps events after the compaction fire exactly one
+    # score=0.9 risk with trigger "governance_decay". Hashes only: constraint
+    # text never reaches snagline. Inert by design on hosts that offer no
+    # compaction visibility. Default off so the zero-dependency preset and its
+    # published bench numbers are untouched.
+    compaction_tripwire_enabled: bool = False
+    compaction_tripwire_grace_steps: int = 3  # events allowed to re-confirm
+
     # --- Opt-in auto-calibration from a fitted BaselineProfile (issue #101) --
     # calibration="auto" derives error-cascade thresholds and the CUSUM latency
     # reference from a healthy-run profile (see snagline.calibration) instead

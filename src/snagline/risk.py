@@ -23,6 +23,10 @@ TriggerType = Literal[
     "budget_breach",
     "meltdown",
     "silent_abort",
+    # Governance decay across context compactions (issue #90). Driven by the
+    # adapter-defined action types "compaction" / "constraint_present"; see
+    # detectors/compaction_tripwire.py for the contract.
+    "governance_decay",
 ]
 
 # Severity ordering is informational only; sinks decide what to do with it.
