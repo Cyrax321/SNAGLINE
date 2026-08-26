@@ -35,12 +35,16 @@ crewai     = ["crewai>=0.30"]
 # SDKs used by the bundled demos (real agent harnesses):
 openai     = ["openai>=1.0"]
 anthropic  = ["anthropic>=0.30"]
+# CONTINUUM bridge (issue #79): the adapter/sink are duck-typed and never
+# import continuum, so an in-process or vendored CONTINUUM works without this;
+# the extra just names the real distribution (continuum-agent) for pip users.
+continuum  = ["continuum-agent"]
 # Optional extras (not required for the core fail-open detector):
 ml         = ["numpy>=1.24", "scikit-learn>=1.3"]   # ESN ensemble (issue #80)
 drift      = ["sentence-transformers>=2.2"]          # semantic goal-drift (issue #81)
 # Slack and PagerDuty sinks ship in the core and use only the stdlib, so they
 # need no extra dependency; the `all` extra pulls in the framework/SDK extras.
-all        = ["snagline-agent[langchain,langgraph,autogen,crewai,openai,anthropic,ml,drift]"]
+all        = ["snagline-agent[langchain,langgraph,autogen,crewai,openai,anthropic,ml,drift,continuum]"]
 
 [project.scripts]
 snagline = "snagline.cli:main"

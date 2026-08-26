@@ -12,6 +12,7 @@ dependency-free unless noted; the core is always zero-required-dependency.
 | File / command bridge | `snagline watch --file` or `hook --out` | any | forward one JSON line |
 | Python auto-instrumentation | `snagline.auto` (OpenAI/Anthropic/LangChain) | Python | one import |
 | Framework adapters | `adapters.raw`, `langchain`, `langgraph`, `autogen`, `crewai`, `claude_code` | Python | wrap your loop |
+| CONTINUUM ledger (free telemetry) | `adapters.continuum_adapter` poll/push over a CONTINUUM `Storage` handle (issue #79) | Python (CONTINUUM runs) | none in host; consumer of the existing ledger |
 
 ## Transport security
 
@@ -52,11 +53,21 @@ from snagline.adapters.langchain import LLMChainObserver
 from snagline.adapters.langgraph import GraphObserver
 from snagline.adapters.autogen import SnaglineAutogenHandler
 from snagline.adapters.crewai import snagline_step_callback
+from snagline.adapters.continuum_adapter import ContinuumAdapter
 ```
 
 Each adapter maps the framework's native callback/hook into a `StepEvent` and
 hands it to a `Monitor`. They are duck-typed so they work without the
 framework installed at import time.
+
+The CONTINUUM adapter watches an existing run's hash-chained ledger
+(`PERCEPTION_OBSERVED`, `BRANCH_RESOLVED`, action claim/complete/reconcile/
+compensate) and needs zero new instrumentation on the CONTINUUM side. Verified
+against current CONTINUUM source: reads go through
+`read_events(run_id, *, after_sequence, upto)` + `last_sequence(run_id)`.
+Not exercised against a live CONTINUUM instance end-to-end; unit tests use a
+fake storage implementing only that verified surface, plus one skip-guarded
+test running the real `ActionLedger`.
 
 ## Sinks (escalation)
 
@@ -68,6 +79,7 @@ framework installed at import time.
 | `PagerDutySink` | PagerDuty Events API v2 | stdlib |
 | `DedupSink` | cooldown/dedup wrapper (issue #4) | stdlib |
 | `BatchingSink` | async, rate-limited dispatch | stdlib |
+| `ContinuumSink` (issue #79) | escalates via CONTINUUM `ActionLedger.flag_for_review` -> `REQUIRES_REVIEW`; needs a resolvable action key per risk | stdlib core; `snagline-agent[continuum]` extra for the lazy import |
 
 CLI: `snagline watch --sink {console,webhook,slack,pagerduty}` (plus
 `--cooldown-seconds`, `--min-severity`). Wrap any sink in `DedupSink` and/or
