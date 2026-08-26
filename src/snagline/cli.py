@@ -714,6 +714,15 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     # Prefer the flag, fall back to the environment so the secret need not
     # appear in argv (visible to every other process via ps).
     auth_token = args.auth_token or os.environ.get("SNAGLINE_SERVE_AUTH_TOKEN") or None
+    # Validate TLS flag pairing before printing anything: a banner that
+    # advertises https:// and then dies in a traceback is worse than a clean
+    # refusal up front.
+    if args.keyfile and not args.certfile:
+        print(
+            "snagline serve: --keyfile requires --certfile",
+            file=sys.stderr,
+        )
+        return 2
     scheme = "https" if (args.certfile or args.keyfile) else "http"
     print(
         f"snagline serve: listening on {scheme}://{args.host}:{args.port} "
