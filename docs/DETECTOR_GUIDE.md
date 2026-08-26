@@ -64,7 +64,8 @@ monitor._detectors.append(MyDetector())   # or: Monitor(default_detectors + [min
 - `detectors/stagnation.py` - all-time novelty set plus a sliding novelty share
 - `detectors/side_effect_guard.py` - per-episode duplicate count of
   host-declared non-idempotent actions
-- `detectors/goal_drift.py` - compares a live run to a persisted `BaselineProfile`
+- `detectors/goal_drift.py` - compares a live run to a persisted `BaselineProfile` (structural error rate, latency, tool set)
+- `drift/goal_drift.py` - semantic embedding centroid drift vs the same profile (`snagline[drift]`, issue #81)
 - `detectors/ml_ensemble.py` - `MLOrchestrator` combining base detector scores
 - `detectors/token_runaway.py` - token-volume CUSUM + per-episode budget envelope
 - `detectors/meltdown.py` - sliding-window entropy collapse/thrash detection
@@ -135,6 +136,60 @@ diverges from that healthy reference: rising error rate (beyond
 zero-variance baseline uses a floored spread (5% of mean, min 1 ms) so tiny
 deviations are not treated as infinite z. Enable it with
 `Config(goal_drift_enabled=True, goal_drift_baseline=profile)`.
+
+### `SemanticGoalDriftDetector` (`semantic_drift_enabled=True`, `snagline[drift]`, issue #81)
+
+`SemanticGoalDriftDetector(baseline=profile, config=cfg, embedder=None)` is
+the optional embedding counterpart to `GoalDriftDetector`. It compares the
+running centroid of embedded structural labels against the persisted
+`BaselineProfile.embedding_centroid` built by `fit_semantic_baseline`
+(`drift/goal_drift.py`).
+
+* **What is embedded:** a short label built from `action_type`,
+  `tool_name`, and `error_type` only. Prompt or response content and
+  `metadata` are never read, never logged, and never persisted. The only
+  stored artifact is an averaged vector of floats inside the baseline JSON.
+* **How it decides:** cosine similarity between the live running centroid
+  and the healthy reference gives a deviation `1 - cos`. Values within
+  `semantic_drift_tolerance` (default 0.3) are treated as noise. Above it,
+  a CUSUM accumulates `signal - cusum_k` and fires a `goal_drift` risk
+  when the debt reaches `semantic_drift_cusum_h` (defaults `k=0.05`,
+  `h=0.5`). After firing the accumulator re-arms, so persistent drift
+  re-alarms later. Fewer than `semantic_drift_min_samples` (default 10)
+  live steps never fire.
+* **Extra and laziness:** `pip install snagline-agent[drift]`
+  (`sentence-transformers`). The package imports without the extra; the
+  transformer is loaded lazily, exactly once, on first use. An injectable
+  `embedder=callable(StepEvent) -> Sequence[float]` bypasses the heavy
+  dependency entirely and is the path the test suite uses, so no torch is
+  needed to run the tests. Pass `model_loader` to control loading if you
+  embed elsewhere.
+* **Fail-open and privacy:** model load failures, inference exceptions,
+  degenerate or dimension-mismatched embeddings, and a baseline without an
+  `embedding_centroid` all leave the detector permanently inert, logged at
+  most once, never crashing or stalling the host. Dimension is checked on
+  the first scored step; the detector latches off after a mismatch.
+* **Wiring:** append to the Monitor's base list. Under `Monitor.default()`
+  a semantically fitted profile plus `Config(semantic_drift_enabled=True,
+  goal_drift_baseline=profile)` adds it to the base set. With
+  `ml_ensemble_enabled` as well it joins the same noisy-OR `MLOrchestrator`
+  that already wraps the ESN ensemble (issue #80), so its `goal_drift`
+  trigger becomes `ml_ensemble` through the ensemble.
+* **Snapshot:** implements `dump_state` / `load_state` (per-episode running
+  sum, count, and CUSUM debt) and participates in `Monitor.snapshot` /
+  `restore` like any stateful detector.
+
+Fit a baseline that carries semantics from the same healthy trajectory:
+
+```python
+from snagline.drift.goal_drift import fit_semantic_baseline
+profile = fit_semantic_baseline(healthy_events, embedder, model="all-MiniLM-L6-v2")
+save_baseline(profile, "baseline.json")  # JSON now carries embedding_centroid
+```
+
+Or build one structurally with `snagline baseline` and without semantics;
+the detector then stays inert (the intended default) until you give it a
+reference it can compare against.
 
 ### Auto-calibrated thresholds (`calibration="auto"`, issue #101)
 

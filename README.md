@@ -100,13 +100,14 @@ The full architecture reference is in [docs/ADAPTER_GUIDE.md](docs/ADAPTER_GUIDE
 | **Error cascade detector** | Fast cascades and slow-burn degradations | Two modes: N consecutive errors (fast), or N errors within a recent window (slow). | O(1) amortized |
 | **Latency anomaly detector** | Sustained performance regression | Welford running mean/variance per tool, frozen baseline, CUSUM statistic. Short warm-up prevents false positives on normal jitter. | O(1) amortized |
 | **Goal-drift detector** (opt-in) | A run diverging from its known-healthy behavior | Compares a live run's per-tool error rate and latency against a persisted `BaselineProfile` built by `snagline baseline`. Flags rising error rate, latency blowing past the healthy mean, or tools that never appeared in the baseline. | O(1) amortized |
+| **Semantic goal-drift detector** (opt-in, `snagline[drift]`) | The agent's activity mix drifting from its healthy goal | Embeds structural labels (`action_type`, `tool_name`, `error_type`; never content) with `sentence-transformers` and watches the live episode's running centroid against the persisted `BaselineProfile` embedding centroid; sustained cosine deviation through a CUSUM gate emits `goal_drift`. Import is lazy; missing model or inference failures leave it inert (fail-open). | O(embedding dim) per step, bounded state |
 | **ML ensemble** (opt-in) | A stronger, combined signal | Wraps the base detectors and combines their scores with a transparent noisy-OR. A real model can be injected via `MLOrchestrator(model=...)` (the `ml` extra provides scikit-learn). | O(1) amortized |
 
 Detection is deterministic and `O(1)` amortized per step. It runs with no network calls and no LLM calls. The CUSUM detector uses only the Python standard library (`statistics` module) -- no numpy required.
 
 ### Baseline and advanced detection
 
-The `goal_drift` and `ml_ensemble` detectors are opt-in (default off) so the zero-dependency preset is unchanged. They unlock once you capture a healthy run:
+The `goal_drift`, `ml_ensemble`, and semantic goal-drift (`drift`) detectors are opt-in (default off) so the zero-dependency preset is unchanged. They unlock once you capture a healthy run:
 
 ```bash
 # 1. Capture a known-good trajectory (one JSON StepEvent per line)...
@@ -128,7 +129,9 @@ config = Config(
 monitor = Monitor.default(config=config)
 ```
 
-With `ml_ensemble_enabled`, `Monitor.default()` wraps the base detectors in a single `MLOrchestrator` instead of exposing them individually, so there is no double counting. Both detectors are documented in [docs/DETECTOR_GUIDE.md](docs/DETECTOR_GUIDE.md).
+The `drift` extra adds semantic drift on top of the same `BaselineProfile` (issue #81, `pip install snagline-agent[drift]`). Fit it from the same healthy trajectory with `fit_semantic_baseline` (`snagline/drift/goal_drift.py`), then enable it with `Config(semantic_drift_enabled=True, goal_drift_baseline=profile)`. Import is lazy and any model load or inference failure leaves it inert, logged and fail-open. With `ml_ensemble_enabled` and `semantic_drift_enabled` together the semantic signal joins the ESN ensemble inside the same noisy-OR `MLOrchestrator`.
+
+With `ml_ensemble_enabled`, `Monitor.default()` wraps the base detectors in a single `MLOrchestrator` instead of exposing them individually, so there is no double counting. All advanced detectors are documented in [docs/DETECTOR_GUIDE.md](docs/DETECTOR_GUIDE.md).
 
 Baselines go stale as your agent evolves. For scheduled refits, use
 `snagline baseline retrain`: it fits from the newest JSONL window and bumps a
@@ -638,8 +641,8 @@ SNAGLINE sits at the overlap of real-time monitoring, anomaly detection, and rel
 | 13 | Framework bridge docs | Complete |
 | 14 | Offline replay CLI (`snagline replay`) | Complete |
 | 15 | Dedup / cooldown (`DedupSink`) | Complete ([#4](https://github.com/Cyrax321/SNAGLINE/issues/4)) |
-| 16 | ML ensemble detector (`snagline[ml]`) | Complete (deterministic combiner; `snagline[ml]` ESN pending) |
-| 17 | Goal-drift detector (`snagline[drift]`) | Complete (deterministic; `snagline[drift]` embeddings pending) |
+| 16 | ML ensemble detector (`snagline[ml]`) | Complete (deterministic noisy-OR fallback plus optional `snagline[ml]` ESN ensemble, issue #80) |
+| 17 | Goal-drift detector (`snagline[drift]`) | Complete (deterministic per-tool compare plus optional `snagline[drift]` semantic embedding centroid, issue #81) |
 | 18 | AutoGen / CrewAI adapters | Complete |
 | 19 | Slack + PagerDuty sinks | Complete |
 
@@ -650,7 +653,7 @@ SNAGLINE sits at the overlap of real-time monitoring, anomaly detection, and rel
 - **Overhead is measured, not asserted.** Run `snagline bench` to reproduce on your hardware.
 - **Framework adapters are optional extras; sinks ship in core.** The LangChain, LangGraph, Autogen, and CrewAI adapters are optional installs (`pip install snagline-agent[langchain]`, etc.). The console, webhook, Slack, PagerDuty, and dedup sinks are zero-dependency stdlib and always available.
 - **The latency anomaly detector requires warm-up.** It learns a baseline from `cusum_min_samples` (default 20) events before any alarm can fire. This prevents false positives on normal jitter but means the detector is blind during warm-up.
-- **No goal-drift detection.** That needs embeddings and is a real dependency; planned for v2 at earliest.
+- **Goal-drift without the drift extra is structural only.** The built-in detector compares per-tool error rate, latency, and tool-name sets. Semantic (embedding) drift needs `pip install snagline-agent[drift]` (sentence-transformers, issue #81) and a baseline fitted with `fit_semantic_baseline`; without it the semantic side stays inert, logged and fail-open.
 - **No automatic repair.** Detection and escalation only. Repair is a distinct, harder problem.
 - **Alert spam under sustained anomalies.** The loop and error-cascade detectors emit a risk on every step while the triggering condition holds. Wrap a sink in `DedupSink` to suppress repeats within a cooldown window ([#4](https://github.com/Cyrax321/SNAGLINE/issues/4)).
 - **Slack delivery is fire-and-forget.** `SlackSink` posts to an incoming webhook with a short timeout; it never raises and never blocks `ingest()` for long.
