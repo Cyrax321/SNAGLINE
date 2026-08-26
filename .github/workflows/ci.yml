@@ -7,12 +7,25 @@ on:
 
 jobs:
   test:
-    name: Test (py${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         python-version: ["3.10", "3.11", "3.12", "3.13"]
+        include:
+          # Windows legs (issue #116): the two newest interpreters only, so
+          # Windows-only regressions surface in CI without an 8-way matrix.
+          # Coverage policy: each job checks its own threshold independently;
+          # the Linux legs enforce the single canonical 80% gate from
+          # pyproject.toml while the Windows legs run report-only
+          # (--cov-fail-under=0 below), so per-OS numbers stay visible
+          # without becoming extra gates that must be moved in lockstep.
+          - os: windows-latest
+            python-version: "3.12"
+          - os: windows-latest
+            python-version: "3.13"
     steps:
       - uses: actions/checkout@v7
 
@@ -22,31 +35,46 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install (zero core deps + dev tooling)
+        shell: bash
         run: |
           python -m venv .venv
-          . .venv/bin/activate
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            . .venv/Scripts/activate
+          else
+            . .venv/bin/activate
+          fi
           python -m pip install --upgrade pip
           pip install -e . --no-deps
           # optional extra: without langchain-core the integration test silently
-          # skips, so CI would never run it — install it explicitly
+          # skips, so CI would never run it; install it explicitly
           pip install "langchain-core>=0.2"
           pip install "pytest" "pytest-cov==7.1.0" "ruff==0.16.3" "mypy"
 
       - name: Lint (ruff)
+        if: runner.os == 'Linux'
         run: |
           . .venv/bin/activate
           ruff check src tests
           ruff format --check src tests
 
       - name: Type-check (mypy)
+        if: runner.os == 'Linux'
         run: |
           . .venv/bin/activate
           mypy src
 
-      - name: Run tests with coverage
+      - name: Run tests with coverage gate (Linux)
+        if: runner.os == 'Linux'
         run: |
           . .venv/bin/activate
           python -m pytest tests/ -q
+
+      - name: Run tests, coverage reported but not gated (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          . .venv/Scripts/activate
+          python -m pytest tests/ -q --cov-fail-under=0
 
   test-ml:
     # Exercises the optional ml extra so its tests always run somewhere;
