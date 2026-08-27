@@ -290,6 +290,7 @@ the path variant below.
 | `SNAGLINE_HALT_URL` | `halt_url` | *(unset)* | Halt webhook endpoint; required when policy is halt_webhook |
 | `SNAGLINE_HALT_TIMEOUT_S` | `halt_timeout_s` | 0.25 | Halt webhook round-trip budget in seconds; timeout fails open to continue |
 | `SNAGLINE_MIN_SEVERITY_FOR_HALT` | `min_severity_for_halt` | 0.8 | Minimum risk score that pays the halt-webhook cost |
+| `SNAGLINE_MAX_LIVE_EPISODES` | `max_live_episodes` | 10000 | Per-episode LRU cap; when exceeded the least-recently-seen episode is evicted silently (no finalize). Explicit `end_episode` still frees immediately |
 
 A handful of variables sit outside `Config` because they are consumed
 directly by one component each:
@@ -594,7 +595,7 @@ snagline watch --file /var/log/agent/events.jsonl --follow
 | **FailureRisk** | The signal. Carries no raw content, no metadata. Just ids, score, trigger, detail, and timestamp. |
 | **Sink** | The escalation path: `emit(risk) -> None`. Fire-and-forget, never blocks ingest. |
 | **Action signature** | A one-way SHA-256 digest of the logical action. Volatile fields (timestamps, nonces, retry counters) must be excluded so retries look like retries, not unique actions. |
-| **Episode** | A logical unit of work (a single agent run, a user session). Per-episode state is isolated and can be cleared via `monitor.end_episode()`. |
+| **Episode** | A logical unit of work (a single agent run, a user session). Per-episode state is isolated and MUST be cleared via `monitor.end_episode()` when the episode is finished; otherwise the Monitor evicts the least-recently-seen episode once `max_live_episodes` (default 10000, env `SNAGLINE_MAX_LIVE_EPISODES`) is exceeded. Eviction is silent (no finalize risks) and retains only episode ids, never content. |
 | **Config** | All tunable thresholds in one dataclass. Sensible defaults ship so zero configuration works. |
 
 ## Architecture
@@ -625,7 +626,7 @@ from snagline import Monitor, StepEvent, FailureRisk, Config, make_signature, wa
 |:--|:--|
 | `Monitor` | Orchestrator. `Monitor.default()` returns a ready-to-use instance. |
 | `Monitor.ingest(event)` | Run all detectors against one event. Never raises (fail-open). |
-| `Monitor.end_episode(episode_id)` | Clear per-episode detector state. |
+| `Monitor.end_episode(episode_id)` | Clear per-episode detector state. MUST be called when an episode finishes; otherwise state is retained until LRU eviction. The retained count is exposed as `monitor.retained_episodes` and `snagline_monitor_retained_episodes` (prometheus) and `metrics()["retained_episodes"]`. |
 | `StepEvent` | Frozen dataclass. The canonical event schema. |
 | `FailureRisk` | Frozen dataclass. The detection signal. |
 | `Config` | Dataclass. All tunable thresholds. |

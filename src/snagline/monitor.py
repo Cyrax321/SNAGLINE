@@ -20,6 +20,7 @@ import os
 import threading
 import time
 import urllib.request
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -214,6 +215,17 @@ class Monitor:
         self._warn_fraction = cfg.warn_fraction
         self._idle_warn_seconds = cfg.idle_warn_seconds
         self._clocks: dict[str, _EpisodeClock] = {}
+        # Per-episode retention cap (issue #184): bounded LRU of live episode
+        # ids. Every ingest touches the entry; when the cap is exceeded the
+        # least-recently-seen id is evicted silently (no finalize risks) via
+        # the same teardown as end_episode. Explicit end_episode still frees
+        # immediately; this is the safety net for hosts that never call it.
+        # No content retention: keys are episode ids only.
+        self._max_live_episodes: int = int(getattr(cfg, "max_live_episodes", 10_000))
+        if self._max_live_episodes < 1:
+            self._max_live_episodes = 10_000
+        self._live_episodes: OrderedDict[str, None] = OrderedDict()
+        self._live_lock = threading.Lock()
         # A faulty detector or sink must not spam the logs on every single step
         # (issue #14) -- log each distinct fault exactly once.
         self._fault_lock = threading.Lock()
@@ -314,6 +326,21 @@ class Monitor:
         wall clock, so replay stays deterministic. The dispatch tail belongs to
         the sinks/policy layer and is left untouched by time-axis logic.
         """
+        # Per-episode retention cap (issue #184): touch LRU and evict if over
+        # cap. Done outside the episode lock so eviction of a different id
+        # does not deadlock. LRU by last-seen is safe: an active episode is
+        # by definition recently seen and cannot be evicted out from under
+        # itself. Eviction is silent (no finalize) and fail-open.
+        evicted: str | None = None
+        with self._live_lock:
+            if event.episode_id in self._live_episodes:
+                self._live_episodes.move_to_end(event.episode_id)
+            else:
+                self._live_episodes[event.episode_id] = None
+                if len(self._live_episodes) > self._max_live_episodes:
+                    evicted, _ = self._live_episodes.popitem(last=False)
+        if evicted is not None and evicted != event.episode_id:
+            self._evict_episode(evicted)
         risks: list[FailureRisk] = []
         with self._state.episode_lock(event.episode_id):
             # Time-axis head (issue #92): computed from StepEvent timestamps at
@@ -356,6 +383,12 @@ class Monitor:
           breach (mirrors TokenRunawayDetector's envelope ordering).
         """
         out: list[FailureRisk] = []
+        # Inert unless one of the opt-in horizon knobs is set (issue #92). When
+        # both are None the time axis claims to be inert, so do not retain
+        # per-episode clocks at all (issue #184: _clocks grew even with the
+        # feature off). No content retention beyond ids.
+        if self._max_wall_seconds is None and self._idle_warn_seconds is None:
+            return out
         try:
             clock = self._clocks.get(event.episode_id)
             if clock is None:
@@ -534,7 +567,19 @@ class Monitor:
     def metrics(self) -> dict:
         """Return a snapshot of self-observability counters (P3, item 10)."""
         with self._metrics_lock:
-            return self._metrics.as_dict()
+            data = self._metrics.as_dict()
+        # Issue #184: expose retained-episode count so the leak is observable
+        # rather than inferred from RSS. Count is live LRU size (ids only).
+        with self._live_lock:
+            data["live_episodes"] = len(self._live_episodes)
+            data["retained_episodes"] = len(self._live_episodes)
+        return data
+
+    @property
+    def retained_episodes(self) -> int:
+        """Number of live episode ids currently retained (issue #184)."""
+        with self._live_lock:
+            return len(self._live_episodes)
 
     def add_sink(self, sink: AlertSink) -> None:
         """Register one more sink at runtime (issue #122).
@@ -577,6 +622,44 @@ class Monitor:
         """
         self.ingest(event)
 
+    def _evict_episode(self, episode_id: str) -> None:
+        """Silent LRU eviction for the retention cap (issue #184).
+
+        Same teardown as ``end_episode`` but without ``finalize`` risks: an
+        episode that vanished because the host never called ``end_episode``
+        should not suddenly emit a ``silent_abort`` risk long after the fact.
+        Fail-open throughout, never propagates even with ``fail_open=False``
+        for eviction (the cap is a safety net, not a judgment point).
+        """
+        # Race: pop selected this id as LRU, but another thread may have
+        # re-added it before we acquire its episode lock. If it is back in
+        # the live set, keep its fresh state.
+        with self._live_lock:
+            if episode_id in self._live_episodes:
+                return
+        try:
+            with self._state.episode_lock(episode_id):
+                self._clocks.pop(episode_id, None)
+                for detector in self._detectors:
+                    try:
+                        detector.reset(episode_id)
+                    except Exception:
+                        self._log_fault_once(
+                            f"detector {getattr(detector, 'name', repr(detector))} "
+                            "reset raised during eviction; ignoring (fail-open)"
+                        )
+                release = getattr(self._state, "release", None)
+                if callable(release):
+                    try:
+                        release(episode_id)
+                    except Exception:
+                        self._log_fault_once(
+                            f"state backend {type(self._state).__name__} release "
+                            "raised during eviction; ignoring (fail-open)"
+                        )
+        except Exception:
+            self._log_fault_once(f"eviction of {episode_id!r} raised; ignoring")
+
     def end_episode(self, episode_id: str) -> None:
         """Signal that ``episode_id`` has finished; judge it, then clear state.
 
@@ -594,6 +677,10 @@ class Monitor:
         never propagated (unless ``fail_open=False``). Dispatch happens
         outside the episode lock, mirroring ``ingest``.
         """
+        # Keep LRU honest: freeing here means the gauge and retained count
+        # drop at once, not when the cap eventually evicts.
+        with self._live_lock:
+            self._live_episodes.pop(episode_id, None)
         finalized: list[FailureRisk] = []
         with self._state.episode_lock(episode_id):
             # Time-axis state (issue #92) is per-episode like detector state;
@@ -911,4 +998,7 @@ class Monitor:
         monitor._max_wall_seconds = cfg.max_episode_wall_seconds
         monitor._warn_fraction = cfg.warn_fraction
         monitor._idle_warn_seconds = cfg.idle_warn_seconds
+        # Per-episode retention cap (issue #184): ensure the resolved cap
+        # wins over the default-constructed one from __init__.
+        monitor._max_live_episodes = int(cfg.max_live_episodes)
         return monitor
