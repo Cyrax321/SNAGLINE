@@ -42,6 +42,8 @@ continuum  = ["continuum-agent"]
 # Optional extras (not required for the core fail-open detector):
 ml         = ["numpy>=1.24", "scikit-learn>=1.3"]   # ESN ensemble (issue #80)
 drift      = ["sentence-transformers>=2.2"]          # semantic goal-drift (issue #81)
+# Dev extra for local development: pins match .github/workflows/ci.yml
+dev        = ["pytest", "pytest-cov==7.1.0", "ruff==0.16.3", "mypy"]
 # Slack and PagerDuty sinks ship in the core and use only the stdlib, so they
 # need no extra dependency; the `all` extra pulls in the framework/SDK extras.
 all        = ["snagline-agent[langchain,langgraph,autogen,crewai,openai,anthropic,ml,drift,continuum]"]

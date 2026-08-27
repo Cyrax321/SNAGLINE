@@ -751,14 +751,10 @@ Contributions are welcome. This project is open source under MIT and deliberatel
 
 ### Local development setup
 
-The core has no runtime dependencies, but the test suite needs `pytest` and
-`pytest-cov` (`[tool.pytest.ini_options] addopts` enables coverage, so a bare
-`pytest` fails with an unrecognised `--cov` until the plugin is installed).
-There is no `dev` extra yet, so install the tooling the same way CI does:
+The core has no runtime dependencies; dev tooling is in the `dev` extra:
 
 ```bash
-pip install -e . --no-deps
-pip install pytest pytest-cov ruff mypy
+pip install -e ".[dev]"
 python -m pytest tests/ -q        # 622 passed, 2 skipped
 ruff check src tests && ruff format --check src tests
 mypy src
