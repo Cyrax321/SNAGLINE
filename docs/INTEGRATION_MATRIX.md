@@ -27,8 +27,9 @@ In-process TLS also ships (issue #120): `snagline serve --certfile <pem>
 --keyfile <pem>` wraps the listener in stdlib `ssl`, so the sidecar itself
 can speak HTTPS and remove even the loopback plaintext hop. Copy-paste
 invocation in [ATTACH_ANY_SYSTEM.md](ATTACH_ANY_SYSTEM.md#sidecar-tls-reverse-proxy-termination-issue-103).
-Mutual TLS via a client CA is a possible follow-up; zero new dependencies
-either way.
+Mutual TLS via `snagline serve --client-ca` (issue #145) requests a client
+certificate on every handshake and verifies it against the given CA bundle;
+zero new dependencies either way.
 
 ## Python auto-instrumentation (`snagline.auto`)
 

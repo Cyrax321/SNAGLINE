@@ -384,7 +384,7 @@ between them is purely operational.
 - **Status: P0, P1, and most of P3 are complete.** Remaining:
   - P3 item 10 tail: Prometheus export + structured logging for the monitor.
   - Actual PyPI upload (needs a token). In-process TLS shipped via
-    #120 alongside the reverse-proxy pattern from #110; mutual TLS is
-    tracked in #145.
+    #120 alongside the reverse-proxy pattern from #110; mutual TLS shipped
+    in #145 via `--client-ca`.
   - Then P2 (ml/drift extras, calibration, eval harness) - the research
     differentiators that approach the paper's accuracy.
