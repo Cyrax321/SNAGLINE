@@ -5,9 +5,11 @@ from __future__ import annotations
 import io
 import json
 from argparse import Namespace
+from typing import cast
 
 from snagline.cli import main
 from snagline.config import Config
+from snagline.sinks.base import AlertSink
 from snagline.sinks.dedup import DedupSink
 from snagline.sinks.pagerduty import PagerDutySink
 from snagline.sinks.slack import SlackSink
@@ -297,16 +299,16 @@ def test_main_serve_flag_beats_the_environment(monkeypatch):
     assert started["auth_token"] == "from-flag"
 
 
-def test_maybe_dedup_wraps_sinks_only_when_cooldown_set():
+def test_maybe_dedup_wraps_sinks_only_when_cooldown_set() -> None:
     from snagline.cli import _maybe_dedup
     from snagline.sinks.console import ConsoleSink
 
     plain = [ConsoleSink()]
     # No cooldown -> sinks returned unchanged.
-    assert _maybe_dedup(plain, 0.0) is plain
-    assert _maybe_dedup(plain, 0) is plain
+    assert _maybe_dedup(cast(list[AlertSink], plain), 0.0) is plain
+    assert _maybe_dedup(cast(list[AlertSink], plain), 0) is plain
     # Cooldown > 0 -> each sink wrapped in a DedupSink.
-    wrapped = _maybe_dedup(plain, 120.0)
+    wrapped = _maybe_dedup(cast(list[AlertSink], plain), 120.0)
     assert len(wrapped) == 1
     assert isinstance(wrapped[0], DedupSink)
     assert wrapped[0]._cooldown == 120.0

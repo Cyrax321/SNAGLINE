@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from typing import cast
 
 from snagline.cli import replay
 from snagline.monitor import Monitor
@@ -22,38 +23,46 @@ def _monitor() -> Monitor:
     return Monitor.default(sinks=[RecordingSink()])
 
 
-def test_replay_healthy_no_false_positive():
+def test_replay_healthy_no_false_positive() -> None:
     mon = _monitor()
     n = replay(os.path.join(FIX, "healthy_run.jsonl"), monitor=mon)
     assert n == 24
-    assert mon._sinks[0].risks == [], f"false positives: {mon._sinks[0].risks}"
+    assert cast(RecordingSink, mon._sinks[0]).risks == [], (
+        f"false positives: {cast(RecordingSink, mon._sinks[0]).risks}"
+    )
 
 
-def test_replay_injected_loop_detected():
+def test_replay_injected_loop_detected() -> None:
     mon = _monitor()
     replay(os.path.join(FIX, "injected_loop.jsonl"), monitor=mon)
-    assert any(r.trigger == "loop" for r in mon._sinks[0].risks)
+    assert any(r.trigger == "loop" for r in cast(RecordingSink, mon._sinks[0]).risks)
 
 
-def test_replay_injected_cascade_detected():
+def test_replay_injected_cascade_detected() -> None:
     mon = _monitor()
     replay(os.path.join(FIX, "injected_error_cascade.jsonl"), monitor=mon)
-    assert any(r.trigger == "error_cascade" for r in mon._sinks[0].risks)
+    assert any(
+        r.trigger == "error_cascade" for r in cast(RecordingSink, mon._sinks[0]).risks
+    )
 
 
-def test_replay_injected_latency_detected():
+def test_replay_injected_latency_detected() -> None:
     mon = _monitor()
     replay(os.path.join(FIX, "injected_latency_spike.jsonl"), monitor=mon)
-    assert any(r.trigger == "latency_anomaly" for r in mon._sinks[0].risks)
+    assert any(
+        r.trigger == "latency_anomaly" for r in cast(RecordingSink, mon._sinks[0]).risks
+    )
 
 
-def test_replay_healthy_no_latency_false_positive():
+def test_replay_healthy_no_latency_false_positive() -> None:
     mon = _monitor()
     replay(os.path.join(FIX, "healthy_run.jsonl"), monitor=mon)
-    assert not any(r.trigger == "latency_anomaly" for r in mon._sinks[0].risks)
+    assert not any(
+        r.trigger == "latency_anomaly" for r in cast(RecordingSink, mon._sinks[0]).risks
+    )
 
 
-def test_replay_clears_episode_state_across_calls():
+def test_replay_clears_episode_state_across_calls() -> None:
     # Issue #18: replay() must call end_episode() so detector state from one
     # trajectory does not leak into a later replay() on the same monitor.
     import tempfile
@@ -101,7 +110,7 @@ def test_replay_clears_episode_state_across_calls():
     os.unlink(file_b)
 
 
-def test_fixture_signatures_match_current_signature_width():
+def test_fixture_signatures_match_current_signature_width() -> None:
     # Drift guard for issue #158: every committed trajectory fixture line
     # must carry an action_signature of exactly the width the live
     # make_signature() produces, so the corpus cannot fall behind the
