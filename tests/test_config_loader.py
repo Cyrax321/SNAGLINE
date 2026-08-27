@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from snagline.config import Config
 
 
@@ -157,3 +159,54 @@ def test_readme_configuration_snippet_matches_config_defaults():
         checked.add(name)
 
     assert "cusum_min_samples" in checked  # the field that motivated this guard
+
+
+def test_stagnation_env_override_out_of_range_aborts_startup():
+    """Issue #132 behavior B: SNAGLINE_STAGNATION_MIN_NOVELTY=99 coerces
+    cleanly but is out of range. The contract (option 1) is that invalid
+    monitoring config aborts startup loudly at construction/resolve time with
+    a clear error naming the knob, instead of crashing later inside
+    StagnationDetector or running silently mis-configured."""
+    env = {"SNAGLINE_STAGNATION_MIN_NOVELTY": "99"}
+    with pytest.raises(ValueError, match="stagnation_min_novelty"):
+        Config.from_env(environ=env)
+    with pytest.raises(ValueError, match="stagnation_min_novelty"):
+        Config.resolve(environ=env)
+    # The detector's own guard stays as defense in depth for direct use.
+    from snagline.detectors.stagnation import StagnationDetector
+
+    with pytest.raises(ValueError, match="min_novelty"):
+        StagnationDetector(config=Config(stagnation_min_novelty=0.5), min_novelty=99)
+
+
+def test_monitor_default_raises_on_invalid_config_but_not_stock():
+    """Pins the Monitor.default() raising contract for issue #132.
+
+    Construction-time validation means Monitor.default() MAY raise ValueError
+    when handed an invalid monitoring config: fail-fast startup beats a
+    silently disabled safety net. Runtime detection remains fail-open; only
+    broken startup config fails. Stock config must never raise."""
+    from snagline import Monitor
+
+    # An out-of-range env value is already rejected when the Config itself is
+    # built (see test_stagnation_env_override_out_of_range_aborts_startup).
+    # The path this test pins is a config that slips past construction (e.g.
+    # mutated afterwards) and reaches detector wiring inside default().
+    with pytest.raises(ValueError):
+        Config.from_env(environ={"SNAGLINE_STAGNATION_MIN_NOVELTY": "0"})
+    bad = Config(stagnation_enabled=True)
+    bad.stagnation_min_novelty = 0.0  # mutation bypasses __post_init__
+    with pytest.raises(ValueError):
+        Monitor.default(config=bad)
+    Monitor.default(config=Config())  # stock: must not raise
+
+
+def test_from_env_overrides_still_drops_uncoercible_values():
+    """Issue #66 semantics unchanged by the stagnation range checks (#132):
+    values that fail *coercion* are logged and dropped, not fatal. Only
+    cleanly-coerced out-of-range values are configuration errors."""
+    env = {"SNAGLINE_STAGNATION_MIN_NOVELTY": "not-a-number"}
+    overrides = Config.from_env_overrides(environ=env)
+    assert "stagnation_min_novelty" not in overrides
+    cfg = Config.from_env(environ=env)  # default survives
+    assert cfg.stagnation_min_novelty == 0.05
