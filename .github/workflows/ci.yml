@@ -64,7 +64,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           . .venv/bin/activate
-          mypy src
+          mypy src tests
 
       - name: Run tests with coverage gate (Linux)
         if: runner.os == 'Linux'
