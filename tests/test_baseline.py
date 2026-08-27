@@ -104,3 +104,24 @@ def test_cli_baseline_command(tmp_path, capsys):
     assert "fitted 1 tool(s)" in out_text
     loaded = load_baseline(str(out))
     assert "search" in loaded.tools
+
+
+def test_fitted_at_roundtrip_and_old_files(tmp_path):
+    # New files carry fitted_at; old schema-v1 files without it load as 0.0.
+    traj = tmp_path / "h.jsonl"
+    traj.write_text(json.dumps(_event("search", 100.0)) + "\n")
+    profile = fit_baseline_from_jsonl(str(traj))
+    assert profile.fitted_at > 0
+    out = tmp_path / "baseline.json"
+    save_baseline(profile, str(out))
+    data = json.loads(out.read_text())
+    assert "fitted_at" in data
+    loaded = load_baseline(str(out))
+    assert loaded.fitted_at == profile.fitted_at
+    # Simulate a pre-128 file without the key.
+    old = {k: v for k, v in data.items() if k != "fitted_at"}
+    old_path = tmp_path / "old.json"
+    old_path.write_text(json.dumps(old))
+    old_loaded = load_baseline(str(old_path))
+    assert old_loaded.fitted_at == 0.0
+    assert old_loaded.tools["search"].mean_latency == 100.0
