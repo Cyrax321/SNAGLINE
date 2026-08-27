@@ -149,6 +149,14 @@ def validate_policy(value: str) -> str:
     return normalized
 
 
+def _validated_max_live_episodes(cfg: Config) -> None:
+    """Validate the per-episode cap (issue #184); raise when invalid."""
+    if cfg.max_live_episodes < 1:
+        raise ValueError(
+            f"max_live_episodes must be >= 1; got {cfg.max_live_episodes!r}"
+        )
+
+
 def _validated_stagnation(cfg: Config) -> None:
     """Validate the stagnation-detector knobs (issue #132); raise when invalid.
 
@@ -427,6 +435,17 @@ class Config:
     # latency_anomaly risk before the new baseline is adopted. 0 disables.
     cusum_refit_every: int = 0
 
+    # --- Per-episode retention cap (issue #184) -----------------------------
+    # Long-lived monitors (especially the sidecar) must not grow without
+    # bound when hosts never call end_episode. The cap is a safety net:
+    # explicit end_episode still frees immediately; eviction only fires
+    # when the number of distinct live episodes would otherwise exceed this.
+    # LRU by last-seen is the safe policy: a genuinely active episode is
+    # by definition recently seen, so it cannot be evicted out from under
+    # itself. Eviction is silent (no finalize risks) and fail-open.
+    # Environment override SNAGLINE_MAX_LIVE_EPISODES.
+    max_live_episodes: int = 10_000
+
     def __post_init__(self) -> None:
         # Issue #119: invalid closed-set values are configuration errors and
         # must fail loudly here instead of being silently ignored downstream.
@@ -438,6 +457,7 @@ class Config:
         # Issue #132: same policy for the stagnation knobs. The defaults are
         # always valid, so stock configurations never hit these checks.
         _validated_stagnation(self)
+        _validated_max_live_episodes(self)
 
     # --- 12-factor configuration (project.md §5.4, ATTACH_ANY_SYSTEM P0) -----
     @classmethod
@@ -544,4 +564,5 @@ class Config:
         # with a clear error, not crash later inside StagnationDetector or,
         # worse, run silently mis-configured.
         _validated_stagnation(cfg)
+        _validated_max_live_episodes(cfg)
         return cfg

@@ -377,6 +377,16 @@ class SidecarMetricsCollector:
             lines.append(f"# HELP {name} {help_text}")
             lines.append(f"# TYPE {name} counter")
             lines.append(f"{name} {monitor_metrics.get(key, 0)}")
+        # Issue #184: retained-episode count so the leak is observable rather
+        # than inferred from RSS. Gauge, not counter; ids only.
+        retained = monitor_metrics.get(
+            "retained_episodes", monitor_metrics.get("live_episodes", 0)
+        )
+        lines.append(
+            "# HELP snagline_monitor_retained_episodes Current live episode ids retained by Monitor (issue #184)."
+        )
+        lines.append("# TYPE snagline_monitor_retained_episodes gauge")
+        lines.append(f"snagline_monitor_retained_episodes {retained}")
         return "\n".join(lines) + "\n"
 
 
