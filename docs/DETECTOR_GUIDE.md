@@ -187,6 +187,8 @@ profile = fit_semantic_baseline(healthy_events, embedder, model="all-MiniLM-L6-v
 save_baseline(profile, "baseline.json")  # JSON now carries embedding_centroid
 ```
 
+You can also fit the same profile directly from the CLI without writing Python: `snagline baseline trajectory.jsonl --output baseline.json --semantic --semantic-model all-MiniLM-L6-v2` streams the JSONL fail-soft and builds both the structural stats and the embedding centroid via the guarded `sentence-transformers` import, then persists it with `save_baseline`. Missing extra or model-load failure prints a `pip install snagline-agent[drift]` hint and exits non-zero without writing a half-fitted file; without `--semantic` the command is byte-identical to today.
+
 Or build one structurally with `snagline baseline` and without semantics;
 the detector then stays inert (the intended default) until you give it a
 reference it can compare against.

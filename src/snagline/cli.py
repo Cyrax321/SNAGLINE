@@ -462,6 +462,18 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="With --store-dir: cap retained versions (oldest pruned).",
     )
+    sp.add_argument(
+        "--semantic",
+        action="store_true",
+        help="Also fit a semantic embedding centroid (requires pip install "
+        "snagline-agent[drift]; streams the trajectory fail-soft and "
+        "persists via save_baseline).",
+    )
+    sp.add_argument(
+        "--semantic-model",
+        default="all-MiniLM-L6-v2",
+        help="Sentence-transformers model for --semantic [default: %(default)s].",
+    )
 
     return parser
 
@@ -773,6 +785,76 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
             for v in versions:
                 print(f"  {v}")
             return 0
+        if getattr(args, "semantic", False):
+            semantic_model = getattr(args, "semantic_model", "all-MiniLM-L6-v2")
+            try:
+                from sentence_transformers import SentenceTransformer
+            except Exception as exc:
+                print(
+                    "snagline baseline: drift extra not installed "
+                    f"({exc}); run `pip install snagline-agent[drift]` for semantic baseline",
+                    file=sys.stderr,
+                )
+                return 1
+            try:
+                st_model = SentenceTransformer(semantic_model)
+            except Exception as exc:
+                print(
+                    f"snagline baseline: embedding model {semantic_model!r} failed to load "
+                    f"({exc}); run `pip install snagline-agent[drift]`",
+                    file=sys.stderr,
+                )
+                return 1
+            try:
+                from snagline.drift.goal_drift import (
+                    _event_label,
+                    fit_semantic_baseline,
+                )
+                from snagline.events import StepEvent
+            except Exception as exc:
+                print(
+                    f"snagline baseline: semantic fit unavailable ({exc}); "
+                    "run `pip install snagline-agent[drift]`",
+                    file=sys.stderr,
+                )
+                return 1
+
+            def _embed(event):  # type: ignore[no-untyped-def]
+                vec = st_model.encode(_event_label(event), show_progress_bar=False)
+                return vec.tolist() if hasattr(vec, "tolist") else list(vec)
+
+            def _iter_events():  # type: ignore[no-untyped-def]
+                with open(args.trajectory, encoding="utf-8") as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            obj = json.loads(line)
+                            yield StepEvent(**obj)
+                        except Exception:
+                            continue
+
+            try:
+                profile = fit_semantic_baseline(
+                    _iter_events(), _embed, model=semantic_model
+                )
+                if hasattr(profile, "fitted_at"):
+                    profile.fitted_at = time.time()
+            except Exception as exc:
+                print(f"snagline baseline: semantic fit failed: {exc}", file=sys.stderr)
+                return 1
+            version = store.save(
+                profile,
+                tenant=args.tenant,
+                deployment=args.deployment,
+                max_versions=args.max_versions,
+            )
+            print(
+                f"snagline baseline: stored version {version} for "
+                f"{args.tenant}/{args.deployment} (semantic {semantic_model})"
+            )
+            return 0
         version = capture_from_jsonl(
             store,
             args.trajectory,
@@ -787,6 +869,76 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
         return 0
 
     from snagline.baseline import fit_baseline_from_jsonl, save_baseline
+
+    if getattr(args, "semantic", False):
+        semantic_model = getattr(args, "semantic_model", "all-MiniLM-L6-v2")
+        try:
+            from sentence_transformers import SentenceTransformer
+        except Exception as exc:
+            print(
+                "snagline baseline: drift extra not installed "
+                f"({exc}); run `pip install snagline-agent[drift]` for semantic baseline",
+                file=sys.stderr,
+            )
+            return 1
+        try:
+            st_model = SentenceTransformer(semantic_model)
+        except Exception as exc:
+            print(
+                f"snagline baseline: embedding model {semantic_model!r} failed to load "
+                f"({exc}); run `pip install snagline-agent[drift]`",
+                file=sys.stderr,
+            )
+            return 1
+        try:
+            from snagline.drift.goal_drift import _event_label, fit_semantic_baseline
+            from snagline.events import StepEvent
+        except Exception as exc:
+            print(
+                f"snagline baseline: semantic fit unavailable ({exc}); "
+                "run `pip install snagline-agent[drift]`",
+                file=sys.stderr,
+            )
+            return 1
+
+        def _embed(event):  # type: ignore[no-untyped-def]
+            vec = st_model.encode(_event_label(event), show_progress_bar=False)
+            return vec.tolist() if hasattr(vec, "tolist") else list(vec)
+
+        def _iter_events():  # type: ignore[no-untyped-def]
+            with open(args.trajectory, encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                        yield StepEvent(**obj)
+                    except Exception:
+                        continue
+
+        try:
+            profile = fit_semantic_baseline(
+                _iter_events(), _embed, model=semantic_model
+            )
+            if hasattr(profile, "fitted_at"):
+                profile.fitted_at = time.time()
+        except Exception as exc:
+            print(f"snagline baseline: semantic fit failed: {exc}", file=sys.stderr)
+            return 1
+        save_baseline(profile, args.output)
+        tools = profile.tools
+        print(
+            f"snagline baseline: fitted {len(tools)} tool(s) from {profile.total_steps} step(s) "
+            f"(semantic {semantic_model})"
+        )
+        for name, tb in sorted(tools.items()):
+            print(
+                f"  {name}: n={tb.count} mean={tb.mean_latency:.1f}ms "
+                f"std={tb.std_latency:.1f}ms errors={tb.error_count}"
+            )
+        print(f"snagline baseline: wrote {args.output}")
+        return 0
 
     profile = fit_baseline_from_jsonl(args.trajectory)
     save_baseline(profile, args.output)

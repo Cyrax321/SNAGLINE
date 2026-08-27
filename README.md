@@ -116,6 +116,8 @@ The `goal_drift`, `ml_ensemble`, `stagnation`, and semantic goal-drift (`drift`)
 python -m your_agent --trace run.jsonl
 # 2. Build a healthy baseline profile from it.
 snagline baseline run.jsonl --output baseline.json
+# 2b. With semantics (needs pip install snagline-agent[drift]):
+snagline baseline run.jsonl --output baseline.json --semantic --semantic-model all-MiniLM-L6-v2
 ```
 
 ```python
