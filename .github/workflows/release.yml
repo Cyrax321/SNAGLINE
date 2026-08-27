@@ -1,0 +1,146 @@
+name: Release
+
+# Publishes snagline-agent to PyPI when a version tag is pushed, or via
+# manual dispatch. Never runs on pushes to master, so normal development
+# does not trigger a publish. See issue #104.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish (must exist, e.g. v0.1.0). Leave empty to publish from current HEAD."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and check distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Tags need full history for setuptools-scm if ever used, and for
+          # twine check to see the tagged commit.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Checkout tag if workflow_dispatch requested a specific tag
+        if: github.event_name == 'workflow_dispatch' && inputs.tag != ''
+        run: |
+          git fetch origin --tags
+          git checkout ${{ inputs.tag }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build twine
+
+      - name: Build sdist and wheel
+        run: |
+          python -m build
+
+      - name: Twine check
+        run: |
+          twine check dist/*
+
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          python -c "
+import pathlib, re
+text = pathlib.Path('CHANGELOG.md').read_text()
+m = re.search(r'## \[0\.1\.0\].*?(?=\n## \[|\Z)', text, re.S)
+open('RELEASE_NOTES.md','w').write(m.group(0).strip() + '\n' if m else text)
+"
+          cat RELEASE_NOTES.md
+
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Upload release notes
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: RELEASE_NOTES.md
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    # Only publish when the trigger is a tag push, or a manual dispatch
+    # that explicitly requested a tag. This prevents publishing on every
+    # master push.
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.tag != '')
+    permissions:
+      # OIDC trusted publishing needs id-token; creating a GitHub Release needs contents write.
+      id-token: write
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Checkout dispatched tag if requested
+        if: github.event_name == 'workflow_dispatch' && inputs.tag != ''
+        run: |
+          git fetch origin --tags
+          git checkout ${{ inputs.tag }}
+
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Download release notes
+        uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: .
+
+
+      - name: Publish via trusted publishing (OIDC) if configured
+        # This step succeeds only when PyPI trusted publishing is configured
+        # for this repository. It needs no secret. If OIDC is not configured,
+        # it will fail and the next step (token fallback) will attempt.
+        id: pypi_oidc
+        continue-on-error: true
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          verbose: true
+
+      - name: Publish via API token fallback (PYPI_TOKEN)
+        # Fallback for token-based auth. Requires repo secret PYPI_TOKEN
+        # (a PyPI API token for snagline-agent). The OIDC step above is
+        # preferred; this is used only when OIDC is not set up.
+        if: steps.pypi_oidc.outcome == 'failure'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          verbose: true
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+
+      - name: Create GitHub Release
+        if: always() && (steps.pypi_oidc.outcome == 'success' || steps.pypi_oidc.outcome == 'failure')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name || inputs.tag }}
+          generate_release_notes: false
+          body_path: ${{ github.workspace }}/RELEASE_NOTES.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
