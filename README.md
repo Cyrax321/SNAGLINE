@@ -12,9 +12,10 @@
 
 <p align="center">
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.10+" /></a>
+  <a href="https://pypi.org/project/snagline/"><img src="https://img.shields.io/pypi/v/snagline?style=flat-square&label=PyPI" alt="PyPI" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License" /></a>
   <a href="https://github.com/Cyrax321/SNAGLINE/issues"><img src="https://img.shields.io/github/issues/Cyrax321/SNAGLINE?style=flat-square" alt="Issues" /></a>
-  <a href="https://github.com/Cyrax321/SNAGLINE/actions"><img src="https://img.shields.io/badge/tests-390%20passed-brightgreen?style=flat-square" alt="Tests" /></a>
+  <a href="https://github.com/Cyrax321/SNAGLINE/actions"><img src="https://img.shields.io/badge/tests-694%20passed-brightgreen?style=flat-square" alt="Tests" /></a>
 </p>
 
 ---
@@ -44,13 +45,13 @@ The answer is yes. SNAGLINE's tier-1 detectors are deterministic, O(1) amortized
 Zero third-party dependencies. Install from PyPI:
 
 ```bash
-pip install snagline
+pip install snagline==0.1.0  # 694 tests, zero required deps
 ```
 
 Or from source:
 
 ```bash
-pip install .
+pip install .  # or pip install -e ".[dev]" for contributors
 ```
 
 Minimal example, detect loops in a plain agent loop:
@@ -736,7 +737,7 @@ SNAGLINE sits at the overlap of real-time monitoring, anomaly detection, and rel
 
 ## Status and Limitations
 
-- **Tested**: 622 tests passing, 2 skipped, 88.88% line coverage (see [Empirical Verification](#automated-test-suite-and-benchmarks) for the exact command and environment).
+- **Tested**: 694 tests passing, 3 skipped, 88.88% line coverage (see [Empirical Verification](#automated-test-suite-and-benchmarks) for the exact command and environment).
 - **On PyPI as `snagline` 0.1.0** (`pip install snagline`; clone still works via `pip install .` see Quick Start). The `snagline[langchain]`-style names used elsewhere in this README are the extras this package declares.
 - **Overhead is measured, not asserted.** Run `snagline bench` to reproduce on your hardware.
 - **Framework adapters are optional extras; sinks ship in core.** The LangChain, LangGraph, Autogen, and CrewAI adapters are optional installs (`pip install snagline[langchain]`, etc.). The console, webhook, Slack, PagerDuty, and dedup sinks are zero-dependency stdlib and always available.
