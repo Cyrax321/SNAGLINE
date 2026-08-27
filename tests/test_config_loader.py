@@ -122,3 +122,38 @@ def test_from_env_still_returns_a_full_config():
     cfg = Config.from_env(environ={"SNAGLINE_LOOP_WINDOW_SIZE": "42"})
     assert cfg.loop_window_size == 42
     assert cfg.cusum_k == Config().cusum_k
+
+
+def test_readme_configuration_snippet_matches_config_defaults():
+    # Mechanical guard for issue #153: the README Configuration snippet must
+    # never drift from the shipped Config dataclass defaults (cusum_min_samples
+    # once claimed 20 while the code shipped 5). Parse every literal
+    # key=value kwarg out of the snippet and compare against the dataclass.
+    import ast
+    import dataclasses
+    import re
+    from pathlib import Path
+
+    readme = Path(__file__).resolve().parent.parent / "README.md"
+    text = readme.read_text(encoding="utf-8")
+    start = text.index("## Configuration")
+    open_fence = text.index("```python", start) + len("```python")
+    snippet = text[open_fence : text.index("```", open_fence)]
+    defaults = {f.name: f.default for f in dataclasses.fields(Config)}
+
+    checked: set[str] = set()
+    for match in re.finditer(r"^    (\w+)=(.+?)(?:#.*)?$", snippet, re.MULTILINE):
+        name, raw = match.group(1), match.group(2).strip().rstrip(",")
+        if name not in defaults:
+            continue  # lines like monitor = Monitor.default(...) are skipped
+        try:
+            value = ast.literal_eval(raw)
+        except (ValueError, SyntaxError):
+            continue  # non-literal args (e.g. baseline objects) are skipped
+        assert value == defaults[name], (
+            f"README Configuration snippet {name}={raw!r} does not match "
+            f"Config.{name} default {defaults[name]!r}; update one of them"
+        )
+        checked.add(name)
+
+    assert "cusum_min_samples" in checked  # the field that motivated this guard

@@ -1,12 +1,12 @@
-# SNAGLINE — Real-Time Failure Detection for AI Agents
+# SNAGLINE: Real-Time Failure Detection for AI Agents
 
 **One-liner:** a lightweight, dependency-free companion library that watches
-any agent's execution stream — LangChain, LangGraph, AutoGen, CrewAI, a raw
-API loop, or CONTINUUM — and flags loops, error cascades, and behavioral
+any agent's execution stream (LangChain, LangGraph, AutoGen, CrewAI, a raw
+API loop, or CONTINUUM) and flags loops, error cascades, and behavioral
 anomalies in real time, cheaply enough to run on every step of a week-long
 unattended run.
 
-*(Working name — rename freely. "SnagLine" was chosen because the core
+*(Working name; rename freely. "SnagLine" was chosen because the core
 detectors are deliberately dumb, cheap, and immediate, like an actual
 snagline, not a smart sensor. Check PyPI name availability before committing.)*
 
@@ -16,12 +16,12 @@ snagline, not a smart sensor. Check PyPI name availability before committing.)*
 
 **What it is:** the productionized version of the "cheap, real-time,
 framework-agnostic failure detection" idea, built as its own repo so it can
-be adopted by anyone running agents — not only people who also run CONTINUUM.
+be adopted by anyone running agents, not only people who also run CONTINUUM.
 
 **What it is not:** not a fork or extension of CONTINUUM, not a replacement
 for CONTINUUM's crash-recovery guarantees, and not a claim to beat the
 detection numbers in the source paper (arXiv:2608.02464, *Real-Time
-Detection and Repair of LLM Agent Failures*) — v1 doesn't even attempt their
+Detection and Repair of LLM Agent Failures*): v1 doesn't even attempt their
 ML approach; it starts with deterministic detectors and treats the paper's
 statistical ensemble as a later, optional extra.
 
@@ -32,8 +32,8 @@ top of it, not around it:
   (echo-state network, CUSUM) wants `numpy`/`scikit-learn`. Keeping it
   separate means CONTINUUM's zero-dependency guarantee never breaks.
 - The "free telemetry" advantage survives the split: the CONTINUUM adapter
-  here reads CONTINUUM's `Storage` by sequence — CONTINUUM's own public,
-  already-stable API — so it's still zero new instrumentation on the
+  here reads CONTINUUM's `Storage` by sequence (CONTINUUM's own public,
+  already-stable API), so it's still zero new instrumentation on the
   CONTINUUM side.
 - A standalone tool that ingests any structured step stream is a stronger,
   more general story than a third bolt-on extension, and it's the one most
@@ -44,26 +44,26 @@ top of it, not around it:
 
 **Non-goals for v1, explicitly:**
 - Not attempting goal-drift detection (needs embeddings, a real dependency,
-  and is genuinely harder — v2 at earliest).
-- Not attempting to *repair* failures automatically — detection and
+  and is genuinely harder; v2 at earliest).
+- Not attempting to *repair* failures automatically: detection and
   escalation only. Repair is a distinct, harder problem (see DARC,
   arXiv:2608.11772, for where that line of work is headed) and folding it
   in now would blow the scope of a companion tool.
-- Not claiming to replace human review for high-stakes actions — it's a
+- Not claiming to replace human review for high-stakes actions; it's a
   cheap first-pass signal that routes to existing escalation paths
   (CONTINUUM's `REQUIRES_REVIEW`, a webhook, a Slack alert), not a
   final arbiter.
 
 ---
 
-## 1. Design principles (non-negotiable — a coding agent should treat these as constraints, not suggestions)
+## 1. Design principles (non-negotiable: a coding agent should treat these as constraints, not suggestions)
 
 1. **Zero mandatory dependencies in core.** `import snagline` must work with
    nothing but the Python standard library. Every framework integration,
    every ML detector, every notification sink beyond console/webhook is an
    optional extra (`pip install snagline-agent[langchain]`, etc.).
 2. **Fail-open, always.** If a detector or sink raises an exception, it is
-   caught, logged, and ignored — it must never propagate into the host
+   caught, logged, and ignored; it must never propagate into the host
    agent and never block or slow the agent's actual work. A monitoring
    library that can crash or stall the thing it's monitoring is a
    non-starter for adoption. This is the single most important property
@@ -72,8 +72,8 @@ top of it, not around it:
    sink logic operates only on the canonical `StepEvent` schema. All
    framework-specific code (LangChain callbacks, LangGraph node hooks, etc.)
    lives in isolated `adapters/` modules and nowhere else.
-4. **No content retention by default.** Detectors reason about structure —
-   hashes, timing, counts, boolean flags — not prompt or response content.
+4. **No content retention by default.** Detectors reason about structure
+   (hashes, timing, counts, boolean flags), not prompt or response content.
    This is both a privacy property and an adoption requirement: teams
    should be able to drop this into a production agent without a
    data-handling review.
@@ -88,7 +88,7 @@ top of it, not around it:
    (`snagline replay trajectory.jsonl`).
 7. **Small enough to extend in an afternoon.** Writing a new adapter or a
    new detector should be achievable in under ~50 lines against a documented
-   protocol — this is what makes "any agent in the world" a realistic claim
+   protocol; this is what makes "any agent in the world" a realistic claim
    rather than a slogan.
 
 ---
@@ -106,7 +106,7 @@ flowchart LR
         A6[Claude Code hooks]
     end
 
-    subgraph Adapters["Adapters — the only framework-coupled code"]
+    subgraph Adapters["Adapters - the only framework-coupled code"]
         AD1[raw.py]
         AD2[langchain.py]
         AD3[langgraph.py]
@@ -115,7 +115,7 @@ flowchart LR
         AD6[claude_code.py]
     end
 
-    subgraph Core["Core — zero dependencies"]
+    subgraph Core["Core - zero dependencies"]
         SE[StepEvent schema]
         MON[Monitor orchestrator<br/>fail-open guarantee]
         D1[Loop detector]
@@ -128,8 +128,8 @@ flowchart LR
         DR[Goal-drift detector<br/>snagline[drift]]
     end
 
-    subgraph Sinks["Sinks — pluggable escalation"]
-        S1[Console — default]
+    subgraph Sinks["Sinks - pluggable escalation"]
+        S1[Console - default]
         S2[Webhook]
         S3[CONTINUUM REQUIRES_REVIEW]
         S4[Slack / PagerDuty]
@@ -252,7 +252,7 @@ snagline/
 
 ## 4. Core schemas and protocols
 
-### 4.1 `events.py` — the canonical wire format (stdlib only)
+### 4.1 `events.py`: the canonical wire format (stdlib only)
 
 ```python
 from dataclasses import dataclass, field
@@ -264,7 +264,7 @@ class StepEvent:
     episode_id: str
     timestamp: float                  # unix epoch seconds, float for sub-second precision
     action_type: str                  # "tool_call" | "message" | "plan_step" | "observation" | adapter-defined
-    action_signature: str              # normalized hash — see §4.2 for construction rules
+    action_signature: str              # normalized hash; see §4.2 for construction rules
     tool_name: str | None = None
     latency_ms: float | None = None
     error: bool = False
@@ -286,24 +286,25 @@ class EpisodeMeta:
 optional and improves detector quality but nothing in core requires it.
 This is what keeps the adapter-writing bar low.
 
-### 4.2 `make_signature()` — normalization rules (write this down explicitly; it's the part people get wrong)
+### 4.2 `make_signature()`: normalization rules (write this down explicitly; it's the part people get wrong)
 
 ```python
 def make_signature(action_type: str, tool_name: str | None, *stable_parts: str) -> str:
     """
     Build a loop-detectable signature. Rules for adapter authors:
-    - Include the logical action (tool name, target element, endpoint) —
+    - Include the logical action (tool name, target element, endpoint):
       the things that make two actions "the same attempt."
     - EXCLUDE volatile fields: timestamps, request/session ids, nonces,
-      retry counters — including these defeats loop detection by making
+      retry counters; including these defeats loop detection by making
       every retry look unique.
     - Hashing already-sensitive values (a full prompt, a password field) is
       fine for privacy (SHA-256 is one-way) but prefer hashing only the
       minimum needed to detect repetition, not the full payload, to keep
       signatures meaningful and short.
     """
-    raw = "||".join([action_type, tool_name or "", *stable_parts])
-    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+    parts = [action_type, tool_name or "", *stable_parts]
+    raw = json.dumps(parts, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(raw.encode()).hexdigest()
 ```
 
 ### 4.3 `risk.py`
@@ -324,7 +325,7 @@ class FailureRisk:
     timestamp: float
 ```
 
-### 4.4 `detectors/base.py` — the extension point
+### 4.4 `detectors/base.py`: the extension point
 
 ```python
 from typing import Protocol
@@ -352,7 +353,7 @@ class StatefulDetector(Protocol):
     def load_state(self, state: dict[str, Any]) -> None: ...  # setup-time
 ```
 
-### 4.5 `sinks/base.py` — the other extension point
+### 4.5 `sinks/base.py`: the other extension point
 
 ```python
 from typing import Protocol
@@ -362,7 +363,7 @@ class AlertSink(Protocol):
     def emit(self, risk: FailureRisk) -> None: ...
 ```
 
-### 4.6 `monitor.py` — the orchestrator, fail-open by construction
+### 4.6 `monitor.py`: the orchestrator, fail-open by construction
 
 ```python
 import logging
@@ -404,7 +405,7 @@ class Monitor:
 
     async def ingest_async(self, event: StepEvent) -> None:
         # thin wrapper for async adapters (LangGraph/AutoGen async mode);
-        # runs the same sync path — detectors are cheap enough this is safe
+        # runs the same sync path; detectors are cheap enough this is safe
         self.ingest(event)
 ```
 
@@ -463,7 +464,7 @@ config lives in the labeled loop-hardening block in `config.py`.
 
 Same sliding-window shape, tracks `error` booleans instead of signatures.
 Fires when error rate within the window crosses a threshold (default: 3 of
-last 10, or 3 consecutive — implement both, consecutive catches fast
+last 10, or 3 consecutive; implement both, consecutive catches fast
 cascades, windowed catches slow-burn ones).
 
 ### 5.3 Latency/CUSUM anomaly detector (`detectors/latency_anomaly.py`)
@@ -494,7 +495,7 @@ class LatencyAnomalyDetector:
 `_WelfordCUSUM` implementation: standard Welford running mean/std update,
 then `cusum = max(0, cusum + (x - mean)/std - k)`, alarm when
 `cusum > h`. This is the CUSUM-with-alarms approach the source paper uses,
-minus their echo-state-network layer — that's the optional `ml` extra, not
+minus their echo-state-network layer; that's the optional `ml` extra, not
 tier-1.
 
 ### 5.4 Token-runaway detector (`detectors/token_runaway.py`, issue #84)
@@ -615,7 +616,7 @@ Each adapter's only job: turn a framework-specific event into a
 `StepEvent` and call `monitor.ingest()`. None of them contain detection
 logic.
 
-### 6.1 `raw.py` — for anyone with a plain loop (no framework)
+### 6.1 `raw.py`: for anyone with a plain loop (no framework)
 
 ```python
 from contextlib import contextmanager
@@ -632,7 +633,7 @@ def watch(monitor, episode_id: str):
     yield step
 ```
 Usage: `with snagline.watch(monitor, episode_id) as step: ... step("tool_call", tool_name="search", latency_ms=120, error=False)`.
-This is likely the single most-used adapter — most real agent code today is
+This is likely the single most-used adapter; most real agent code today is
 a custom loop, not a framework.
 
 ### 6.2 `langchain_adapter.py`
@@ -640,7 +641,7 @@ a custom loop, not a framework.
 Implements `BaseCallbackHandler`; maps `on_tool_start`/`on_tool_end`/
 `on_tool_error`/`on_agent_action`/`on_agent_finish` to `StepEvent`s. Verify
 current callback method signatures against the installed LangChain version
-at build time — this API has changed across versions before.
+at build time; this API has changed across versions before.
 
 ### 6.3 `langgraph_adapter.py`
 
@@ -648,7 +649,7 @@ LangGraph exposes a stream of state updates per node/superstep via
 `graph.stream(...)`. Wrap each node execution (start/end timestamps →
 latency, node name → tool_name, node output containing an error key →
 error flag). Confirm current streaming API shape against the installed
-LangGraph version before implementing — this is a fast-moving library.
+LangGraph version before implementing; this is a fast-moving library.
 
 ### 6.4 `autogen.py`, `crewai.py` (built)
 
@@ -669,7 +670,7 @@ Install with `pip install snagline-agent[autogen]` / `[crewai]`.
 
 Explicit wrapper functions around client `.create()`/`.messages.create()`
 calls (not monkeypatching) for people using a raw SDK without any
-orchestration framework at all — this is the "raw loop" case's most common
+orchestration framework at all; this is the "raw loop" case's most common
 concrete form.
 
 ### 6.6 `continuum_adapter.py` -- BUILT (issue #79)
@@ -699,7 +700,7 @@ tool use and session lifecycle) that can run a shell command. This adapter
 would translate hook invocations into `StepEvent`s by having the hook
 script POST to the sidecar server (§7) or write JSONL that `snagline
 replay` can consume live. **Treat this adapter as the lowest-confidence
-item in this spec** — the current hook names, payload shape, and
+item in this spec**: the current hook names, payload shape, and
 configuration mechanism should be verified against Claude Code's live
 documentation before implementation, since this is exactly the kind of
 product surface detail that changes over time. Build this one last.
@@ -709,7 +710,7 @@ product surface detail that changes over time. Build this one last.
 ## 7. Sidecar server mode (`server/http_server.py`)
 
 For non-Python agents (a TypeScript LangGraph.js app, a Node-based
-orchestrator, anything that isn't Python) — a minimal stdlib
+orchestrator, anything that isn't Python): a minimal stdlib
 `http.server`-based endpoint:
 
 ```
@@ -717,10 +718,10 @@ POST /events        body: StepEvent as JSON      → monitor.ingest()
 GET  /health         → 200 OK
 ```
 
-No framework (no Flask/FastAPI) — stdlib `http.server` is enough for a
+No framework (no Flask/FastAPI); stdlib `http.server` is enough for a
 low-throughput internal sidecar and keeps the zero-dependency principle
 intact even for the server mode. Document that high-throughput production
-use should front this with a real ASGI server if needed — that's the
+use should front this with a real ASGI server if needed; that's the
 user's infra choice, not this library's concern.
 
 ---
@@ -741,12 +742,12 @@ user's infra choice, not this library's concern.
   dependency.
 - **`continuum_sink.py`** (optional extra): converts a `FailureRisk` into a
   `REQUIRES_REVIEW` event and appends it to CONTINUUM's ledger via its
-  existing `request_human` mechanism — this is the closing-the-loop piece,
+  existing `request_human` mechanism; this is the closing-the-loop piece,
   giving all three CONTINUUM security extensions (branch-steering gate,
   periodic revalidation, and this) one shared human-escalation path.
 - **`slack.py`** (optional extra): posts to a configured webhook URL with
   a formatted message. Only ever transmits `FailureRisk` fields (score,
-  trigger, ids, timestamps) — never raw `StepEvent.metadata` — by default,
+  trigger, ids, timestamps), never raw `StepEvent.metadata`, by default,
   so an alerting channel can't become an accidental data-exfiltration path.
 
 ---
@@ -770,11 +771,11 @@ snagline bench                                        # runs overhead_benchmark.
   must propagate with `fail_open=False`. This is the property the whole
   adoption pitch rests on.
 - Per-detector unit tests with synthetic `StepEvent` sequences constructed
-  to contain a known loop / known cascade / known latency spike — assert
+  to contain a known loop / known cascade / known latency spike; assert
   detection and, equally important, assert **no false positive** on a
   healthy synthetic sequence.
 - `fixtures/trajectories/`: hand-built JSONL files with injected failures,
-  used by both tests and `benchmarks/detection_accuracy.py` — this doubles
+  used by both tests and `benchmarks/detection_accuracy.py`; this doubles
   as your demo artifact.
 - `benchmarks/overhead_benchmark.py`: runs `Monitor.ingest()` in a tight
   loop over N synthetic events, reports median/p99 microseconds per call.
@@ -782,23 +783,23 @@ snagline bench                                        # runs overhead_benchmark.
   "cheap enough to run on every step," so it needs to be a real, reproduced
   measurement, not an assumption carried over from the source paper.
 - Adapter tests use mocked framework callback invocations (mock LangChain
-  `BaseCallbackHandler` calls, etc.) — don't require a live LangChain agent
+  `BaseCallbackHandler` calls, etc.); don't require a live LangChain agent
   to run in CI.
 
 ---
 
 ## 11. Privacy and security design notes
 
-- Detectors operate on hashes, timings, and boolean flags — never on
+- Detectors operate on hashes, timings, and boolean flags, never on
   prompt/response content. State this explicitly in the README; it's an
   actual adoption blocker if left ambiguous.
 - `action_signature` is a one-way hash (SHA-256), so even if an adapter
   author includes sensitive values in the hash input, the signature itself
-  isn't reversible — but document the normalization guidance in §4.2 so
+  isn't reversible, but document the normalization guidance in §4.2 so
   authors don't put volatile fields in and accidentally defeat detection.
 - The `metadata` dict on `StepEvent` is the one place raw content could
   leak if an adapter author puts it there. Document clearly: detectors
-  never read `metadata`, and sinks should not forward it by default —
+  never read `metadata`, and sinks should not forward it by default:
   `FailureRisk` deliberately does not carry a `metadata` field, so there's
   no path for it to reach a webhook or Slack channel unless a custom sink
   is written to do so explicitly.
@@ -820,44 +821,44 @@ autogen    = ["pyautogen>=0.2"]
 crewai     = ["crewai>=0.30"]
 openai     = ["openai>=1.0"]
 anthropic  = ["anthropic>=0.30"]
-continuum  = []   # depends on CONTINUUM's actual package name/version — confirm before release
+continuum  = []   # depends on CONTINUUM's actual package name/version; confirm before release
 ml         = ["numpy>=1.24", "scikit-learn>=1.3"]
 drift      = ["sentence-transformers>=2.2"]
 slack      = ["httpx>=0.27"]
 all        = ["snagline-agent[langchain,langgraph,autogen,crewai,openai,anthropic,continuum,ml,drift,slack]"]
 ```
 
-MIT license (matches the open-source, low-friction-adoption goal — avoid
+MIT license (matches the open-source, low-friction-adoption goal; avoid
 anything copyleft here, since the whole point is "embed this into any
 project easily").
 
 ---
 
-## 13. Build sequencing — do not reorder
+## 13. Build sequencing: do not reorder
 
 1. `events.py` + `risk.py` + `Detector`/`AlertSink` protocols +
    `Monitor` with the fail-open guarantee. Write `test_monitor_fail_open.py`
    before writing a single detector.
 2. Loop detector + error-cascade detector + console sink + `raw.py`
-   adapter + `snagline replay` CLI. **This is v0.1 — ship it.** Zero
+   adapter + `snagline replay` CLI. **This is v0.1: ship it.** Zero
    dependencies, installable, immediately useful to a stranger with no
    training data and no setup beyond `pip install`.
 3. Latency/CUSUM detector (still zero deps).
-4. `benchmarks/overhead_benchmark.py` — publish the microseconds/step
+4. `benchmarks/overhead_benchmark.py`: publish the microseconds/step
    number. This is your credibility artifact; don't skip it or leave it
    for later.
-5. `langchain_adapter.py` — highest-leverage framework for adoption.
-6. `continuum_adapter.py` + `continuum_sink.py` — closes the loop back to
+5. `langchain_adapter.py`: highest-leverage framework for adoption.
+6. `continuum_adapter.py` + `continuum_sink.py`: closes the loop back to
    the main project; verify the real `Storage` API first.
 7. `langgraph_adapter.py`.
-8. `docs/ADAPTER_GUIDE.md` + `docs/DETECTOR_GUIDE.md` — written once
+8. `docs/ADAPTER_GUIDE.md` + `docs/DETECTOR_GUIDE.md`: written once
    you've built enough of each to document the pattern honestly.
-9. `ml` extra (echo-state-network ensemble) — only after the deterministic
+9. `ml` extra (echo-state-network ensemble): only after the deterministic
    core has real usage or real benchmark numbers to compare against. This
    is the research-grade piece; don't let it block the useful, simple
    v0.1.
  10. `autogen_adapter.py`, `crewai_adapter.py`, `claude_code_adapter.py`,
-     sidecar server mode, `drift` extra — build in response to actual
+     sidecar server mode, `drift` extra: build in response to actual
      demand, not preemptively.
 
 ### 13.1 Status of the sequencing (as of 2026-08-26)
@@ -867,7 +868,7 @@ project easily").
   benchmark, LangChain, LangGraph, the two detector/adapter guides) are
   **done**.
 - Step 9 (`ml` extra, echo-state-network ensemble) and the `drift` extra
-  (semantic goal-drift) are **not yet built** — the deterministic
+  (semantic goal-drift) are **not yet built**; the deterministic
   `goal_drift` and `ml_ensemble` detectors in `detectors/` were shipped
   first as the simpler, dependency-free path (see §15).
 - Step 10: Autogen, CrewAI, and Claude Code adapters are **done**

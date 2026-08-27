@@ -103,12 +103,13 @@ The full architecture reference is in [docs/ADAPTER_GUIDE.md](docs/ADAPTER_GUIDE
 | **Semantic goal-drift detector** (opt-in, `snagline[drift]`) | The agent's activity mix drifting from its healthy goal | Embeds structural labels (`action_type`, `tool_name`, `error_type`; never content) with `sentence-transformers` and watches the live episode's running centroid against the persisted `BaselineProfile` embedding centroid; sustained cosine deviation through a CUSUM gate emits `goal_drift`. Import is lazy; missing model or inference failures leave it inert (fail-open). | O(embedding dim) per step, bounded state |
 | **ML ensemble** (opt-in) | A stronger, combined signal | Wraps the base detectors and combines their scores with a transparent noisy-OR. A real model can be injected via `MLOrchestrator(model=...)` (the `ml` extra provides scikit-learn). | O(1) amortized |
 | **Horizon-scale time axis** (opt-in) | Budget exhaustion and silence on multi-day episodes | Wall-clock budget derived from event timestamps: one warning at `warn_fraction` of `max_episode_wall_seconds`, one critical breach at the limit (`wall_clock_budget`). Idle detection fires `idle_gap` when consecutive ingests drift more than `idle_warn_seconds` apart. Every quantity comes from `StepEvent.timestamp`, never the wall clock, so replay stays deterministic. | O(1) per step |
+| **Stagnation detector** (opt-in) | Busy-but-discovering-nothing episodes | Tracks the share of never-before-seen action signatures in a sliding window; when novelty collapses below a floor for several consecutive windows it fires once. Complements the loop detector, which requires exact repeats: near-duplicate argument-varying actions evade exact matching but still exhaust the agent's template space. | O(1) amortized |
 
 Detection is deterministic and `O(1)` amortized per step. It runs with no network calls and no LLM calls. The CUSUM detector uses only the Python standard library (`statistics` module) -- no numpy required.
 
 ### Baseline and advanced detection
 
-The `goal_drift`, `ml_ensemble`, and semantic goal-drift (`drift`) detectors are opt-in (default off) so the zero-dependency preset is unchanged. They unlock once you capture a healthy run:
+The `goal_drift`, `ml_ensemble`, `stagnation`, and semantic goal-drift (`drift`) detectors are opt-in (default off) so the zero-dependency preset is unchanged. Stagnation needs no baseline at all: enable it with `Config(stagnation_enabled=True)` and tune it with `stagnation_window_size=50` (steps per window), `stagnation_min_novelty=0.05` (stale when fewer than this share of the window is new), and `stagnation_patience=2` (consecutive stale windows before firing). The baseline-based detectors unlock once you capture a healthy run:
 
 ```bash
 # 1. Capture a known-good trajectory (one JSON StepEvent per line)...
@@ -126,6 +127,7 @@ config = Config(
     goal_drift_enabled=True,
     goal_drift_baseline=baseline,
     ml_ensemble_enabled=True,   # combine all base detectors into one signal
+    stagnation_enabled=True,    # novelty-collapse detection, no baseline needed
 )
 monitor = Monitor.default(config=config)
 ```
@@ -175,7 +177,7 @@ config = Config(
     # Latency anomaly (CUSUM) detector
     cusum_k=0.5,                  # slack parameter (sensitivity)
     cusum_h=5.0,                  # alarm threshold
-    cusum_min_samples=5,          # warm-up before alarming
+    cusum_min_samples=5,          # warm-up before alarming (issue #9 lowered it from 20)
     cusum_sigma_floor_abs=1.0,    # minimum sigma (ms) for constant baselines
     cusum_sigma_floor_rel=0.05,   # minimum sigma as fraction of mean
 
@@ -649,8 +651,8 @@ Detectors reason only about **hashes, timings, counts, and booleans** -- never r
 - **FailureRisk** deliberately carries no `metadata` field. An alerting channel (webhook, Slack) cannot become an accidental data-exfiltration path.
 - **The `metadata` dict** on `StepEvent` is the one place raw content could leak if an adapter author puts it there. Detectors never read `metadata`, and sinks should not forward it by default.
 - **The webhook sink** transmits only `FailureRisk` fields (ids, score, trigger, detail, timestamp) -- never `StepEvent.content` or `StepEvent.metadata`.
-- **The halt webhook (enforcement, issue #93)** deserves special respect: unlike the alerting webhook, its response holds CONTROL -- a `"pause"` directive can stop your agent. Treat that endpoint as privileged infrastructure: bind it to localhost or reach it through an authenticated reverse proxy (same guidance as the sidecar below, copy-paste configs in [docs/ATTACH_ANY_SYSTEM.md](docs/ATTACH_ANY_SYSTEM.md#sidecar-tls-reverse-proxy-termination-issue-103)), and never expose it to networks you do not control. The POST body carries only `FailureRisk` fields, but whoever can answer it can steer the host. The fail-open contract still applies to the client side: timeout or error defaults to continue, so a DOWNED halt endpoint degrades to detection-only rather than blocking the agent.
-- **The HTTP sidecar** serves plain HTTP and accepts arbitrary `StepEvent` JSON from any caller. For production use, front it with a reverse proxy that enforces authentication and terminates TLS; copy-paste nginx and Caddy configs are in [docs/ATTACH_ANY_SYSTEM.md](docs/ATTACH_ANY_SYSTEM.md#sidecar-tls-reverse-proxy-termination-issue-103). In-process TLS is the documented future option ([#103](https://github.com/Cyrax321/SNAGLINE/issues/103)).
+ - **The halt webhook (enforcement, issue #93)** deserves special respect: unlike the alerting webhook, its response holds CONTROL -- a `"pause"` directive can stop your agent. Treat that endpoint as privileged infrastructure: bind it to localhost or reach it through an authenticated reverse proxy (same guidance as the sidecar below, copy-paste configs in [docs/ATTACH_ANY_SYSTEM.md](docs/ATTACH_ANY_SYSTEM.md#sidecar-tls-reverse-proxy-termination-issue-103)), and never expose it to networks you do not control. The POST body carries only `FailureRisk` fields, but whoever can answer it can steer the host. The fail-open contract still applies to the client side: timeout or error defaults to continue, so a DOWNED halt endpoint degrades to detection-only rather than blocking the agent.
+ - **The HTTP sidecar** serves plain HTTP and accepts arbitrary `StepEvent` JSON from any caller. For production use, front it with a reverse proxy that enforces authentication and terminates TLS; copy-paste nginx and Caddy configs are in [docs/ATTACH_ANY_SYSTEM.md](docs/ATTACH_ANY_SYSTEM.md#sidecar-tls-reverse-proxy-termination-issue-103). The sidecar can also terminate TLS itself with `--certfile/--keyfile` ([#120](https://github.com/Cyrax321/SNAGLINE/issues/120)); see the threat-model section of [docs/ATTACH_ANY_SYSTEM.md](docs/ATTACH_ANY_SYSTEM.md) for the invocation and trade-offs versus reverse-proxy termination.
 
 ## What SNAGLINE Is Not
 
@@ -727,7 +729,7 @@ SNAGLINE sits at the overlap of real-time monitoring, anomaly detection, and rel
 - **Not on PyPI.** Install from a clone (see Quick Start). The `snagline-agent[langchain]`-style names used elsewhere in this README are the extras this package declares; until it is published, install them from a clone as `pip install ".[langchain]"`.
 - **Overhead is measured, not asserted.** Run `snagline bench` to reproduce on your hardware.
 - **Framework adapters are optional extras; sinks ship in core.** The LangChain, LangGraph, Autogen, and CrewAI adapters are optional installs (`pip install snagline-agent[langchain]`, etc.). The console, webhook, Slack, PagerDuty, and dedup sinks are zero-dependency stdlib and always available.
-- **The latency anomaly detector requires warm-up.** It learns a baseline from `cusum_min_samples` (default 5) events before any alarm can fire. This prevents false positives on normal jitter but means the detector is blind during warm-up; a calibrated `BaselineProfile` (issue #101) removes the blind spot for tools it describes. With `cusum_refit_every` set, the frozen baseline is periodically re-checked against a parallel learner, so drift in the baseline itself becomes visible instead of being learned away silently.
+- **The latency anomaly detector requires warm-up.** It learns a baseline from `cusum_min_samples` (default 5) events before any alarm can fire. This prevents false positives on normal jitter but means the detector is blind during warm-up. The default was deliberately lowered from 20 to 5 (issue #9) so tools called only a handful of times are still monitored; the frozen baseline plus sigma floors keep a single large spike alarmable right after warm-up instead of requiring several sustained ones. A calibrated `BaselineProfile` (issue #101) removes the blind spot for tools it describes. With `cusum_refit_every` set, the frozen baseline is periodically re-checked against a parallel learner, so drift in the baseline itself becomes visible instead of being learned away silently.
 - **Idle detection and the silence hole.** In-band detectors can never see a hung host: no events means no `observe()` calls, so a deadlocked tool or an OOM-stopped worker produces no signal at all. The opt-in time axis narrows this from inside (`idle_warn_seconds` fires one `idle_gap` risk when consecutive ingests drift too far apart, derived from event timestamps so replay stays deterministic), but only while events were flowing to snagline in the first place. For full coverage pair it with `snagline watch --heartbeat PATH` plus an external watcher (cron, systemd timer, k8s probe): the heartbeat file's mtime going stale is the externally detectable "host is silent" signal.
 - **Goal-drift without the drift extra is structural only.** The built-in detector compares per-tool error rate, latency, and tool-name sets. Semantic (embedding) drift needs `pip install snagline-agent[drift]` (sentence-transformers, issue #81) and a baseline fitted with `fit_semantic_baseline`; without it the semantic side stays inert, logged and fail-open.
 - **No automatic repair.** Detection and escalation only. Repair is a distinct, harder problem.

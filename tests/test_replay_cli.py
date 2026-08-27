@@ -99,3 +99,24 @@ def test_replay_clears_episode_state_across_calls():
 
     os.unlink(file_a)
     os.unlink(file_b)
+
+
+def test_fixture_signatures_match_current_signature_width():
+    # Drift guard for issue #158: every committed trajectory fixture line
+    # must carry an action_signature of exactly the width the live
+    # make_signature() produces, so the corpus cannot fall behind the
+    # schema again (four legacy files once kept the retired 16-char form).
+    import glob
+    import json
+
+    from snagline.events import make_signature
+
+    expected_len = len(make_signature("probe", None))
+    for path in sorted(glob.glob(os.path.join(FIX, "*.jsonl"))):
+        with open(path, encoding="utf-8") as fh:
+            for lineno, line in enumerate(fh, start=1):
+                sig = json.loads(line)["action_signature"]
+                assert len(sig) == expected_len, (
+                    f"{path}:{lineno}: action_signature has {len(sig)} chars, "
+                    f"current make_signature() emits {expected_len}"
+                )
