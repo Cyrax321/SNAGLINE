@@ -207,6 +207,8 @@ class BaselineCollector:
     def commit(self, version: str | None = None) -> str | None:
         if self._store is None:
             return None
+        # Record fit time so --max-age works even with custom version ids.
+        self._profile.fitted_at = time.time()
         return self._store.save(
             self._profile,
             tenant=self._tenant,

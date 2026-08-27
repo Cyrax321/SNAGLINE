@@ -194,13 +194,13 @@ def test_cli_retrain_windows_dir_picks_newest_by_mtime(tmp_path, capsys):
 
 def test_cli_retrain_max_age_warns_on_stale_baseline(tmp_path, capsys):
     store_dir = tmp_path / "store"
-    win_a = _window(tmp_path / "a.jsonl", "search", [100.0] * 3)
     win_b = _window(tmp_path / "b.jsonl", "search", [110.0] * 3)
     store = BaselineStore(str(store_dir))
-    # Fixed ancient version id: wall-clock unix time far in the past.
-    capture_from_jsonl(
-        store, win_a, tenant="acme", deployment="prod", version="1000000000.0"
-    )
+    # Stale baseline via fitted_at, not version id: robust to custom ids.
+    from snagline.baseline import BaselineProfile
+
+    stale = BaselineProfile(fitted_at=time.time() - 7200)
+    store.save(stale, tenant="acme", deployment="prod", version="v-stale")
 
     rc = main(
         [
@@ -333,6 +333,59 @@ def test_active_baseline_age_skips_non_numeric_ids(tmp_path):
     age = _active_baseline_age(store, "t", "d")
     assert age is not None
     assert 0.0 <= age < 60.0
+
+
+def test_active_baseline_age_prefers_fitted_at(tmp_path):
+    # Custom version id with a stale fitted_at must still warn (fails on master).
+    from snagline.baseline import BaselineProfile
+
+    store = BaselineStore(str(tmp_path / "store"))
+    p = BaselineProfile(fitted_at=time.time() - 7200)
+    store.save(p, tenant="t", deployment="d", version="v-custom")
+    age = _active_baseline_age(store, "t", "d")
+    assert age is not None
+    assert 7000 < age < 8000
+    # Fresh fitted_at must not warn even with a custom id.
+    fresh = BaselineProfile(fitted_at=time.time())
+    store2 = BaselineStore(str(tmp_path / "store2"))
+    store2.save(fresh, tenant="t", deployment="d", version="v-custom")
+    fresh_age = _active_baseline_age(store2, "t", "d")
+    assert fresh_age is not None
+    assert fresh_age < 5.0
+
+
+def test_cli_retrain_max_age_with_custom_version_and_stale_fitted_at(tmp_path, capsys):
+    from snagline.baseline import BaselineProfile
+
+    store_dir = tmp_path / "store"
+    win = _window(tmp_path / "w.jsonl", "search", [100.0] * 3)
+    store = BaselineStore(str(store_dir))
+    stale = BaselineProfile(fitted_at=time.time() - 7200)
+    store.save(stale, tenant="acme", deployment="prod", version="v-custom")
+    rc = main(
+        [
+            "baseline",
+            "retrain",
+            "--store-dir",
+            str(store_dir),
+            "--tenant",
+            "acme",
+            "--deployment",
+            "prod",
+            "--jsonl",
+            win,
+            "--max-age",
+            "3600",
+        ]
+    )
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "WARNING" in err
+    # Old schema file without fitted_at still loads via fallback to id parsing.
+    old_store = BaselineStore(str(tmp_path / "oldstore"))
+    prof = BaselineProfileStub()
+    old_store.save(prof, tenant="t", deployment="d", version="v-old")
+    assert _active_baseline_age(old_store, "t", "d") is None
 
 
 def test_legacy_flat_baseline_form_unchanged(tmp_path):

@@ -14,6 +14,7 @@ the same persisted profile later.
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field
 from typing import IO
 
@@ -117,6 +118,9 @@ class BaselineProfile:
 
     tools: dict[str, ToolBaseline] = field(default_factory=dict)
     total_steps: int = 0
+    fitted_at: float = (
+        0.0  # unix seconds when the profile was fitted; 0.0 means unknown (schema-v1)
+    )
     # Semantic reference (optional, drift extra): mean of per-step embeddings
     # over the healthy trajectory, how many steps contributed, and which
     # model produced them (provenance only; never logged with content).
@@ -140,6 +144,8 @@ class BaselineProfile:
             "total_steps": self.total_steps,
             "tools": {name: tb.to_dict() for name, tb in sorted(self.tools.items())},
         }
+        if self.fitted_at:
+            data["fitted_at"] = self.fitted_at
         # Emit semantic keys only when actually fitted so legacy structural
         # profiles keep their exact historical byte layout.
         if self.embedding_centroid is not None:
@@ -150,7 +156,10 @@ class BaselineProfile:
 
     @classmethod
     def from_dict(cls, data: dict) -> BaselineProfile:
-        profile = cls(total_steps=data.get("total_steps", 0))
+        profile = cls(
+            total_steps=data.get("total_steps", 0),
+            fitted_at=float(data.get("fitted_at", 0.0)),
+        )
         for name, tb in data.get("tools", {}).items():
             profile.tools[name] = ToolBaseline.from_dict(tb)
         centroid = data.get("embedding_centroid")
@@ -164,7 +173,7 @@ class BaselineProfile:
 def fit_baseline_from_jsonl(path: str) -> BaselineProfile:
     """Fit a ``BaselineProfile`` from a JSONL trajectory (mirrors replay's
     fail-soft line handling: malformed lines are skipped, not fatal)."""
-    profile = BaselineProfile()
+    profile = BaselineProfile(fitted_at=time.time())
     with open(path, encoding="utf-8") as fh:
         for _lineno, line in enumerate(fh, start=1):
             line = line.strip()

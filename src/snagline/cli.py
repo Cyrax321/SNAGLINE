@@ -644,10 +644,22 @@ def _newest_window(windows_dir: str) -> str | None:
 def _active_baseline_age(store, tenant: str, deployment: str) -> float | None:
     """Age in seconds of the newest stored version, or None if unknowable.
 
-    Version ids written by ``save()`` are wall-clock timestamps, so the id
-    doubles as the fit time. Non-numeric (custom) ids are skipped fail-open;
-    staleness is a warning aid, never a hard dependency.
+    Prefers the recorded ``fitted_at`` timestamp from the latest stored
+    profile, which is robust to custom version ids. Falls back to parsing
+    version ids as wall-clock timestamps for schema-v1 files without the
+    field. Non-numeric ids are skipped fail-open; staleness is a warning aid,
+    never a hard dependency.
     """
+    with suppress(Exception):
+        profile = store.load(tenant, deployment)
+        if profile is not None:
+            fitted = getattr(profile, "fitted_at", 0.0)
+            try:
+                fitted_f = float(fitted)
+            except (TypeError, ValueError):
+                fitted_f = 0.0
+            if fitted_f:
+                return max(0.0, time.time() - fitted_f)
     for version_id in reversed(store.list_versions(tenant, deployment)):
         try:
             fitted_at = float(version_id)

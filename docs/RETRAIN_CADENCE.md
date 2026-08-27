@@ -59,6 +59,8 @@ Notes on this line:
   `2`/`3` mean nothing was stored, which is what you want cron mail or a
   `systemd` `on-failure` handler to catch.
 
+Age for the guard now comes from the profile's recorded `fitted_at` timestamp rather than inferring it from the version id, so custom ids like `v3` remain guardable; older stores without the field fall back to timestamp id parsing.
+
 ## systemd timer example
 
 Equivalent to the cron line, with catch-up on missed schedules:
