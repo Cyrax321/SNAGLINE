@@ -147,3 +147,29 @@ jobs:
           name: accuracy-report
           path: accuracy-report.json
           if-no-files-found: ignore
+
+  version-tag-check:
+    # Guard for #105: ensure the version in pyproject.toml has a matching
+    # annotated tag. Runs only on pushes to master/main; PRs are not expected
+    # to carry a tag yet, so they skip. Failure is loud: missing tag means
+    # the release is untraceable.
+    name: Version tag check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Check that pyproject version has a matching tag
+        run: |
+          set -euo pipefail
+          ver=$(python -c "import re, pathlib; t=pathlib.Path('pyproject.toml').read_text(); m=re.search(r'^version\s*=\s*\"([^\"]+)\"', t, re.M); print(m.group(1) if m else '')")
+          echo "pyproject version: $ver"
+          if [ -z "$ver" ]; then echo "could not parse version from pyproject.toml"; exit 1; fi
+          if ! git rev-parse "v$ver" >/dev/null 2>&1; then
+            echo "missing tag v$ver for pyproject version $ver"
+            echo "create it with: git tag -a v$ver -m \"SNAGLINE $ver -- see CHANGELOG.md\" && git push origin v$ver"
+            exit 1
+          fi
+          echo "tag v$ver exists at $(git rev-parse --short v$ver)"
