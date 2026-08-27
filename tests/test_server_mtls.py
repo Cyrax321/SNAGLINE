@@ -459,6 +459,7 @@ def test_plain_and_server_tls_modes_regression(tmp_path):
         assert status == 200
         assert json.loads(body) == {"status": "ok"}
         # Verify server context is not in mTLS mode
+        assert hasattr(tls_plain, "snagline_ssl_context")
         assert tls_plain.snagline_ssl_context.verify_mode == ssl.CERT_NONE  # type: ignore[attr-defined]
     finally:
         tls_plain.shutdown()
