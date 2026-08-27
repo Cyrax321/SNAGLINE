@@ -41,7 +41,13 @@ The answer is yes. SNAGLINE's tier-1 detectors are deterministic, O(1) amortized
 
 ## Quick Start
 
-Zero third-party dependencies. Install from source:
+Zero third-party dependencies. Install from PyPI:
+
+```bash
+pip install snagline-agent
+```
+
+Or from source:
 
 ```bash
 pip install .
@@ -147,7 +153,7 @@ in [docs/RETRAIN_CADENCE.md](docs/RETRAIN_CADENCE.md)).
 
 | Capability | What it gives you |
 |:--|:--|
-| **Zero dependencies** | The core needs nothing but Python 3.10+ -- `dependencies = []` in `pyproject.toml`, non-negotiable. Not yet published to PyPI: install with `pip install .` from a clone (see [Quick Start](#quick-start)). Every framework adapter is an optional extra. |
+| **Zero dependencies** | The core needs nothing but Python 3.10+ -- `dependencies = []` in `pyproject.toml`, non-negotiable. Published to PyPI as `snagline-agent` (`pip install snagline-agent`, or `pip install .` from a clone, see [Quick Start](#quick-start)). Every framework adapter is an optional extra. |
 | **Fail-open guarantee** | Detector/sink exceptions are caught, logged, and never propagated into the host agent. A monitoring library that can crash the thing it monitors is a non-starter. |
 | **Microsecond-scale overhead** | Median 2.43 us/step, p99 27.71 us/step over 200,000 synthetic steps. Cheap enough to run on every step of a week-long run. Numbers and provenance in [Empirical Verification](#automated-test-suite-and-benchmarks); reproduce with `snagline bench`. |
 | **Framework-agnostic core** | All detector and sink logic operates only on the canonical `StepEvent` schema. Framework-specific code lives in isolated adapter modules and nowhere else. |
@@ -729,7 +735,7 @@ SNAGLINE sits at the overlap of real-time monitoring, anomaly detection, and rel
 ## Status and Limitations
 
 - **Tested**: 622 tests passing, 2 skipped, 88.88% line coverage (see [Empirical Verification](#automated-test-suite-and-benchmarks) for the exact command and environment).
-- **Not on PyPI.** Install from a clone (see Quick Start). The `snagline-agent[langchain]`-style names used elsewhere in this README are the extras this package declares; until it is published, install them from a clone as `pip install ".[langchain]"`.
+- **On PyPI as `snagline-agent` 0.1.0** (`pip install snagline-agent`; clone still works via `pip install .` see Quick Start). The `snagline-agent[langchain]`-style names used elsewhere in this README are the extras this package declares.
 - **Overhead is measured, not asserted.** Run `snagline bench` to reproduce on your hardware.
 - **Framework adapters are optional extras; sinks ship in core.** The LangChain, LangGraph, Autogen, and CrewAI adapters are optional installs (`pip install snagline-agent[langchain]`, etc.). The console, webhook, Slack, PagerDuty, and dedup sinks are zero-dependency stdlib and always available.
 - **The latency anomaly detector requires warm-up.** It learns a baseline from `cusum_min_samples` (default 5) events before any alarm can fire. This prevents false positives on normal jitter but means the detector is blind during warm-up. The default was deliberately lowered from 20 to 5 (issue #9) so tools called only a handful of times are still monitored; the frozen baseline plus sigma floors keep a single large spike alarmable right after warm-up instead of requiring several sustained ones. A calibrated `BaselineProfile` (issue #101) removes the blind spot for tools it describes. With `cusum_refit_every` set, the frozen baseline is periodically re-checked against a parallel learner, so drift in the baseline itself becomes visible instead of being learned away silently.

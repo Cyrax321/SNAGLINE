@@ -1,0 +1,168 @@
+name: Release
+
+# Publishes snagline-agent to PyPI when a version tag is pushed, or via
+# manual dispatch. Never runs on pushes to master, so normal development
+# does not trigger a publish. See issue #104.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish (must exist, e.g. v0.1.0). Leave empty to publish from current HEAD."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and check distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Checkout tag if workflow_dispatch requested a specific tag
+        if: github.event_name == 'workflow_dispatch' && inputs.tag != ''
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          git fetch origin --tags
+          git checkout "$TAG"
+
+      - name: Determine version and validate against tag
+        run: |
+          set -euo pipefail
+          # Derive version from tag if present, otherwise from pyproject
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG_VER="${GITHUB_REF_NAME#v}"
+          elif [ -n "${{ inputs.tag }}" ]; then
+            TAG_VER="${{ inputs.tag }}"
+            TAG_VER="${TAG_VER#v}"
+          else
+            TAG_VER=""
+          fi
+          PY_VER=$(python -c "import re, pathlib; t=pathlib.Path('pyproject.toml').read_text(); m=re.search(r'^version\s*=\s*\"([^\"]+)\"', t, re.M); print(m.group(1) if m else '')")
+          echo "pyproject version: $PY_VER"
+          if [ -n "$TAG_VER" ]; then
+            echo "tag version: $TAG_VER"
+            if [ "$PY_VER" != "$TAG_VER" ]; then
+              echo "version mismatch: pyproject $PY_VER != tag $TAG_VER"
+              exit 1
+            fi
+            echo "VERSION=$TAG_VER" >> $GITHUB_ENV
+          else
+            echo "no tag, using pyproject version $PY_VER"
+            echo "VERSION=$PY_VER" >> $GITHUB_ENV
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build twine
+
+      - name: Build sdist and wheel
+        run: |
+          python -m build
+
+      - name: Twine check
+        run: |
+          twine check dist/*
+
+      - name: Extract release notes from CHANGELOG.md
+        env:
+          VERSION: ${{ env.VERSION }}
+        run: |
+          python -c "
+import pathlib, re, os
+text = pathlib.Path('CHANGELOG.md').read_text()
+ver = os.environ.get('VERSION', '0.1.0')
+# Escape dots for regex
+pattern = rf'## \[{re.escape(ver)}\].*?(?=\n## \[|\Z)'
+m = re.search(pattern, text, re.S)
+open('RELEASE_NOTES.md','w').write(m.group(0).strip() + '\n' if m else text)
+"
+          cat RELEASE_NOTES.md
+
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Upload release notes
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: RELEASE_NOTES.md
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    # Publish on tag push, or on any manual dispatch (empty tag means HEAD per description).
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Checkout dispatched tag if requested
+        if: github.event_name == 'workflow_dispatch' && inputs.tag != ''
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          git fetch origin --tags
+          git checkout "$TAG"
+
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Download release notes
+        uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: .
+
+      - name: Publish via trusted publishing (OIDC) if configured
+        id: pypi_oidc
+        continue-on-error: true
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          verbose: true
+
+      - name: Publish via API token fallback (PYPI_TOKEN)
+        id: pypi_token
+        if: steps.pypi_oidc.outcome == 'failure'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          verbose: true
+          password: ${{ secrets.PYPI_TOKEN }}
+
+      - name: Create GitHub Release
+        if: steps.pypi_oidc.outcome == 'success' || steps.pypi_token.outcome == 'success'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name || inputs.tag }}
+          generate_release_notes: false
+          body_path: ${{ github.workspace }}/RELEASE_NOTES.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

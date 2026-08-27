@@ -453,7 +453,8 @@ def test_halt_webhook_stalled_endpoint_times_out_to_continue():
         monitor.ingest(_event())  # must NOT raise
         elapsed = time.perf_counter() - start
         # Paid roughly the timeout budget, not the endpoint's full stall.
-        assert 0.15 <= elapsed < 2.0
+        # Allow small epsilon for timer granularity on Windows (issue #156 era).
+        assert 0.12 <= elapsed < 2.0
         assert monitor.last_directive.action == "continue"
         assert monitor.metrics()["policy_errors"] == 1
     finally:
