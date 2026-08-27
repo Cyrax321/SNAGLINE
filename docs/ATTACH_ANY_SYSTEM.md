@@ -318,12 +318,14 @@ curl --cacert /etc/snagline/ca.pem \
 
 Auth semantics are unchanged over TLS: `Authorization: Bearer` and
 `X-Snagline-Token` stay required on everything except `GET /health`, exactly
-as on plain HTTP. What in-process termination does not add today is mutual
-TLS (authenticating senders by client certificate); stdlib `ssl` can do it
-with no new dependencies, so exposing a client-CA knob is a natural follow-up.
-Both directions cost zero new dependencies: `ssl` is standard library, and a
-reverse proxy adds nothing to the Python environment, so the choice between
-them is purely operational.
+as on plain HTTP. For mutual TLS pass `--client-ca /path/to/ca.pem` alongside
+`--certfile/--keyfile`: the sidecar loads the CA bundle via
+`load_verify_locations()` and sets `verify_mode = CERT_REQUIRED`, so every
+TLS handshake must present a client certificate chaining to that CA. Handshakes
+without one or with an untrusted one fail at the TLS layer before any HTTP is
+spoken. Both directions cost zero new dependencies: `ssl` is standard library,
+and a reverse proxy adds nothing to the Python environment, so the choice
+between them is purely operational.
 
 ### Hardening checklist
 
@@ -382,7 +384,7 @@ them is purely operational.
 - **Status: P0, P1, and most of P3 are complete.** Remaining:
   - P3 item 10 tail: Prometheus export + structured logging for the monitor.
   - Actual PyPI upload (needs a token). In-process TLS shipped via
-    #120 alongside the reverse-proxy pattern from #110; mutual TLS is
-    tracked in #145.
+    #120 alongside the reverse-proxy pattern from #110; mutual TLS shipped
+    in #145 via `--client-ca`.
   - Then P2 (ml/drift extras, calibration, eval harness) - the research
     differentiators that approach the paper's accuracy.
