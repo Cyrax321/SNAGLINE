@@ -7,36 +7,45 @@ module guards its LangChain import for exactly this reason.
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 from snagline.adapters.langchain_adapter import SnaglineCallbackHandler
+from snagline.events import StepEvent
 from snagline.monitor import Monitor
+from snagline.risk import FailureRisk
 
 
 class RecordingSink:
     def __init__(self) -> None:
-        self.risks: list = []
-        self.events: list = []
+        self.risks: list[FailureRisk] = []
+        self.events: list[StepEvent] = []
 
-    def emit(self, risk) -> None:
+    def emit(self, risk: FailureRisk) -> None:
         self.risks.append(risk)
 
 
 class RecMonitor(Monitor):
     """Monitor that also records every ingested event for assertions."""
 
-    def __init__(self, detectors, sinks, fail_open: bool = True):
+    def __init__(
+        self,
+        detectors: list[Any],
+        sinks: list[Any],
+        fail_open: bool = True,
+    ) -> None:
         super().__init__(detectors, sinks, fail_open=fail_open)
-        self.events: list = []
+        self.events: list[StepEvent] = []
 
-    def ingest(self, event):
+    def ingest(self, event: StepEvent) -> None:
         self.events.append(event)
         super().ingest(event)
 
 
 def _monitor() -> RecMonitor:
-    return RecMonitor.default(sinks=[RecordingSink()])
+    return cast(RecMonitor, RecMonitor.default(sinks=[RecordingSink()]))
 
 
-def test_tool_call_emits_event_with_latency():
+def test_tool_call_emits_event_with_latency() -> None:
     mon = _monitor()
     h = SnaglineCallbackHandler(mon, "ep1")
     h.on_tool_start({"name": "search"}, "query=cat", run_id="r1")
@@ -49,7 +58,7 @@ def test_tool_call_emits_event_with_latency():
     assert e.error is False
 
 
-def test_tool_error_emits_error_event():
+def test_tool_error_emits_error_event() -> None:
     mon = _monitor()
     h = SnaglineCallbackHandler(mon, "ep1")
     h.on_tool_start({"name": "search"}, "query=cat", run_id="r2")
@@ -59,7 +68,7 @@ def test_tool_error_emits_error_event():
     assert e.error_type == "RuntimeError"
 
 
-def test_agent_action_and_finish_emit_plan_steps():
+def test_agent_action_and_finish_emit_plan_steps() -> None:
     mon = _monitor()
     h = SnaglineCallbackHandler(mon, "ep1")
     h.on_agent_action(
@@ -71,7 +80,7 @@ def test_agent_action_and_finish_emit_plan_steps():
     assert mon.events[0].tool_name == "lookup"
 
 
-def test_llm_end_emits_message_with_tokens():
+def test_llm_end_emits_message_with_tokens() -> None:
     mon = _monitor()
     h = SnaglineCallbackHandler(mon, "ep1")
     h.on_llm_start({"name": "llm"}, ["prompt"], run_id="r3")
@@ -92,16 +101,17 @@ def test_llm_end_emits_message_with_tokens():
     assert e.tokens_in == 10 and e.tokens_out == 20
 
 
-def test_repeated_tool_calls_trigger_loop_detector():
+def test_repeated_tool_calls_trigger_loop_detector() -> None:
     mon = _monitor()
     h = SnaglineCallbackHandler(mon, "ep-loop")
     for i in range(4):
         h.on_tool_start({"name": "retry"}, "same-args", run_id=f"loop-{i}")
         h.on_tool_end("out", run_id=f"loop-{i}")
-    assert any(r.trigger == "loop" for r in mon._sinks[0].risks)
+    sink = cast(RecordingSink, mon._sinks[0])
+    assert any(r.trigger == "loop" for r in sink.risks)
 
 
-def test_close_clears_episode_state():
+def test_close_clears_episode_state() -> None:
     mon = _monitor()
     h = SnaglineCallbackHandler(mon, "ep-clear")
     h.on_tool_start({"name": "retry"}, "same-args", run_id="c1")
@@ -110,10 +120,10 @@ def test_close_clears_episode_state():
     h.close()  # should clear, so a fresh repeat does not immediately loop
     h.on_tool_start({"name": "retry"}, "same-args", run_id="c3")
     h.on_tool_end("out", run_id="c3")
-    assert not mon._sinks[0].risks
+    assert not cast(RecordingSink, mon._sinks[0]).risks
 
 
-def test_llm_error_emits_error_event():
+def test_llm_error_emits_error_event() -> None:
     # LLM / chat-model failures route through on_llm_error (or
     # on_chat_model_error); the adapter must capture them as error events so
     # error_cascade can fire. Previously only on_tool_error existed.
@@ -127,7 +137,7 @@ def test_llm_error_emits_error_event():
     assert e.action_type == "message"
 
 
-def test_chain_error_emits_error_event():
+def test_chain_error_emits_error_event() -> None:
     mon = _monitor()
     h = SnaglineCallbackHandler(mon, "ep1")
     h.on_chain_start({"name": "planner"}, {"input": 1}, run_id="rc")
@@ -138,7 +148,7 @@ def test_chain_error_emits_error_event():
     assert e.action_type == "plan_step"
 
 
-def test_error_callbacks_carry_latency_ms():
+def test_error_callbacks_carry_latency_ms() -> None:
     # Issue #17: error callbacks (tool/llm/chain) must compute latency_ms from
     # the captured start time, just like the success callbacks, so the CUSUM
     # detector can analyze latency for failed operations too.

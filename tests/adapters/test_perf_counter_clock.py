@@ -15,6 +15,7 @@ the assertions fail, so a regression cannot hide behind platform timing.
 from __future__ import annotations
 
 import time
+from typing import Any, cast
 
 import pytest
 
@@ -28,26 +29,28 @@ from snagline.monitor import Monitor
 
 class RecordingSink:
     def __init__(self) -> None:
-        self.risks: list = []
+        self.risks: list[Any] = []
 
-    def emit(self, risk) -> None:
+    def emit(self, risk: Any) -> None:
         self.risks.append(risk)
-
-
-def _monitor() -> RecMonitor:
-    return RecMonitor.default(sinks=[RecordingSink()])
 
 
 class RecMonitor(Monitor):
     """Monitor that also records every ingested event for assertions."""
 
-    def __init__(self, detectors, sinks, fail_open: bool = True):
+    def __init__(
+        self, detectors: list[Any], sinks: list[Any], fail_open: bool = True
+    ) -> None:
         super().__init__(detectors, sinks, fail_open=fail_open)
-        self.events: list = []
+        self.events: list[Any] = []
 
-    def ingest(self, event):
+    def ingest(self, event: Any) -> None:
         self.events.append(event)
         super().ingest(event)
+
+
+def _monitor() -> RecMonitor:
+    return cast(RecMonitor, RecMonitor.default(sinks=[RecordingSink()]))
 
 
 def _script(*values: float):
@@ -63,7 +66,9 @@ T0 = 1024.0
 SUB_MS_S = 2**-10  # 0.9765625 ms
 
 
-def test_langchain_default_clock_preserves_sub_ms_latency(monkeypatch):
+def test_langchain_default_clock_preserves_sub_ms_latency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Default path: NO injected clock. Read order per successful tool call:
     # on_tool_start captures one reading, on_tool_end reads twice more (once
     # in _latency_from, once for the event timestamp).
@@ -81,7 +86,9 @@ def test_langchain_default_clock_preserves_sub_ms_latency(monkeypatch):
     assert e.latency_ms > 0.0  # exactly what the Windows tick quantized to zero
 
 
-def test_autogen_default_clock_reads_perf_counter(monkeypatch):
+def test_autogen_default_clock_reads_perf_counter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     scripted = T0 + SUB_MS_S
     monkeypatch.setattr(time, "perf_counter", _script(scripted))
     mon = _monitor()
@@ -93,7 +100,9 @@ def test_autogen_default_clock_reads_perf_counter(monkeypatch):
     assert events[0].timestamp == scripted
 
 
-def test_crewai_default_clock_reads_perf_counter(monkeypatch):
+def test_crewai_default_clock_reads_perf_counter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     scripted = T0 + SUB_MS_S
     monkeypatch.setattr(time, "perf_counter", _script(scripted))
     mon = _monitor()
@@ -103,7 +112,7 @@ def test_crewai_default_clock_reads_perf_counter(monkeypatch):
     assert e.timestamp == scripted
 
 
-def test_openai_observe_reads_perf_counter(monkeypatch):
+def test_openai_observe_reads_perf_counter(monkeypatch: pytest.MonkeyPatch) -> None:
     scripted = T0 + SUB_MS_S
     monkeypatch.setattr(time, "perf_counter", _script(scripted))
     mon = _monitor()
@@ -113,7 +122,7 @@ def test_openai_observe_reads_perf_counter(monkeypatch):
     assert e.timestamp == scripted
 
 
-def test_anthropic_observe_reads_perf_counter(monkeypatch):
+def test_anthropic_observe_reads_perf_counter(monkeypatch: pytest.MonkeyPatch) -> None:
     scripted = T0 + SUB_MS_S
     monkeypatch.setattr(time, "perf_counter", _script(scripted))
     mon = _monitor()

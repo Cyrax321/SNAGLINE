@@ -5,6 +5,9 @@ Payload shapes follow https://code.claude.com/docs/en/hooks.
 
 from __future__ import annotations
 
+from collections import deque
+from typing import Any
+
 from snagline.adapters.claude_code import (
     HookTracker,
     ingest_payload,
@@ -17,7 +20,7 @@ from snagline.monitor import Monitor
 from snagline.risk import FailureRisk
 
 
-def _tool_payload(event: str, tool: str = "Bash", **over) -> dict:
+def _tool_payload(event: str, tool: str = "Bash", **over: Any) -> dict[str, Any]:
     p = {
         "session_id": "sess-1",
         "transcript_path": "/tmp/t.jsonl",
@@ -32,15 +35,13 @@ def _tool_payload(event: str, tool: str = "Bash", **over) -> dict:
 
 
 class _RecordingMonitor:
-    def __init__(self):
+    def __init__(self) -> None:
         self.events: list[StepEvent] = []
         self.risks: list[FailureRisk] = []
+        self._window: deque[str] = deque(maxlen=4)
 
     def ingest(self, event: StepEvent) -> None:
         self.events.append(event)
-        from collections import deque
-
-        self._window = getattr(self, "_window", deque(maxlen=4))
         self._window.append(event.action_signature)
         sigs = list(self._window)
         if len(sigs) >= 4 and sigs.count(sigs[-1]) >= 3:
@@ -50,13 +51,13 @@ class _RecordingMonitor:
         pass
 
 
-def test_detection_heuristic():
+def test_detection_heuristic() -> None:
     assert is_claude_code_payload(_tool_payload("PreToolUse"))
     assert not is_claude_code_payload({"step_id": "1"})
     assert not is_claude_code_payload("junk")
 
 
-def test_pretooluse_maps_to_tool_call():
+def test_pretooluse_maps_to_tool_call() -> None:
     ev = payload_to_event(_tool_payload("PreToolUse"))
     assert ev is not None
     assert ev.action_type == "tool_call"
@@ -68,7 +69,7 @@ def test_pretooluse_maps_to_tool_call():
     assert "npm test" not in str(ev.metadata)
 
 
-def test_repeated_same_tool_input_is_loop_detectable():
+def test_repeated_same_tool_input_is_loop_detectable() -> None:
     m = _RecordingMonitor()
     tracker = HookTracker()
     for i in range(4):
@@ -77,16 +78,18 @@ def test_repeated_same_tool_input_is_loop_detectable():
     assert m.risks, "4 identical Bash(npm test) attempts must trip loop detection"
 
 
-def test_different_tool_inputs_have_different_signatures():
+def test_different_tool_inputs_have_different_signatures() -> None:
     a = payload_to_event(_tool_payload("PreToolUse", tool_input={"command": "ls"}))
     b = payload_to_event(
         _tool_payload("PreToolUse", tool_input={"command": "rm -rf /"})
     )
+    assert a is not None and b is not None
     assert a.action_signature != b.action_signature
 
 
-def test_failure_events_carry_error():
+def test_failure_events_carry_error() -> None:
     ev = payload_to_event(_tool_payload("PostToolUseFailure", error="exit 1"))
+    assert ev is not None
     assert ev.error is True
     assert ev.error_type == "exit 1"
     ev2 = payload_to_event(
@@ -95,14 +98,14 @@ def test_failure_events_carry_error():
     assert ev2 is not None and ev2.error is True and ev2.action_type == "message"
 
 
-def test_lifecycle_events_are_dropped():
+def test_lifecycle_events_are_dropped() -> None:
     for name in ["SessionStart", "Notification", "FileChanged", "Stop", "Unknown"]:
         assert payload_to_event({"session_id": "s", "hook_event_name": name}) is None
 
 
-def test_tracker_pairs_pre_and_post_for_latency():
+def test_tracker_pairs_pre_and_post_for_latency() -> None:
+    _t: dict[str, float] = {"now": 0.0}
     tracker = HookTracker(clock=lambda: _t["now"])
-    _t = {"now": 0.0}
     ingest_payload(_RecordingMonitor(), _tool_payload("PreToolUse"), tracker)
     _t["now"] = 0.25
     ev = payload_to_event(_tool_payload("PostToolUse"), tracker=tracker)
@@ -110,7 +113,7 @@ def test_tracker_pairs_pre_and_post_for_latency():
     assert ev.latency_ms == 250.0
 
 
-def test_ingest_payload_preserves_latency_on_the_shipped_path():
+def test_ingest_payload_preserves_latency_on_the_shipped_path() -> None:
     # Issue #64: ingest_payload used to call tracker.note() *before* mapping,
     # and note() retires the paired PreToolUse start -- so every PostToolUse
     # came out with latency_ms=None. Assert through ingest_payload (the path
@@ -125,7 +128,7 @@ def test_ingest_payload_preserves_latency_on_the_shipped_path():
     assert [e.latency_ms for e in m.events] == [None, 250.0]
 
 
-def test_pretooluse_carries_no_latency():
+def test_pretooluse_carries_no_latency() -> None:
     # Issue #64: PreToolUse fires before the tool runs. Reporting 0.0 ms poisons
     # the CUSUM baseline with synthetic zeros; it must be None.
     clock = {"now": 0.0}
@@ -135,7 +138,7 @@ def test_pretooluse_carries_no_latency():
     assert m.events[0].latency_ms is None
 
 
-def test_post_tool_use_failure_also_carries_latency():
+def test_post_tool_use_failure_also_carries_latency() -> None:
     # A tool that fails still took time; the CUSUM detector must see it.
     clock = {"now": 0.0}
     tracker = HookTracker(clock=lambda: clock["now"])
@@ -147,7 +150,7 @@ def test_post_tool_use_failure_also_carries_latency():
     assert m.events[-1].error is True
 
 
-def test_hook_latency_reaches_the_cusum_detector():
+def test_hook_latency_reaches_the_cusum_detector() -> None:
     # Issue #64, end to end: a healthy 100ms baseline followed by a 30s call
     # must raise a latency_anomaly risk through the real Monitor.
     risks: list[FailureRisk] = []
@@ -175,7 +178,7 @@ def test_hook_latency_reaches_the_cusum_detector():
     )
 
 
-def test_tracker_evicts_stale_starts_by_age_not_wholesale():
+def test_tracker_evicts_stale_starts_by_age_not_wholesale() -> None:
     # Issue #64: the old eviction cleared the whole dict once it passed 256
     # entries, dropping fresh in-flight starts along with stale ones despite a
     # comment promising an age-based policy.
@@ -195,7 +198,7 @@ def test_tracker_evicts_stale_starts_by_age_not_wholesale():
     assert not any(k.startswith("stale_") for k in tracker._starts)
 
 
-def test_user_prompt_submit_maps_and_repeats_are_detectable():
+def test_user_prompt_submit_maps_and_repeats_are_detectable() -> None:
     m = _RecordingMonitor()
     for i in range(4):
         ingest_payload(
@@ -210,11 +213,12 @@ def test_user_prompt_submit_maps_and_repeats_are_detectable():
     assert m.risks, "identical repeated prompts must be loop-detectable"
 
 
-def test_ingest_payload_never_raises():
+def test_ingest_payload_never_raises() -> None:
     m = _RecordingMonitor()
     assert ingest_payload(m, None) is None  # type: ignore[arg-type]
     # Weird payloads may be dropped, but must never raise.
-    ingest_payload(m, {"hook_event_name": 42, "tool_input": object()})
+    ingest_payload(m, {"hook_event_name": 42, "tool_input": object()})  # type: ignore[dict-item]
     ingest_payload(
-        m, {"hook_event_name": "PreToolUse", "session_id": None, "tool_input": {}}
+        m,
+        {"hook_event_name": "PreToolUse", "session_id": None, "tool_input": {}},  # type: ignore[dict-item]
     )

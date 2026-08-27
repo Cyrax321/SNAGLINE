@@ -8,6 +8,9 @@ A separate integration demo (examples/) exercises a real LangGraph-based
 
 from __future__ import annotations
 
+from collections import deque
+from typing import Any
+
 from snagline.adapters.langgraph_adapter import watch_graph
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk
@@ -35,9 +38,8 @@ class _RiskMonitor(_RecordingMonitor):
         super().ingest(event)
         # Mirror the real loop detector trigger so the adapter test can assert
         # that events it emits are loop-detectable at all.
-        from collections import deque
-
-        self._window = getattr(self, "_window", deque(maxlen=4))
+        window: deque[str] = getattr(self, "_window", deque(maxlen=4))
+        self._window: deque[str] = window
         self._window.append(event.action_signature)
         sigs = list(self._window)
         if len(sigs) >= 4 and sigs[-1] in sigs[:-1] and sigs.count(sigs[-1]) >= 3:
@@ -46,14 +48,14 @@ class _RiskMonitor(_RecordingMonitor):
 
 def test_stream_passes_through_unchanged():
     monitor = _RecordingMonitor()
-    stream = [{"a": {"x": 1}}, {"b": {"y": 2}}]
+    stream: list[dict[str, Any]] = [{"a": {"x": 1}}, {"b": {"y": 2}}]
     out = list(watch_graph(monitor, "ep-1", iter(stream)))
     assert out == stream
 
 
 def test_one_event_per_node_update():
     monitor = _RecordingMonitor()
-    stream = [{"n1": {"x": 1}, "n2": {"y": 2}}, {"n1": {"x": 3}}]
+    stream: list[dict[str, Any]] = [{"n1": {"x": 1}, "n2": {"y": 2}}, {"n1": {"x": 3}}]
     list(watch_graph(monitor, "ep-1", iter(stream)))
     assert len(monitor.events) == 3
     assert [e.tool_name for e in monitor.events] == ["n1", "n2", "n1"]
@@ -67,7 +69,7 @@ def test_one_event_per_node_update():
 
 def test_error_key_and_exception_updates_set_error_flag():
     monitor = _RecordingMonitor()
-    stream = [
+    stream: list[dict[str, Any]] = [
         {"ok": {"x": 1}},
         {"boom": {"x": 1, "error": ValueError("node failed")}},
         {"crash": RuntimeError("unhandled")},
@@ -96,6 +98,8 @@ def test_latency_is_measured_between_yields():
 
 def test_emitted_events_are_loop_detectable():
     monitor = _RiskMonitor()
-    stream = [{"retry": {"x": 1, "error": "fail"}} for _ in range(4)]
+    stream: list[dict[str, Any]] = [
+        {"retry": {"x": 1, "error": "fail"}} for _ in range(4)
+    ]
     list(watch_graph(monitor, "ep-1", iter(stream)))
     assert monitor.risks, "identical repeated node updates should be loop-detectable"

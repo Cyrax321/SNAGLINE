@@ -330,9 +330,9 @@ def test_poisoned_entry_does_not_stop_the_rest(
         def payload(self) -> dict[str, Any]:
             raise RuntimeError("boom")
 
-    bad = PoisonedEntry()
+    bad: Any = PoisonedEntry()
     good = make_perception(2)
-    storage = FakeStorage([bad, good])
+    storage = FakeStorage([bad, good])  # type: ignore[list-item]
     monitor = RecordingMonitor()
     adapter = ContinuumAdapter(monitor, storage, "run-1", start_at_tail=False)
     with caplog.at_level(logging.WARNING, logger="snagline"):
