@@ -156,6 +156,23 @@ enterprise-grade alerting. Concretely:
     releasing per-episode detector state), and answers `400` on malformed
     bodies without crashing or retaining anything beyond the id itself.
     Ending an unknown id is an idempotent no-op.
+
+    **Episode TTL expiry (#173):** When hosts cannot or forget to send the
+    end signal, the gauge would otherwise rely solely on cap eviction.
+    Configure an idle-based TTL so ids not seen for N seconds expire
+    automatically: `snagline serve --episode-ttl-seconds 3600` or
+    `SNAGLINE_EPISODE_TTL_SECONDS=3600` / `Config(episode_ttl_seconds=3600)`.
+    `0` or `None` disables (default, byte-identical to #123). Expiry uses
+    monotonic time, so NTP jumps cannot mass-expire or freeze entries; the
+    table stays ids-plus-a-float and the same `_MAX_TRACKED_EPISODES` cap
+    still bounds memory. Reseeing an id after expiry just re-registers it.
+    Trade-off: explicit `POST /episodes/end` is precise and immediate, while
+    TTL is self-healing for uncooperative or legacy senders but cannot
+    distinguish a quiet-but-still-running episode from a finished one; an
+    idle gap longer than the TTL looks like completion. Replay note:
+    replaying an old trajectory through a live sidecar will resurrect stale
+    ids regardless of TTL, so point replay at a metrics-disabled sidecar or
+    a throwaway port.
 11. Integration matrix document plus a prominent "10-line custom adapter"
     path. **Done:** `docs/INTEGRATION_MATRIX.md` (#49).
 

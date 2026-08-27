@@ -80,6 +80,7 @@ import sys
 import threading
 import time
 from collections import OrderedDict, deque
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
@@ -196,6 +197,57 @@ def _resolve_read_timeout(explicit: float | None) -> float:
     return value
 
 
+def _resolve_episode_ttl(explicit: float | None) -> float | None:
+    """Pick the effective episode TTL for the sidecar gauge (issue #173).
+
+    Precedence: explicit argument, then ``SNAGLINE_EPISODE_TTL_SECONDS`` via
+    ``Config``, then the built-in ``Config`` default (None = disabled).
+    Malformed or non-positive values are logged and treated as disabled so a
+    bad knob never takes the sidecar down (fail-open). ``0`` explicitly
+    disables as well, keeping the default byte-identical behavior.
+    Uses wall-clock seconds for the TTL value but monotonic time for expiry
+    checks, so NTP jumps cannot mass-expire or freeze entries; docs note
+    replay traffic will resurrect stale ids.
+    """
+    candidate: Any = explicit
+    if candidate is None:
+        try:
+            candidate = Config.from_env_overrides().get("episode_ttl_seconds")
+        except Exception:
+            logger.debug(
+                "snagline: env lookup for episode_ttl_seconds failed",
+                exc_info=True,
+            )
+            candidate = None
+    if candidate is None:
+        candidate = Config().episode_ttl_seconds
+    if candidate is None:
+        return None
+    try:
+        value = float(candidate)
+    except (TypeError, ValueError):
+        logger.warning(
+            "snagline: invalid episode_ttl_seconds %r; TTL disabled",
+            candidate,
+        )
+        return None
+    if not math.isfinite(value):
+        logger.warning(
+            "snagline: episode_ttl_seconds %r must be finite; TTL disabled",
+            candidate,
+        )
+        return None
+    if value == 0:
+        return None
+    if value < 0:
+        logger.warning(
+            "snagline: episode_ttl_seconds %r must be positive; TTL disabled",
+            candidate,
+        )
+        return None
+    return value
+
+
 def _choose_metrics_format(
     query: dict[str, list[str]], accept_header: str | None, configured: str
 ) -> str:
@@ -243,7 +295,12 @@ class SidecarMetricsCollector:
     ingestion or serving.
     """
 
-    def __init__(self, max_episodes: int = _MAX_TRACKED_EPISODES) -> None:
+    def __init__(
+        self,
+        max_episodes: int = _MAX_TRACKED_EPISODES,
+        episode_ttl_seconds: float | None = None,
+        clock: Callable[[], float] | None = None,
+    ) -> None:
         self._lock = threading.Lock()
         self._risks: dict[tuple[str, str], int] = {}
         self._events_total = 0
@@ -252,8 +309,13 @@ class SidecarMetricsCollector:
         # Episode id table: reseeing an id moves it to the end, so when the
         # cap bites we forget the episode quiet for the longest time, which
         # is the right approximation of "active" for a long-lived sidecar.
-        self._episodes: OrderedDict[str, None] = OrderedDict()
+        # With TTL enabled each id also carries a monotonic last-seen stamp;
+        # the table stays ids-plus-a-float, never content, and the same cap
+        # continues to bound memory (issue #173).
+        self._episodes: OrderedDict[str, float] = OrderedDict()
         self._max_episodes = max(1, int(max_episodes))
+        self._ttl = _resolve_episode_ttl(episode_ttl_seconds)
+        self._clock = clock or time.monotonic
 
     def emit(self, risk: Any) -> None:
         """AlertSink protocol entry point; counts one risk by label pair."""
@@ -264,6 +326,29 @@ class SidecarMetricsCollector:
         except Exception:
             logger.debug("snagline: metrics collector emit failed", exc_info=True)
 
+    def _expire_stale_locked(self) -> None:
+        """Remove ids not seen for longer than TTL (caller holds _lock)."""
+        if self._ttl is None:
+            return
+        try:
+            now = self._clock()
+            # OrderedDict keeps insertion order = last-seen order because
+            # record_ingest moves reseen ids to the end. Expired ids are
+            # exactly those at the front whose age exceeds TTL; we can stop
+            # at the first fresh entry. Bounded scan: at most one pass over
+            # the table per sweep, and sweep happens only on ingest and
+            # scrape, so amortized O(1) per step (project.md section 1.5).
+            expired: list[str] = []
+            for eid, last_seen in self._episodes.items():
+                if now - last_seen > self._ttl:
+                    expired.append(eid)
+                else:
+                    break
+            for eid in expired:
+                self._episodes.pop(eid, None)
+        except Exception:
+            logger.debug("snagline: TTL sweep failed", exc_info=True)
+
     def record_ingest(self, episode_id: str | None, elapsed_seconds: float) -> None:
         """Record one accepted event and its ingest wall time."""
         try:
@@ -273,10 +358,14 @@ class SidecarMetricsCollector:
                 self._ingest_sum += max(0.0, float(elapsed_seconds))
                 if episode_id is not None:
                     key = str(episode_id)
+                    now = self._clock()
                     self._episodes.pop(key, None)
-                    self._episodes[key] = None
+                    self._episodes[key] = now
+                    self._expire_stale_locked()
                     while len(self._episodes) > self._max_episodes:
                         self._episodes.popitem(last=False)
+                else:
+                    self._expire_stale_locked()
         except Exception:
             logger.debug("snagline: metrics record failed", exc_info=True)
 
@@ -300,6 +389,7 @@ class SidecarMetricsCollector:
     def snapshot(self) -> dict[str, Any]:
         """Return a consistent copy of the counters for rendering."""
         with self._lock:
+            self._expire_stale_locked()
             return {
                 "events_total": self._events_total,
                 "risks": sorted(self._risks.items()),
@@ -415,6 +505,7 @@ def make_handler(
     max_risks: int = 1000,
     metrics_format: str | None = None,
     read_timeout: float | None = None,
+    episode_ttl_seconds: float | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     """Build a request-handler class bound to ``monitor``.
 
@@ -424,6 +515,9 @@ def make_handler(
     ``read_timeout`` sets the socket read timeout in seconds; when omitted
     ``SNAGLINE_SERVER_READ_TIMEOUT`` / ``Config.server_read_timeout`` decides,
     then the built-in 30 s default (see ``_resolve_read_timeout``).
+    ``episode_ttl_seconds`` sets the TTL for ``snagline_episodes_active`` ids;
+    when omitted ``SNAGLINE_EPISODE_TTL_SECONDS`` / ``Config.episode_ttl_seconds``
+    decides, then disabled (None) by default (see ``_resolve_episode_ttl``).
     """
     tracker = HookTracker()
 
@@ -802,7 +896,9 @@ def make_handler(
     _Handler.snagline_risks = deque(maxlen=max(1, max_risks))
     _Handler.snagline_auth = auth_token
     _Handler.snagline_max_body = max_body_bytes
-    _Handler.snagline_collector = SidecarMetricsCollector()
+    _Handler.snagline_collector = SidecarMetricsCollector(
+        episode_ttl_seconds=episode_ttl_seconds
+    )
     _attach_metrics_collector(monitor, _Handler.snagline_collector)
     _Handler.snagline_metrics_format = _resolve_metrics_format(metrics_format)
     _Handler.timeout = _resolve_read_timeout(read_timeout)
@@ -898,6 +994,7 @@ def make_server(
     max_risks: int = 1000,
     metrics_format: str | None = None,
     read_timeout: float | None = None,
+    episode_ttl_seconds: float | None = None,
     ssl_context: ssl.SSLContext | None = None,
     certfile: str | None = None,
     keyfile: str | None = None,
@@ -911,12 +1008,21 @@ def make_server(
     worker thread. Without them the server is plain HTTP, exactly as before.
     ``read_timeout`` bounds stalled body reads (issue #130); ``None`` resolves
     via ``SNAGLINE_SERVER_READ_TIMEOUT`` / ``Config.server_read_timeout``.
-    When ``client_ca`` is given the server requests a client certificate on
+    ``episode_ttl_seconds`` sets the TTL for ``snagline_episodes_active`` ids;
+    ``None`` resolves via ``SNAGLINE_EPISODE_TTL_SECONDS`` / ``Config.episode_ttl_seconds``
+    and defaults to disabled (see ``_resolve_episode_ttl``). When
+    ``client_ca`` is given the server requests a client certificate on
     every handshake and verifies it against that CA bundle (issue #145).
     """
     tls_context = _resolve_ssl_context(ssl_context, certfile, keyfile, client_ca)
     handler = make_handler(
-        monitor, auth_token, max_body_bytes, max_risks, metrics_format, read_timeout
+        monitor,
+        auth_token,
+        max_body_bytes,
+        max_risks,
+        metrics_format,
+        read_timeout,
+        episode_ttl_seconds,
     )
     if tls_context is None:
         return ThreadingHTTPServer((host, port), handler)
@@ -934,6 +1040,7 @@ def serve(
     max_risks: int = 1000,
     metrics_format: str | None = None,
     read_timeout: float | None = None,
+    episode_ttl_seconds: float | None = None,
     ssl_context: ssl.SSLContext | None = None,
     certfile: str | None = None,
     keyfile: str | None = None,
@@ -950,6 +1057,7 @@ def serve(
         max_risks=max_risks,
         metrics_format=metrics_format,
         read_timeout=read_timeout,
+        episode_ttl_seconds=episode_ttl_seconds,
         ssl_context=ssl_context,
         certfile=certfile,
         keyfile=keyfile,

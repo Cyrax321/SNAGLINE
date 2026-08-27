@@ -236,12 +236,13 @@ def test_main_serve_starts_server(monkeypatch):
     monkeypatch.setattr("snagline.server.http_server.serve", _fake_serve)
     assert main(["serve"]) == 0
     assert started.get("ok") == ("127.0.0.1", 8787)
-    # Defaults: no token, 1 MB body cap, 1000 retained risks, 30 s timeout.
+    # Defaults: no token, 1 MB body cap, 1000 retained risks, 30 s timeout, no TTL.
     assert started["kwargs"] == {
         "auth_token": None,
         "max_body_bytes": 1_000_000,
         "max_risks": 1000,
         "read_timeout": None,
+        "episode_ttl_seconds": None,
     }
 
 
