@@ -450,6 +450,15 @@ class Config:
     # Environment override SNAGLINE_MAX_LIVE_EPISODES.
     max_live_episodes: int = 10_000
 
+    # --- Sidecar episode TTL (issue #173) -----------------------------------
+    # When set, the sidecar's episodes-active gauge expires ids not seen for
+    # this many wall-clock seconds. None or 0 disables (default, byte-identical
+    # to pre-TTL behavior). Uses monotonic time so NTP jumps cannot
+    # mass-expire or freeze entries. Replay caveat: replaying old trajectories
+    # through a live sidecar will resurrect stale ids; docs note this.
+    # Environment override SNAGLINE_EPISODE_TTL_SECONDS.
+    episode_ttl_seconds: float | None = None
+
     def __post_init__(self) -> None:
         # Issue #119: invalid closed-set values are configuration errors and
         # must fail loudly here instead of being silently ignored downstream.

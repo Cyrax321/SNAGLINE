@@ -315,6 +315,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "[default: 30]. Documented next to --max-body-bytes.",
     )
     p_serve.add_argument(
+        "--episode-ttl-seconds",
+        type=float,
+        default=None,
+        help="Expire ids from snagline_episodes_active not seen for this many seconds "
+        "(issue #173); 0 disables. Falls back to $SNAGLINE_EPISODE_TTL_SECONDS or "
+        "Config.episode_ttl_seconds [default: disabled]. Wall-clock TTL value but "
+        "monotonic expiry; replay traffic will resurrect stale ids.",
+    )
+    p_serve.add_argument(
         "--max-risks",
         type=int,
         default=1000,
@@ -1042,6 +1051,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             max_body_bytes=args.max_body_bytes,
             max_risks=args.max_risks,
             read_timeout=args.read_timeout,
+            episode_ttl_seconds=args.episode_ttl_seconds,
             **tls_kwargs,
         )
     return 0
