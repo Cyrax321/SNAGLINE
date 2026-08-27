@@ -377,7 +377,7 @@ def test_default_loader_missing_extra_is_inert_with_pip_hint(monkeypatch, caplog
         for ev in _healthy(15, episode="q"):
             assert det.observe(ev) is None
     assert any(
-        "snagline-agent[drift]" in r.message
+        "snagline[drift]" in r.message
         for r in caplog.records
         if r.levelno >= logging.WARNING
     )

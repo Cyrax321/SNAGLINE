@@ -1,4 +1,4 @@
-"""Autogen adapter (optional extra: ``pip install snagline-agent[autogen]``).
+"""Autogen adapter (optional extra: ``pip install snagline[autogen]``).
 
 Turns Autogen agent events into ``StepEvent``s and feeds them to a ``Monitor``.
 Autogen is async-first; the most stable integration point is the event stream

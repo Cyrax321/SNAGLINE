@@ -1,7 +1,7 @@
 """Runnable demo: SNAGLINE watching a REAL LangChain run via the callback handler.
 
 Requires langchain-core (optional extra):
-    pip install snagline-agent[langchain]
+    pip install snagline[langchain]
     PYTHONPATH=src python3 examples/langchain_example.py
 
 Four identical prompts are sent to a (fake) chat model; the repeated message
@@ -23,7 +23,7 @@ def main() -> None:
     except ImportError:
         print(
             "This example needs langchain-core. Install it with:\n"
-            "    pip install snagline-agent[langchain]",
+            "    pip install snagline[langchain]",
             file=sys.stderr,
         )
         return

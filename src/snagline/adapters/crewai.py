@@ -1,4 +1,4 @@
-"""CrewAI adapter (optional extra: ``pip install snagline-agent[crewai]``).
+"""CrewAI adapter (optional extra: ``pip install snagline[crewai]``).
 
 Turns CrewAI agent steps into ``StepEvent``s and feeds them to a ``Monitor``.
 CrewAI agents accept a ``step_callback`` that receives each agent step as it is

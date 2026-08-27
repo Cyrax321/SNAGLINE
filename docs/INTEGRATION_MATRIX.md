@@ -80,7 +80,7 @@ test running the real `ActionLedger`.
 | `PagerDutySink` | PagerDuty Events API v2 | stdlib |
 | `DedupSink` | cooldown/dedup wrapper (issue #4) | stdlib |
 | `BatchingSink` | async, rate-limited dispatch | stdlib |
-| `ContinuumSink` (issue #79) | escalates via CONTINUUM `ActionLedger.flag_for_review` -> `REQUIRES_REVIEW`; needs a resolvable action key per risk | stdlib core; `snagline-agent[continuum]` extra for the lazy import |
+| `ContinuumSink` (issue #79) | escalates via CONTINUUM `ActionLedger.flag_for_review` -> `REQUIRES_REVIEW`; needs a resolvable action key per risk | stdlib core; `snagline[continuum]` extra for the lazy import |
 
 CLI: `snagline watch --sink {console,webhook,slack,pagerduty}` (plus
 `--cooldown-seconds`, `--min-severity`). Wrap any sink in `DedupSink` and/or

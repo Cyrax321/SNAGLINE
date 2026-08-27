@@ -66,10 +66,10 @@ over 200,000 synthetic steps. Detection accuracy measured on this checkout:
   with wall-clock budget (`wall_clock_budget`), `idle_warn_seconds`
   (`idle_gap`), window auto-scaling (`window_scale_steps`, `max_window`),
   `HeartbeatSink` and `snagline watch --follow --heartbeat` liveness file.
-- **ML extra: ESN ensemble** (`ml/esn_ensemble.py`, `snagline-agent[ml]`,
+- **ML extra: ESN ensemble** (`ml/esn_ensemble.py`, `snagline[ml]`,
   one-class ESN + CUSUM + Mahalanobis baseline) (PR #135).
 - **Drift extra: semantic goal-drift** (`drift/goal_drift.py`,
-  `snagline-agent[drift]`, sentence-transformers, PR #81 / 09ae888).
+  `snagline[drift]`, sentence-transformers, PR #81 / 09ae888).
 - **Auto-calibration** from `BaselineProfile` (`calibration="auto"`,
   `CalibrationPlan`, `resolve_baseline_profile`) (PR #138).
 - **Scheduled baseline retrain** `snagline baseline retrain` contract with
@@ -101,7 +101,7 @@ over 200,000 synthetic steps. Detection accuracy measured on this checkout:
 - Claude Code hook adapter via `HookTracker` / `payload_to_event`
   (`adapters/claude_code.py`) with latency derivation (PR #71, #64).
 - **CONTINUUM bridge** adapter + sink (`adapters/continuum_adapter.py`,
-  `sinks/continuum_sink.py`, extra `snagline-agent[continuum]`, duck-typed
+  `sinks/continuum_sink.py`, extra `snagline[continuum]`, duck-typed
   against verified `read_events` / `last_sequence` API) (PR #164, #79).
 
 #### Server (sidecar, stdlib `http.server`)

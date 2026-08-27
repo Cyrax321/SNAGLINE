@@ -1,6 +1,6 @@
 """Optional ``drift`` extra: semantic goal-drift detection (issue #81).
 
-Provides ``pip install snagline-agent[drift]`` (sentence-transformers). This
+Provides ``pip install snagline[drift]`` (sentence-transformers). This
 subpackage is never imported by core code paths unless
 ``Config.semantic_drift_enabled`` is set; ``import snagline`` works with
 nothing but the standard library (project.md section 1.1). Even this module

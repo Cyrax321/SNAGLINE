@@ -61,7 +61,7 @@ top of it, not around it:
 1. **Zero mandatory dependencies in core.** `import snagline` must work with
    nothing but the Python standard library. Every framework integration,
    every ML detector, every notification sink beyond console/webhook is an
-   optional extra (`pip install snagline-agent[langchain]`, etc.).
+   optional extra (`pip install snagline[langchain]`, etc.).
 2. **Fail-open, always.** If a detector or sink raises an exception, it is
    caught, logged, and ignored; it must never propagate into the host
    agent and never block or slow the agent's actual work. A monitoring
@@ -189,10 +189,10 @@ snagline/
  │       │   ├── latency_anomaly.py   # Welford + CUSUM, stdlib `statistics` only
  │       │   ├── goal_drift.py        # OPT-IN: live vs healthy BaselineProfile (built)
  │       │   └── ml_ensemble.py       # OPT-IN: MLOrchestrator noisy-OR (built; model= hook)
- │       ├── ml/                      # optional extra: snagline-agent[ml] (research path, NOT YET BUILT)
+ │       ├── ml/                      # optional extra: snagline[ml] (research path, NOT YET BUILT)
  │       │   ├── __init__.py
  │       │   └── esn_ensemble.py      # echo-state-network detector
- │       ├── drift/                   # optional extra: snagline-agent[drift] (research path, NOT YET BUILT)
+ │       ├── drift/                   # optional extra: snagline[drift] (research path, NOT YET BUILT)
  │       │   ├── __init__.py
  │       │   └── goal_drift.py        # semantic-drift (sentence-transformers) detector
 │       ├── sinks/
@@ -200,17 +200,17 @@ snagline/
 │       │   ├── base.py              # AlertSink protocol
 │       │   ├── console.py           # default, zero dep
 │       │   ├── webhook.py           # stdlib urllib, zero dep
-│       │   ├── continuum_sink.py    # optional extra: snagline-agent[continuum]
-│       │   └── slack.py             # optional extra: snagline-agent[slack]
+│       │   ├── continuum_sink.py    # optional extra: snagline[continuum]
+│       │   └── slack.py             # optional extra: snagline[slack]
 │       ├── adapters/
 │       │   ├── __init__.py
 │       │   ├── raw.py               # context manager + decorator, zero dep
-│       │   ├── langchain_adapter.py  # optional extra: snagline-agent[langchain]
-│       │   ├── langgraph_adapter.py  # optional extra: snagline-agent[langgraph]
+│       │   ├── langchain_adapter.py  # optional extra: snagline[langchain]
+│       │   ├── langgraph_adapter.py  # optional extra: snagline[langgraph]
  │       │   ├── autogen_adapter.py    # built as adapters/autogen.py (duck-typed)
  │       │   ├── crewai_adapter.py     # built as adapters/crewai.py (duck-typed)
-│       │   ├── openai_adapter.py     # optional extra: snagline-agent[openai]
-│       │   ├── anthropic_adapter.py  # optional extra: snagline-agent[anthropic]
+│       │   ├── openai_adapter.py     # optional extra: snagline[openai]
+│       │   ├── anthropic_adapter.py  # optional extra: snagline[anthropic]
 │       │   ├── claude_code_adapter.py # optional; verify current hooks API first: see §6.7
 │       │   └── continuum_adapter.py  # reads CONTINUUM Storage by sequence
 │       └── server/                   # optional sidecar mode for non-Python agents
@@ -664,7 +664,7 @@ hard-couple to a release.
 - CrewAI: `snagline_step_callback()` returns the `Agent(step_callback=...)`
   hook; `observe_crewai_step()` is the manual equivalent.
 
-Install with `pip install snagline-agent[autogen]` / `[crewai]`.
+Install with `pip install snagline[autogen]` / `[crewai]`.
 
 ### 6.5 `openai_adapter.py`, `anthropic_adapter.py`
 
@@ -810,7 +810,7 @@ snagline bench                                        # runs overhead_benchmark.
 
 ```toml
 [project]
-name = "snagline-agent"
+name = "snagline"
 requires-python = ">=3.10"
 dependencies = []   # core: zero required deps, non-negotiable
 
@@ -825,7 +825,7 @@ continuum  = []   # depends on CONTINUUM's actual package name/version; confirm 
 ml         = ["numpy>=1.24", "scikit-learn>=1.3"]
 drift      = ["sentence-transformers>=2.2"]
 slack      = ["httpx>=0.27"]
-all        = ["snagline-agent[langchain,langgraph,autogen,crewai,openai,anthropic,continuum,ml,drift,slack]"]
+all        = ["snagline[langchain,langgraph,autogen,crewai,openai,anthropic,continuum,ml,drift,slack]"]
 ```
 
 MIT license (matches the open-source, low-friction-adoption goal; avoid
@@ -972,7 +972,7 @@ when the optional langchain extra is absent).
   calling `ActionLedger.flag_for_review` so the action lands as
   `REQUIRES_REVIEW`; requires a resolvable action key (`key_from_risk`) and
   drops unmapped risks rather than inventing ledger facts. Fail-open.
-- **Extra**: `snagline-agent[continuum]` names the real `continuum-agent`
+- **Extra**: `snagline[continuum]` names the real `continuum-agent`
   distribution; core stays zero-dependency either way.
 - **Verification honesty**: unit tests use a fake storage implementing only
   the verified surface; one skip-guarded test drives the real

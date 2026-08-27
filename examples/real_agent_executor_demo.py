@@ -19,7 +19,7 @@ Modes (which detector each one is meant to trip):
     error     -> error_cascade (tool always raises)
     latency   -> latency_anomaly (a tool's latency shifts from fast to slow)
 
-Requires: pip install langchain  (and snagline-agent[langchain])
+Requires: pip install langchain  (and snagline[langchain])
 
 Run:
     PYTHONPATH=src python3 examples/real_agent_executor_demo.py --mode loop
@@ -132,7 +132,7 @@ def main() -> None:
     if not LANGCHAIN_AGENT_AVAILABLE:
         print(
             "This example needs langchain (>=1.x). Install it with:\n"
-            "    pip install langchain snagline-agent[langchain]",
+            "    pip install langchain snagline[langchain]",
             file=sys.stderr,
         )
         return

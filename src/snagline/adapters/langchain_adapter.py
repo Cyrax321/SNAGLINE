@@ -1,4 +1,4 @@
-"""LangChain adapter (optional extra: ``pip install snagline-agent[langchain]``).
+"""LangChain adapter (optional extra: ``pip install snagline[langchain]``).
 
 Turns a LangChain run into ``StepEvent``s and feeds them to a ``Monitor``. This
 is the highest-leverage framework integration (project.md §13 step 5) -- most

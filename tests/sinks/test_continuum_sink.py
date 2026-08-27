@@ -116,7 +116,7 @@ def test_missing_continuum_raises_helpful_importerror(
 ) -> None:
     monkeypatch.setitem(__import__("sys").modules, "continuum", None)
     monkeypatch.setitem(__import__("sys").modules, "continuum.actions", None)
-    with pytest.raises(ImportError, match=r"snagline-agent\[continuum\]"):
+    with pytest.raises(ImportError, match=r"snagline\[continuum\]"):
         ContinuumSink(object(), "run-1")
 
 

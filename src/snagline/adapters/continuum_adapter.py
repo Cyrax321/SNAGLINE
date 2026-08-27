@@ -1,4 +1,4 @@
-"""CONTINUUM ledger adapter (optional extra: ``pip install snagline-agent[continuum]``).
+"""CONTINUUM ledger adapter (optional extra: ``pip install snagline[continuum]``).
 
 "Free telemetry": reads a CONTINUUM run's hash-chained event log through its
 existing public ``Storage`` API and translates entries into SNAGLINE

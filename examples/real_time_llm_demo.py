@@ -12,7 +12,7 @@ Modes:
   latency  -> a single tool with variable latency (triggers latency_anomaly)
 
 Requirements:
-  * pip install langchain langchain-openai snagline-agent[langchain]
+  * pip install langchain langchain-openai snagline[langchain]
     (or langchain-anthropic)
   * For OpenAI/Anthropic: export OPENAI_API_KEY / ANTHROPIC_API_KEY
   * For OpenRouter (OpenAI-compatible, free models): 

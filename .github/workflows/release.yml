@@ -1,6 +1,6 @@
 name: Release
 
-# Publishes snagline-agent to PyPI when a version tag is pushed, or via
+# Publishes snagline to PyPI when a version tag is pushed, or via
 # manual dispatch. Never runs on pushes to master, so normal development
 # does not trigger a publish. See issue #104.
 
