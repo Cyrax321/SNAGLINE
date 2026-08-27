@@ -59,6 +59,38 @@ it. Everything detection needs fits in the hash + timings + booleans.
 (The one documented exception is the compaction tripwire below, which reads
 exactly two metadata keys.)
 
+## Side-effect marking for callback adapters (issue #150)
+
+The `SideEffectGuardDetector` only fires when `StepEvent.side_effect=True`,
+and only host-declared knowledge may set it (#88 rule: never invent or
+guess, never read `metadata["side_effect"]`). Callback adapters now
+expose a constructor allowlist so hosts can declare which tools are
+non-idempotent without touching payloads:
+
+```python
+from snagline.adapters.langchain_adapter import SnaglineCallbackHandler
+from snagline.adapters.autogen import SnaglineAutogenHandler
+from snagline.adapters.crewai import snagline_step_callback
+
+handler = SnaglineCallbackHandler(monitor, "ep", side_effect_tools={"charge_card", "send_email"})
+autogen_handler = SnaglineAutogenHandler(monitor, "ep", side_effect_tools={"charge_card"})
+crewai_cb = snagline_step_callback(monitor, "ep", side_effect_tools={"charge_card"})
+# Autogen also supports the same via run_and_monitor(..., side_effect_tools={...})
+```
+
+The adapter matches emitted `tool_call` steps by their mapped `tool_name`;
+allowlisted names become `side_effect=True`, everything else stays `False`
+with the default `_emit(side_effect=False)`. Nothing is inferred from
+payloads, args, or content.
+
+Pure payload adapters (`watch_graph` in `langgraph_adapter.py` and
+`payload_to_event` / `ingest_payload` in `claude_code.py`) derive everything
+from framework payloads and have no flag source in those payloads, so they
+keep the schema default `False`. If you need side-effect guarding for those
+runtimes, route the marked action through the raw adapter or an
+`observe_*` helper that takes an explicit `side_effect=True`. This
+limitation is intentional and documented.
+
 ## Optional: compaction tripwire events (issue #90)
 
 If your harness exposes compaction hooks (LangGraph pre-compaction callbacks,

@@ -49,6 +49,7 @@ class SnaglineCallbackHandler(BaseCallbackHandler):
         episode_id: str,
         agent_name: str | None = None,
         clock: Callable[[], float] | None = None,
+        side_effect_tools: set[str] | list[str] | tuple[str, ...] | None = None,
     ) -> None:
         """Wire the handler to ``monitor`` for one ``episode_id``.
 
@@ -60,6 +61,13 @@ class SnaglineCallbackHandler(BaseCallbackHandler):
         has no meaningful epoch: event timestamps produced with it are only
         comparable within one process. Detectors consume them solely as
         in-process latency differences, which is exactly what it guarantees.
+
+        ``side_effect_tools`` is the host-declared allowlist for
+        ``SideEffectGuardDetector`` (issue #150): tool names that the host
+        knows are non-idempotent. When an emitted ``tool_call`` step has a
+        ``tool_name`` in this set, the adapter marks ``side_effect=True``;
+        nothing is ever inferred from payloads and ``_emit(side_effect=False)``
+        remains the default for all other cases.
         """
         super().__init__()
         self._monitor = monitor
@@ -68,6 +76,7 @@ class SnaglineCallbackHandler(BaseCallbackHandler):
         self._clock = clock or time.perf_counter
         self._counter = itertools.count()
         self._runs: dict[str, dict] = {}
+        self._side_effect_tools: set[str] = set(side_effect_tools or [])
 
     def _emit(
         self,
@@ -82,6 +91,16 @@ class SnaglineCallbackHandler(BaseCallbackHandler):
         tokens_out: int | None = None,
         side_effect: bool = False,
     ) -> StepEvent:
+        # Host-declared allowlist (issue #150): only a tool_call whose name
+        # the host put in side_effect_tools becomes side_effect=True. Never
+        # read metadata and never guess from args or payload content.
+        if (
+            not side_effect
+            and action_type == "tool_call"
+            and tool_name is not None
+            and tool_name in self._side_effect_tools
+        ):
+            side_effect = True
         sig = make_signature(action_type, tool_name, str(args))
         event = StepEvent(
             step_id=str(next(self._counter)),

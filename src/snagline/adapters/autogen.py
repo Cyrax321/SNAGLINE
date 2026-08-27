@@ -69,7 +69,16 @@ class SnaglineAutogenHandler:
         episode_id: str,
         agent_name: str | None = None,
         clock: Callable[[], float] | None = None,
+        side_effect_tools: set[str] | list[str] | tuple[str, ...] | None = None,
     ) -> None:
+        """Create the handler.
+
+        ``side_effect_tools`` is the host-declared allowlist for
+        ``SideEffectGuardDetector`` (issue #150): tool names the host knows are
+        non-idempotent. Matching ``tool_call`` steps get ``side_effect=True``;
+        nothing is inferred from payloads and ``_emit(side_effect=False)``
+        stays the default otherwise.
+        """
         self._monitor = monitor
         self._episode_id = episode_id
         self._agent_name = agent_name
@@ -78,6 +87,7 @@ class SnaglineAutogenHandler:
         # no meaningful epoch; detectors only consume in-process differences.
         self._clock = clock or time.perf_counter
         self._counter = itertools.count()
+        self._side_effect_tools: set[str] = set(side_effect_tools or [])
 
     def observe(self, event: Any) -> list[StepEvent]:
         d = _to_dict(event)
@@ -127,6 +137,13 @@ class SnaglineAutogenHandler:
         latency_ms: float | None = None,
         side_effect: bool = False,
     ) -> StepEvent:
+        if (
+            not side_effect
+            and action_type == "tool_call"
+            and tool_name is not None
+            and tool_name in self._side_effect_tools
+        ):
+            side_effect = True
         sig = make_signature(action_type, tool_name, args)
         event = StepEvent(
             step_id=str(next(self._counter)),
@@ -156,6 +173,7 @@ async def run_and_monitor(
     episode_id: str,
     agent_name: str | None = None,
     clock: Callable[[], float] | None = None,
+    side_effect_tools: set[str] | list[str] | tuple[str, ...] | None = None,
 ) -> Any:
     """Run an Autogen agent while streaming its events through a handler.
 
@@ -165,7 +183,11 @@ async def run_and_monitor(
     ``run``) method; if it exposes neither, raise a clear error at call time.
     """
     handler = SnaglineAutogenHandler(
-        monitor, episode_id, agent_name=agent_name, clock=clock
+        monitor,
+        episode_id,
+        agent_name=agent_name,
+        clock=clock,
+        side_effect_tools=side_effect_tools,
     )
     if not hasattr(agent, "run_stream"):
         if not hasattr(agent, "run"):  # pragma: no cover - caller bug
