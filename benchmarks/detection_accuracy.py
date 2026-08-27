@@ -71,7 +71,25 @@ SHIPPED_TRIGGERS: tuple[str, ...] = (
     # harness config variant (see the ``config`` envelope field below).
     "goal_drift",
     "ml_ensemble",
+    # Shipped detectors that were missing from the allowlist before #181.
+    # cycle/stall are LoopDetector hardening modes, stagnation/side_effect/
+    # governance are opt-in detectors, idle_gap/wall_clock_budget are
+    # Monitor horizon time-axis signals. All are stdlib-only and have been
+    # driven end-to-end on clean master.
+    "stagnation",
+    "side_effect_duplicate",
+    "governance_decay",
+    "cycle",
+    "stall",
+    "idle_gap",
+    "wall_clock_budget",
 )
+# Triggers that exist in code but are intentionally not gated here.
+# - near_duplicate_loop: LoopDetector hardening mode behind its own flag; not
+#   yet given labeled fixtures, so it would be counted as uncovered if listed.
+# - semantic_drift: not a distinct trigger string; the drift extra emits the
+#   same "goal_drift" label, so gating it separately would double-count.
+INTENTIONALLY_UNGATED: tuple[str, ...] = ("near_duplicate_loop",)
 
 # Harness config variants (issue #118). Every variant includes the standard
 # flags above; the named opt-in detector is switched on top of them.
@@ -118,19 +136,28 @@ def harness_config(
         episode_token_budget=HARNESS_TOKEN_BUDGET,
         meltdown_enabled=True,
         silent_abort_enabled=True,
+        stagnation_enabled=True,
+        side_effect_guard_enabled=True,
+        compaction_tripwire_enabled=True,
+        loop_cycle_enabled=True,
+        loop_stall_enabled=True,
+        idle_warn_seconds=10.0,
+        max_episode_wall_seconds=120.0,
     )
     if variant == "goal_drift":
         from snagline.baseline import load_baseline
 
-        base_dir = fixtures_dir if fixtures_dir is not None else _REPO_FIXTURES_DIR
-        path = base_dir / GOAL_DRIFT_BASELINE_FILENAME
-        if not path.is_file():
+        base_dir: Path = (
+            fixtures_dir if fixtures_dir is not None else _REPO_FIXTURES_DIR
+        )  # type: ignore[assignment]
+        baseline_path: Path = base_dir / GOAL_DRIFT_BASELINE_FILENAME
+        if not baseline_path.is_file():
             raise ValueError(
                 f"goal_drift variant needs a committed baseline fixture at "
-                f"{path}; generate one with benchmarks/fixtures/generate_fixtures.py"
+                f"{baseline_path}; generate one with benchmarks/fixtures/generate_fixtures.py"
             )
         cfg.goal_drift_enabled = True
-        cfg.goal_drift_baseline = load_baseline(str(path))
+        cfg.goal_drift_baseline = load_baseline(str(baseline_path))
     elif variant == "ml_ensemble":
         cfg.ml_ensemble_enabled = True
     # Opt-in auto-calibration sweep (issue #101): SNAGLINE_CALIBRATION=auto
@@ -140,9 +167,9 @@ def harness_config(
     # Unset, the harness behaves exactly as before (hand-tuned thresholds).
     if os.environ.get("SNAGLINE_CALIBRATION", "").strip().lower() == "auto":
         cfg.calibration = "auto"
-        path = os.environ.get("SNAGLINE_CALIBRATION_BASELINE_PATH", "").strip()
-        if path:
-            cfg.calibration_baseline_path = path
+        calib_path = os.environ.get("SNAGLINE_CALIBRATION_BASELINE_PATH", "").strip()
+        if calib_path:
+            cfg.calibration_baseline_path = calib_path
     return cfg
 
 
@@ -187,6 +214,8 @@ _EVENT_FIELDS = (
     "error_type",
     "tokens_in",
     "tokens_out",
+    "side_effect",
+    "metadata",
 )
 
 
@@ -216,6 +245,9 @@ def _parse_event(raw: dict, envelope_id: str) -> StepEvent:
             f"event episode_id {raw_ep!r} does not match envelope {envelope_id!r}"
         )
     latency = raw.get("latency_ms")
+    metadata = raw.get("metadata")
+    if metadata is not None and not isinstance(metadata, dict):
+        raise ValueError("metadata must be a dict when present")
     return StepEvent(
         step_id=str(raw["step_id"]),
         episode_id=envelope_id,
@@ -228,6 +260,8 @@ def _parse_event(raw: dict, envelope_id: str) -> StepEvent:
         error_type=raw.get("error_type"),
         tokens_in=raw.get("tokens_in"),
         tokens_out=raw.get("tokens_out"),
+        side_effect=bool(raw.get("side_effect", False)),
+        metadata=dict(metadata) if isinstance(metadata, dict) else {},
     )
 
 

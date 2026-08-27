@@ -111,12 +111,15 @@ def _tc(
     tokens_in: int | None = None,
     tokens_out: int | None = None,
     action_type: str = "tool_call",
+    side_effect: bool = False,
+    metadata: dict | None = None,
+    timestamp: float | None = None,
 ) -> dict:
     """Build one StepEvent-compatible dict (structure only, no content)."""
-    return {
+    d: dict = {
         "step_id": f"{ep}-s{i}",
         "episode_id": ep,
-        "timestamp": BASE_TS + i * STEP_GAP_S,
+        "timestamp": BASE_TS + i * STEP_GAP_S if timestamp is None else timestamp,
         "action_type": action_type,
         "action_signature": make_signature(
             action_type, tool if action_type == "tool_call" else None, args
@@ -128,6 +131,11 @@ def _tc(
         "tokens_in": tokens_in,
         "tokens_out": tokens_out,
     }
+    if side_effect:
+        d["side_effect"] = True
+    if metadata is not None:
+        d["metadata"] = metadata
+    return d
 
 
 class _Builder:
@@ -290,6 +298,167 @@ def build_silent_abort(ep: str, rng: random.Random) -> list[dict]:
         b.add(_cycle_tool(i), f"k={rng.randrange(10**6)}")
     b.add("write_report", "draft=v1")  # ends mid-work, never emits output
     return b.events  # deliberately NOT closed with a message step
+
+
+# --------------------------------------------------------------------------
+# New shipped triggers for #181 (stagnation, side_effect, governance, cycle,
+# stall, idle_gap, wall_clock_budget)
+# --------------------------------------------------------------------------
+
+
+def build_stagnation(ep: str, rng: random.Random) -> list[dict]:
+    """Novelty collapse: 6 signatures reused randomly for 100 steps, 0.5s gaps.
+
+    Window 50, min_novelty 0.05, patience 2: need two consecutive windows with
+    <2.5 novel. Six distinct signatures keep loop quiet (each appears ~2 per
+    12 window) and meltdown entropy at log2(6)=2.58 inside (0.4, 2.8). Random
+    order breaks strict periodicity so cycle does not fire. Gaps 0.5s keep
+    total wall 50s <120s so wall_clock_budget stays silent while windows
+    complete.
+    """
+    b = _Builder(ep, rng)
+    sigs = [(f"st_tool_{i}", f"fixed_{i}") for i in range(6)]
+    for i in range(100):
+        # Random pick among 6 keeps novelty low but not periodic
+        tool, args = sigs[rng.randrange(6)]
+        ts = BASE_TS + i * 0.5
+        b.events.append(_tc(b.ep, b._n, tool, args, timestamp=ts))
+        b._n += 1
+    # Final message step after the run, keep wall monotonic
+    b.events.append(
+        _tc(
+            b.ep,
+            b._n,
+            "__output__",
+            f"final-answer-{ep}",
+            action_type="message",
+            timestamp=BASE_TS + 100 * 0.5 + 0.5,
+        )
+    )
+    b._n += 1
+    return b.events
+
+
+def build_side_effect_duplicate(ep: str, rng: random.Random) -> list[dict]:
+    """Second identical side_effect=True fires side_effect_duplicate.
+
+    Two identical (tool_name, signature) with side_effect=True. First is
+    tolerated, second exceeds allowed_repeats=1. Keep total tool calls low
+    and args distinct elsewhere so loop/meltdown stay quiet.
+    """
+    b = _Builder(ep, rng)
+    for i in range(3):
+        b.add(_cycle_tool(i), f"init={rng.randrange(10**6)}")
+    # First charge
+    b.add("charge_card", "amt=10", side_effect=True)
+    b.add(_cycle_tool(3), f"mid={rng.randrange(10**6)}")
+    # Duplicate charge, same signature
+    b.add("charge_card", "amt=10", side_effect=True)
+    b.add(_cycle_tool(4), f"tail={rng.randrange(10**6)}")
+    return b.finish_with_output()
+
+
+def build_governance_decay(ep: str, rng: random.Random) -> list[dict]:
+    """Compaction with pinned hashes, 3 grace steps without confirmation.
+
+    Grace 3: compaction at ordinal n, deadline n+3. After 3 steps with pins
+    still unconfirmed, fires governance_decay once. Use fixed pin hashes so
+    regeneration is deterministic.
+    """
+    import hashlib
+
+    b = _Builder(ep, rng)
+    for i in range(2):
+        b.add(_cycle_tool(i), f"pre={rng.randrange(10**6)}")
+    pin_a = hashlib.sha256(b"constraint-a").hexdigest()
+    pin_b = hashlib.sha256(b"constraint-b").hexdigest()
+    # Compaction pins two constraints
+    b.add(
+        "__compaction__",
+        "compaction",
+        action_type="compaction",
+        metadata={"pinned": [pin_a, pin_b]},
+    )
+    # Three grace steps, none confirm the pins
+    for i in range(3):
+        b.add(_cycle_tool(i), f"grace={rng.randrange(10**6)}")
+    return b.finish_with_output()
+
+
+def build_cycle(ep: str, rng: random.Random) -> list[dict]:
+    """Period-6 cycle across 24 steps fires LoopDetector cycle but not loop.
+
+    Window 12, min_period 2, max_period 6: period 6 is inside band, and 12
+    holds 2 periods. Six distinct signatures cycling keeps each count at 2 per
+    12 window (threshold 3), so plain loop stays silent while cycle fires.
+    Entropy log2(6)=2.58 inside (0.4, 2.8) so meltdown silent. Total wall
+    36s <120s, gap 1.5s, no idle.
+    """
+    b = _Builder(ep, rng)
+    cyc = [(f"c_tool_{i}", f"c-arg-{i}") for i in range(6)]
+    for i in range(24):
+        tool, args = cyc[i % 6]
+        b.add(tool, args)
+    return b.finish_with_output()
+
+
+def build_stall(ep: str, rng: random.Random) -> list[dict]:
+    """25 consecutive identical signatures fires LoopDetector stall.
+
+    Stall threshold 25. Use single tool/args repeated. Keep preceding steps
+    varied and short to avoid early loop: 2 distinct warmup steps, then 25
+    repeats, then output. Meltdown will see single tool for 25 steps and
+    fire meltdown_low as well, but stall labeled episode will count stall TP
+    and meltdown FP; the gate still sees stall covered. To keep healthy
+    controls silent we avoid long stalls there.
+    """
+    b = _Builder(ep, rng)
+    for i in range(2):
+        b.add(_cycle_tool(i), f"warm={rng.randrange(10**6)}")
+    for _ in range(25):
+        b.add("stalled_tool", "repeat-id-99")
+    return b.finish_with_output()
+
+
+def build_idle_gap(ep: str, rng: random.Random) -> list[dict]:
+    """One gap >=10s between consecutive ingests fires idle_gap.
+
+    Five steps at 1.5s gaps, then a 15s jump, then 3 more at 1.5s. Idle
+    fires once per episode at the gap. Wall budget 120s not reached (total
+    ~22.5s before the final message). Keep tool entropy inside band and
+    signatures unique so loop/meltdown/stagnation stay silent.
+    """
+    b = _Builder(ep, rng)
+    for i in range(5):
+        b.add(_cycle_tool(i), f"q={rng.randrange(10**6)}")
+    # Create a gap by bumping the next event's timestamp by 15s.
+    # _Builder uses i*1.5, so we manually adjust the timestamp of the next
+    # event after building it.
+    b.add(_cycle_tool(5), f"gap={rng.randrange(10**6)}")
+    # Adjust last event's timestamp to be 15s after previous
+    prev_ts = b.events[-2]["timestamp"]
+    b.events[-1]["timestamp"] = prev_ts + 15.0
+    # Shift subsequent events to keep monotonic gaps
+    gap_base = b.events[-1]["timestamp"]
+    for i in range(3):
+        b.add(_cycle_tool(6 + i), f"q={rng.randrange(10**6)}")
+        b.events[-1]["timestamp"] = gap_base + (i + 1) * STEP_GAP_S
+    # Final output message must stay after the gap, at +1.5s
+    b.add("__output__", f"final-answer-{ep}", action_type="message")
+    b.events[-1]["timestamp"] = gap_base + 4 * STEP_GAP_S
+    return b.events
+
+
+def build_wall_clock_budget(ep: str, rng: random.Random) -> list[dict]:
+    """Total wall >=120s fires wall_clock_budget (warning at 96s, breach at 120s).
+
+    85 steps at 1.5s gaps = 126s wall, triggers breach once. No idle gaps.
+    Keep 5-tool cycle for meltdown silence, no side_effect, no compaction.
+    """
+    b = _Builder(ep, rng)
+    for i in range(85):
+        b.add(_cycle_tool(i), f"w={rng.randrange(10**6)}")
+    return b.finish_with_output()
 
 
 # --------------------------------------------------------------------------
@@ -468,6 +637,15 @@ LABELED_BUILDERS = {
     # harness config variants (see LABELED_TRIGGER_VARIANTS in main()).
     "goal_drift": build_goal_drift,
     "ml_ensemble": build_ml_ensemble,
+    # Issue #181 additions: the 7 shipped triggers that were missing from
+    # SHIPPED_TRIGGERS and from harness_config.
+    "stagnation": build_stagnation,
+    "side_effect_duplicate": build_side_effect_duplicate,
+    "governance_decay": build_governance_decay,
+    "cycle": build_cycle,
+    "stall": build_stall,
+    "idle_gap": build_idle_gap,
+    "wall_clock_budget": build_wall_clock_budget,
 }
 
 # Which harness config variant each labeled trigger replays under; anything
@@ -686,6 +864,17 @@ def healthy_pair_plus_tokens(ep: str, rng: random.Random) -> list[dict]:
     return b.finish_with_output()
 
 
+def _healthy_long(ep: str, rng: random.Random, n: int) -> list[dict]:
+    """Long healthy run with high novelty and 5-tool entropy, 50-100 range.
+
+    Uses random args so every signature is novel (novelty 1.0, stagnation
+    silent) and 5-tool cycle keeps meltdown at 2.32 bits (silent). No idle
+    gaps (1.5s), total wall under 120s for n<=75, no side_effect or
+    compaction, so all new #181 detectors stay silent while windows complete.
+    """
+    return healthy_plain(ep, rng, n)
+
+
 HEALTHY_BUILDERS = [
     # plain varied runs at several lengths
     lambda ep, rng: healthy_plain(ep, rng, 10),
@@ -723,6 +912,12 @@ HEALTHY_BUILDERS = [
     lambda ep, rng: healthy_plain(ep, rng, 17),
     lambda ep, rng: healthy_plain(ep, rng, 8),
     healthy_eight_tool_long,
+    # Long controls (50-100) so window-based detectors complete at least one
+    # window while staying healthy (issue #181). Total wall 82.5-93s <96s warn.
+    lambda ep, rng: _healthy_long(ep, rng, 55),
+    lambda ep, rng: _healthy_long(ep, rng, 58),
+    lambda ep, rng: _healthy_long(ep, rng, 60),
+    lambda ep, rng: _healthy_long(ep, rng, 62),
 ]
 
 

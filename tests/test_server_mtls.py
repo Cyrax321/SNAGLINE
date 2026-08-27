@@ -209,11 +209,11 @@ def test_plain_and_server_tls_modes_unchanged_without_client_ca(tmp_path):
     )
     ctx = _resolve_ssl_context(None, server_cert, server_key)
     assert ctx is not None
-    assert ctx.verify_mode == ssl.CERT_NONE
+    assert ctx.verify_mode == ssl.CERT_NONE  # type: ignore[union-attr]
     # Explicit None client_ca must behave identically
     ctx2 = _resolve_ssl_context(None, server_cert, server_key, None)
     assert ctx2 is not None
-    assert ctx2.verify_mode == ssl.CERT_NONE
+    assert ctx2.verify_mode == ssl.CERT_NONE  # type: ignore[union-attr]
 
 
 # ---------------------------------------------------------------------------
@@ -460,7 +460,7 @@ def test_plain_and_server_tls_modes_regression(tmp_path):
         assert json.loads(body) == {"status": "ok"}
         # Verify server context is not in mTLS mode
         assert hasattr(tls_plain, "snagline_ssl_context")
-        assert tls_plain.snagline_ssl_context.verify_mode == ssl.CERT_NONE  # type: ignore[attr-defined]
+        assert tls_plain.snagline_ssl_context.verify_mode == ssl.CERT_NONE  # type: ignore[attr-defined,union-attr]
     finally:
         tls_plain.shutdown()
         tls_plain.server_close()
