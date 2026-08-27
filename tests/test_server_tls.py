@@ -17,6 +17,7 @@ import threading
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -74,8 +75,8 @@ def _insecure_client_context() -> ssl.SSLContext:
 
 
 def _start_tls_server(
-    tmp_path: Path, auth_token: str | None = None, **kwargs
-) -> tuple[object, str]:
+    tmp_path: Path, auth_token: str | None = None, **kwargs: Any
+) -> tuple[Any, str]:
     certfile, keyfile = _generate_self_signed_cert(tmp_path)
     server = make_server(
         Monitor.default(),
@@ -90,7 +91,7 @@ def _start_tls_server(
     return server, f"https://127.0.0.1:{server.server_address[1]}"
 
 
-def _request_tls(method: str, base: str, path: str, **kw):
+def _request_tls(method: str, base: str, path: str, **kw: Any) -> tuple[int, Any]:
     req = urllib.request.Request(base + path, method=method, **kw)
     try:
         with urllib.request.urlopen(
@@ -102,7 +103,7 @@ def _request_tls(method: str, base: str, path: str, **kw):
 
 
 @requires_openssl
-def test_tls_handshake_serves_health_over_https(tmp_path):
+def test_tls_handshake_serves_health_over_https(tmp_path) -> None:
     server, base = _start_tls_server(tmp_path)
     try:
         # Listener stays raw; wrapping happens per connection in the worker
@@ -118,7 +119,7 @@ def test_tls_handshake_serves_health_over_https(tmp_path):
 
 
 @requires_openssl
-def test_stalled_handshake_does_not_block_other_connections(tmp_path):
+def test_stalled_handshake_does_not_block_other_connections(tmp_path) -> None:
     # One client opens a TCP connection and never advances the TLS handshake;
     # a second client must still be served because the handshake runs on the
     # stalled connection's own worker thread, not on the accept loop.
@@ -136,7 +137,7 @@ def test_stalled_handshake_does_not_block_other_connections(tmp_path):
 
 
 @requires_openssl
-def test_plaintext_probe_is_not_served_and_server_survives(tmp_path):
+def test_plaintext_probe_is_not_served_and_server_survives(tmp_path) -> None:
     # Both sides: plaintext bytes to the TLS listener must never get an HTTP
     # answer, and the sidecar must keep serving proper TLS clients after.
     server, base = _start_tls_server(tmp_path)
@@ -162,7 +163,7 @@ def test_plaintext_probe_is_not_served_and_server_survives(tmp_path):
 
 
 @requires_openssl
-def test_make_server_accepts_ready_ssl_context(tmp_path):
+def test_make_server_accepts_ready_ssl_context(tmp_path) -> None:
     certfile, keyfile = _generate_self_signed_cert(tmp_path)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(certfile, keyfile)
@@ -188,7 +189,7 @@ def test_make_server_accepts_ready_ssl_context(tmp_path):
 
 
 @requires_openssl
-def test_auth_is_enforced_over_the_tls_listener(tmp_path):
+def test_auth_is_enforced_over_the_tls_listener(tmp_path) -> None:
     # Both sides: without a token every protected endpoint returns 401, with
     # the correct bearer token ingestion works, and GET /health stays open.
     server, base = _start_tls_server(tmp_path, auth_token="s3cret")
@@ -227,7 +228,7 @@ def test_auth_is_enforced_over_the_tls_listener(tmp_path):
         server.server_close()
 
 
-def test_plain_mode_is_untouched_when_no_tls_arguments_are_given():
+def test_plain_mode_is_untouched_when_no_tls_arguments_are_given() -> None:
     server = make_server(Monitor.default(), host="127.0.0.1", port=0)
     # Start serving before asserting anything so a failed assertion still
     # tears the server down cleanly instead of deadlocking on shutdown().
@@ -243,13 +244,13 @@ def test_plain_mode_is_untouched_when_no_tls_arguments_are_given():
         server.server_close()
 
 
-def test_keyfile_without_certfile_is_rejected_before_binding():
+def test_keyfile_without_certfile_is_rejected_before_binding() -> None:
     with pytest.raises(ValueError, match="keyfile requires certfile"):
         make_server(Monitor.default(), host="127.0.0.1", port=0, keyfile="/x/k.pem")
 
 
 @requires_openssl
-def test_ssl_context_and_certfile_together_are_rejected(tmp_path):
+def test_ssl_context_and_certfile_together_are_rejected(tmp_path) -> None:
     certfile, keyfile = _generate_self_signed_cert(tmp_path)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(certfile, keyfile)
@@ -264,19 +265,19 @@ def test_ssl_context_and_certfile_together_are_rejected(tmp_path):
 
 
 @requires_openssl
-def test_unloadable_certfile_raises_at_startup(tmp_path):
+def test_unloadable_certfile_raises_at_startup(tmp_path) -> None:
     bad = tmp_path / "not-a-cert.pem"
     bad.write_text("this is not a certificate\n")
     with pytest.raises((ssl.SSLError, OSError)):
         make_server(Monitor.default(), host="127.0.0.1", port=0, certfile=str(bad))
 
 
-def test_cli_serve_forwards_tls_flags(monkeypatch):
+def test_cli_serve_forwards_tls_flags(monkeypatch: pytest.MonkeyPatch) -> None:
     from snagline.cli import main
 
-    captured: dict = {}
+    captured: dict[str, Any] = {}
 
-    def _fake_serve(monitor, **kwargs):
+    def _fake_serve(monitor: Any, **kwargs: Any) -> None:
         captured.update(kwargs)
 
     monkeypatch.setattr("snagline.server.http_server.serve", _fake_serve)
@@ -290,14 +291,16 @@ def test_cli_serve_forwards_tls_flags(monkeypatch):
     assert captured["keyfile"] == "/t/k.pem"
 
 
-def test_cli_serve_without_tls_flags_passes_none(monkeypatch):
+def test_cli_serve_without_tls_flags_passes_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Plain-mode regression on the CLI path: with absent flags serve() is
     # called without any TLS kwargs at all, byte-for-byte the old invocation.
     from snagline.cli import main
 
-    captured: dict = {}
+    captured: dict[str, Any] = {}
 
-    def _fake_serve(monitor, **kwargs):
+    def _fake_serve(monitor: Any, **kwargs: Any) -> None:
         captured.update(kwargs)
 
     monkeypatch.setattr("snagline.server.http_server.serve", _fake_serve)
@@ -306,12 +309,14 @@ def test_cli_serve_without_tls_flags_passes_none(monkeypatch):
     assert "keyfile" not in captured
 
 
-def test_cli_serve_rejects_bare_keyfile_before_starting(monkeypatch):
+def test_cli_serve_rejects_bare_keyfile_before_starting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # A bare --keyfile must fail fast with a clean refusal (exit 2), never
     # print the https banner and then die inside serve().
     from snagline.cli import main
 
-    def _fake_serve(monitor, **kwargs):
+    def _fake_serve(monitor: Any, **kwargs: Any) -> None:
         raise AssertionError("serve() must not be called for a bad TLS config")
 
     monkeypatch.setattr("snagline.server.http_server.serve", _fake_serve)

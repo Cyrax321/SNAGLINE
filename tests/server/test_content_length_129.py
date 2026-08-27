@@ -50,7 +50,7 @@ def _raw_request(port: int, raw: bytes) -> bytes:
         sock.close()
 
 
-def test_malformed_content_length_gets_400_not_dropped_connection():
+def test_malformed_content_length_gets_400_not_dropped_connection() -> None:
     """Client must receive a 400 status line, not an empty reply."""
     server, port = _start()
     try:
@@ -77,7 +77,7 @@ def test_malformed_content_length_gets_400_not_dropped_connection():
         server.server_close()
 
 
-def test_malformed_length_on_any_post_path_is_400():
+def test_malformed_length_on_any_post_path_is_400() -> None:
     """The helper is shared, so every POST path sees the same 400."""
     server, port = _start()
     try:
@@ -102,7 +102,7 @@ def test_malformed_length_on_any_post_path_is_400():
         server.server_close()
 
 
-def test_absent_content_length_is_treated_as_zero():
+def test_absent_content_length_is_treated_as_zero() -> None:
     """Absent header means length 0; body is silently empty (docstring)."""
     server, port = _start()
     try:
@@ -122,14 +122,14 @@ def test_absent_content_length_is_treated_as_zero():
 
         fake = types.SimpleNamespace(headers=_FakeHeaders())
         # bind helper as method
-        length = handler_cls._parse_content_length(fake)  # type: ignore[arg-type]
+        length = handler_cls._parse_content_length(fake)  # type: ignore[attr-defined]
         assert length == 0
     finally:
         server.shutdown()
         server.server_close()
 
 
-def test_malformed_length_does_not_block_subsequent_requests():
+def test_malformed_length_does_not_block_subsequent_requests() -> None:
     """A bad request must not pin the handler thread."""
     server, port = _start()
     try:
@@ -161,9 +161,9 @@ def test_malformed_length_does_not_block_subsequent_requests():
         server.server_close()
 
 
-def test_parse_helper_docstring_mentions_absent_is_zero():
+def test_parse_helper_docstring_mentions_absent_is_zero() -> None:
     """Guard the docstring contract required by the issue."""
     handler_cls = make_handler(Monitor([], []))
-    doc = handler_cls._parse_content_length.__doc__ or ""  # type: ignore[attr-defined]
+    doc = handler_cls._parse_content_length.__doc__ or ""  # type: ignore[attr-defined]  # private helper verified by spec
     assert "absent" in doc.lower()
     assert "0" in doc

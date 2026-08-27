@@ -6,6 +6,7 @@ import json
 import threading
 import urllib.error
 import urllib.request
+from typing import Any
 
 from snagline.monitor import Monitor
 from snagline.risk import FailureRisk
@@ -25,8 +26,8 @@ def _start_server(
     auth_token: str | None = None,
     max_body_bytes: int | None = None,
     max_risks: int | None = None,
-):
-    kwargs = {}
+) -> tuple[Any, str]:
+    kwargs: dict[str, Any] = {}
     if max_body_bytes is not None:
         kwargs["max_body_bytes"] = max_body_bytes
     if max_risks is not None:
@@ -43,7 +44,7 @@ def _start_server(
     return server, f"http://127.0.0.1:{server.server_address[1]}"
 
 
-def _get(base: str, path: str, headers: dict | None = None) -> int:
+def _get(base: str, path: str, headers: dict[str, str] | None = None) -> int:
     """GET ``path`` and return the status code, HTTPError codes included."""
     req = urllib.request.Request(base + path, headers=headers or {}, method="GET")
     try:
@@ -53,7 +54,7 @@ def _get(base: str, path: str, headers: dict | None = None) -> int:
         return int(exc.code)
 
 
-def test_health_endpoint():
+def test_health_endpoint() -> None:
     server, base = _start_server(_RecordingSink())
     try:
         with urllib.request.urlopen(base + "/health", timeout=5) as resp:
@@ -64,7 +65,7 @@ def test_health_endpoint():
         server.server_close()
 
 
-def test_events_endpoint_ingests_and_fires_loop_detector():
+def test_events_endpoint_ingests_and_fires_loop_detector() -> None:
     sink = _RecordingSink()
     server, base = _start_server(sink)
     try:
@@ -92,7 +93,7 @@ def test_events_endpoint_ingests_and_fires_loop_detector():
         server.server_close()
 
 
-def test_events_endpoint_rejects_malformed_body():
+def test_events_endpoint_rejects_malformed_body() -> None:
     server, base = _start_server(_RecordingSink())
     try:
         req = urllib.request.Request(base + "/events", data=b"not json", method="POST")
@@ -106,7 +107,7 @@ def test_events_endpoint_rejects_malformed_body():
         server.server_close()
 
 
-def test_post_requires_token_when_configured():
+def test_post_requires_token_when_configured() -> None:
     sink = _RecordingSink()
     server, base = _start_server(sink, auth_token="secret")
     try:
@@ -165,7 +166,7 @@ def test_post_requires_token_when_configured():
         server.server_close()
 
 
-def test_events_endpoint_accepts_batch():
+def test_events_endpoint_accepts_batch() -> None:
     sink = _RecordingSink()
     server, base = _start_server(sink)
     try:
@@ -195,7 +196,7 @@ def test_events_endpoint_accepts_batch():
         server.server_close()
 
 
-def test_post_payload_too_large_returns_413():
+def test_post_payload_too_large_returns_413() -> None:
     sink = _RecordingSink()
     server, base = _start_server(sink, max_body_bytes=10)
     try:
@@ -223,7 +224,7 @@ def test_post_payload_too_large_returns_413():
         server.server_close()
 
 
-def test_health_open_without_token():
+def test_health_open_without_token() -> None:
     server, base = _start_server(_RecordingSink(), auth_token="secret")
     try:
         with urllib.request.urlopen(base + "/health", timeout=5) as resp:
@@ -233,7 +234,7 @@ def test_health_open_without_token():
         server.server_close()
 
 
-def test_metrics_endpoint_reports_ingested_counts():
+def test_metrics_endpoint_reports_ingested_counts() -> None:
     server, base = _start_server(_RecordingSink())
     try:
         event = {
@@ -267,7 +268,7 @@ def test_metrics_endpoint_reports_ingested_counts():
         server.server_close()
 
 
-def test_unknown_paths_are_404():
+def test_unknown_paths_are_404() -> None:
     server, base = _start_server(_RecordingSink())
     try:
         try:
@@ -280,7 +281,7 @@ def test_unknown_paths_are_404():
         server.server_close()
 
 
-def test_claude_code_hook_endpoint_ingests():
+def test_claude_code_hook_endpoint_ingests() -> None:
     # Issue #22 path: a native Claude Code hook payload is mapped and ingested.
     # Three identical PostToolUse events must map to repeated tool_call
     # signatures and trip the loop detector end to end.
@@ -309,7 +310,7 @@ def test_claude_code_hook_endpoint_ingests():
         server.server_close()
 
 
-def test_risks_endpoint_records_received_risk():
+def test_risks_endpoint_records_received_risk() -> None:
     sink = _RecordingSink()
     server, base = _start_server(sink)
     try:
@@ -337,7 +338,7 @@ def test_risks_endpoint_records_received_risk():
         server.server_close()
 
 
-def test_get_metrics_requires_token_when_configured():
+def test_get_metrics_requires_token_when_configured() -> None:
     """Regression: do_GET never consulted _authorized(), so /metrics leaked."""
     server, base = _start_server(_RecordingSink(), auth_token="secret")
     try:
@@ -350,7 +351,7 @@ def test_get_metrics_requires_token_when_configured():
         server.server_close()
 
 
-def test_get_risks_requires_token_when_configured():
+def test_get_risks_requires_token_when_configured() -> None:
     """Regression: /risks returned every risk the sidecar had ever received --
     episode ids, triggers, and detail strings -- to an unauthenticated caller."""
     sink = _RecordingSink()
@@ -385,7 +386,7 @@ def test_get_risks_requires_token_when_configured():
         server.server_close()
 
 
-def test_unknown_get_path_is_401_not_404_when_token_configured():
+def test_unknown_get_path_is_401_not_404_when_token_configured() -> None:
     """An unauthenticated caller must not be able to enumerate which paths
     exist, so the 404 fallthrough sits behind the token too."""
     server, base = _start_server(_RecordingSink(), auth_token="secret")
@@ -397,7 +398,7 @@ def test_unknown_get_path_is_401_not_404_when_token_configured():
         server.server_close()
 
 
-def test_get_endpoints_stay_open_when_no_token_is_configured():
+def test_get_endpoints_stay_open_when_no_token_is_configured() -> None:
     """Without auth_token the sidecar is unchanged: GETs are open."""
     server, base = _start_server(_RecordingSink())
     try:
@@ -409,7 +410,7 @@ def test_get_endpoints_stay_open_when_no_token_is_configured():
         server.server_close()
 
 
-def test_received_risks_are_bounded():
+def test_received_risks_are_bounded() -> None:
     """POST /risks is an open-ended ingest point; retention must be capped."""
     server, base = _start_server(_RecordingSink(), max_risks=3)
     try:
