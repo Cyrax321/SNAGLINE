@@ -13,6 +13,7 @@
 <p align="center">
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.10+" /></a>
   <a href="https://pypi.org/project/snagline/"><img src="https://img.shields.io/pypi/v/snagline?style=flat-square&label=PyPI" alt="PyPI" /></a>
+  <a href="https://pypi.org/project/continuum-agent/"><img src="https://img.shields.io/pypi/v/continuum-agent?style=flat-square&label=continuum-agent" alt="continuum-agent" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License" /></a>
   <a href="https://github.com/Cyrax321/SNAGLINE/issues"><img src="https://img.shields.io/github/issues/Cyrax321/SNAGLINE?style=flat-square" alt="Issues" /></a>
   <a href="https://github.com/Cyrax321/SNAGLINE/actions"><img src="https://img.shields.io/badge/tests-694%20passed-brightgreen?style=flat-square" alt="Tests" /></a>
@@ -681,7 +682,7 @@ The core abstraction: `fail-open monitoring + zero dependencies + O(1) per step 
 
 ## Relationship to CONTINUUM
 
-SNAGLINE is a **separate project**, not a module inside CONTINUUM. It is framework-agnostic: it ingests a canonical `StepEvent` stream from any agent runtime (a raw Python loop, LangChain, LangGraph, AutoGen, CrewAI, or CONTINUUM's ledger).
+SNAGLINE is a **separate project**, not a module inside CONTINUUM — but now both are on PyPI as `snagline` and `continuum-agent` (`pip install snagline continuum-agent`). It is framework-agnostic: it ingests a canonical `StepEvent` stream from any agent runtime (a raw Python loop, LangChain, LangGraph, AutoGen, CrewAI, or CONTINUUM's ledger).
 
 Keeping it separate preserves CONTINUUM's zero-dependency guarantee and makes the tool adoptable by anyone running agents, not only CONTINUUM users. CONTINUUM's adapter reads CONTINUUM's `Storage` by sequence -- CONTINUUM's own public, already-stable API -- so it is still zero new instrumentation on the CONTINUUM side.
 
@@ -738,7 +739,7 @@ SNAGLINE sits at the overlap of real-time monitoring, anomaly detection, and rel
 ## Status and Limitations
 
 - **Tested**: 694 tests passing, 3 skipped, 88.88% line coverage (see [Empirical Verification](#automated-test-suite-and-benchmarks) for the exact command and environment).
-- **On PyPI as `snagline` 0.1.0** (`pip install snagline`; clone still works via `pip install .` see Quick Start). The `snagline[langchain]`-style names used elsewhere in this README are the extras this package declares.
+- **On PyPI as `snagline` 0.1.0 and `continuum-agent` 0.1.0** (`pip install snagline continuum-agent`; clones still work via `pip install .` see Quick Start). The `snagline[langchain]`-style names used elsewhere in this README are the extras this package declares.
 - **Overhead is measured, not asserted.** Run `snagline bench` to reproduce on your hardware.
 - **Framework adapters are optional extras; sinks ship in core.** The LangChain, LangGraph, Autogen, and CrewAI adapters are optional installs (`pip install snagline[langchain]`, etc.). The console, webhook, Slack, PagerDuty, and dedup sinks are zero-dependency stdlib and always available.
 - **The latency anomaly detector requires warm-up.** It learns a baseline from `cusum_min_samples` (default 5) events before any alarm can fire. This prevents false positives on normal jitter but means the detector is blind during warm-up. The default was deliberately lowered from 20 to 5 (issue #9) so tools called only a handful of times are still monitored; the frozen baseline plus sigma floors keep a single large spike alarmable right after warm-up instead of requiring several sustained ones. A calibrated `BaselineProfile` (issue #101) removes the blind spot for tools it describes. With `cusum_refit_every` set, the frozen baseline is periodically re-checked against a parallel learner, so drift in the baseline itself becomes visible instead of being learned away silently.
