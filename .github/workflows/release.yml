@@ -25,16 +25,42 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # Tags need full history for setuptools-scm if ever used, and for
-          # twine check to see the tagged commit.
           fetch-depth: 0
           fetch-tags: true
 
       - name: Checkout tag if workflow_dispatch requested a specific tag
         if: github.event_name == 'workflow_dispatch' && inputs.tag != ''
+        env:
+          TAG: ${{ inputs.tag }}
         run: |
           git fetch origin --tags
-          git checkout ${{ inputs.tag }}
+          git checkout "$TAG"
+
+      - name: Determine version and validate against tag
+        run: |
+          set -euo pipefail
+          # Derive version from tag if present, otherwise from pyproject
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG_VER="${GITHUB_REF_NAME#v}"
+          elif [ -n "${{ inputs.tag }}" ]; then
+            TAG_VER="${{ inputs.tag }}"
+            TAG_VER="${TAG_VER#v}"
+          else
+            TAG_VER=""
+          fi
+          PY_VER=$(python -c "import re, pathlib; t=pathlib.Path('pyproject.toml').read_text(); m=re.search(r'^version\s*=\s*\"([^\"]+)\"', t, re.M); print(m.group(1) if m else '')")
+          echo "pyproject version: $PY_VER"
+          if [ -n "$TAG_VER" ]; then
+            echo "tag version: $TAG_VER"
+            if [ "$PY_VER" != "$TAG_VER" ]; then
+              echo "version mismatch: pyproject $PY_VER != tag $TAG_VER"
+              exit 1
+            fi
+            echo "VERSION=$TAG_VER" >> $GITHUB_ENV
+          else
+            echo "no tag, using pyproject version $PY_VER"
+            echo "VERSION=$PY_VER" >> $GITHUB_ENV
+          fi
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -55,11 +81,16 @@ jobs:
           twine check dist/*
 
       - name: Extract release notes from CHANGELOG.md
+        env:
+          VERSION: ${{ env.VERSION }}
         run: |
           python -c "
-import pathlib, re
+import pathlib, re, os
 text = pathlib.Path('CHANGELOG.md').read_text()
-m = re.search(r'## \[0\.1\.0\].*?(?=\n## \[|\Z)', text, re.S)
+ver = os.environ.get('VERSION', '0.1.0')
+# Escape dots for regex
+pattern = rf'## \[{re.escape(ver)}\].*?(?=\n## \[|\Z)'
+m = re.search(pattern, text, re.S)
 open('RELEASE_NOTES.md','w').write(m.group(0).strip() + '\n' if m else text)
 "
           cat RELEASE_NOTES.md
@@ -80,12 +111,9 @@ open('RELEASE_NOTES.md','w').write(m.group(0).strip() + '\n' if m else text)
     name: Publish to PyPI
     needs: build
     runs-on: ubuntu-latest
-    # Only publish when the trigger is a tag push, or a manual dispatch
-    # that explicitly requested a tag. This prevents publishing on every
-    # master push.
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.tag != '')
+    # Publish on tag push, or on any manual dispatch (empty tag means HEAD per description).
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     permissions:
-      # OIDC trusted publishing needs id-token; creating a GitHub Release needs contents write.
       id-token: write
       contents: write
     steps:
@@ -96,9 +124,11 @@ open('RELEASE_NOTES.md','w').write(m.group(0).strip() + '\n' if m else text)
 
       - name: Checkout dispatched tag if requested
         if: github.event_name == 'workflow_dispatch' && inputs.tag != ''
+        env:
+          TAG: ${{ inputs.tag }}
         run: |
           git fetch origin --tags
-          git checkout ${{ inputs.tag }}
+          git checkout "$TAG"
 
       - name: Download dist artifacts
         uses: actions/download-artifact@v4
@@ -112,11 +142,7 @@ open('RELEASE_NOTES.md','w').write(m.group(0).strip() + '\n' if m else text)
           name: release-notes
           path: .
 
-
       - name: Publish via trusted publishing (OIDC) if configured
-        # This step succeeds only when PyPI trusted publishing is configured
-        # for this repository. It needs no secret. If OIDC is not configured,
-        # it will fail and the next step (token fallback) will attempt.
         id: pypi_oidc
         continue-on-error: true
         uses: pypa/gh-action-pypi-publish@release/v1
@@ -124,19 +150,15 @@ open('RELEASE_NOTES.md','w').write(m.group(0).strip() + '\n' if m else text)
           verbose: true
 
       - name: Publish via API token fallback (PYPI_TOKEN)
-        # Fallback for token-based auth. Requires repo secret PYPI_TOKEN
-        # (a PyPI API token for snagline-agent). The OIDC step above is
-        # preferred; this is used only when OIDC is not set up.
+        id: pypi_token
         if: steps.pypi_oidc.outcome == 'failure'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           verbose: true
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+          password: ${{ secrets.PYPI_TOKEN }}
 
       - name: Create GitHub Release
-        if: always() && (steps.pypi_oidc.outcome == 'success' || steps.pypi_oidc.outcome == 'failure')
+        if: steps.pypi_oidc.outcome == 'success' || steps.pypi_token.outcome == 'success'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name || inputs.tag }}
