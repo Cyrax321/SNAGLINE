@@ -139,8 +139,21 @@ class ContinuumAdapter:
         #: action key -> epoch seconds of the observed claim, for latency pairing
         self._pending_claims: dict[str, float] = {}
         self._stop = threading.Event()
+        # Rate-limited read-failure logging (issue #171): mirror
+        # Monitor._log_fault_once so a down DB does not spam every interval.
+        self._read_failed = False
+        self._consecutive_failures = 0
 
     # -- public API -------------------------------------------------------- #
+
+    @property
+    def consecutive_failures(self) -> int:
+        """Number of consecutive read failures since the last success.
+
+        Exposed for host alerting without scraping logs (issue #171).
+        Resets to 0 on the next successful poll.
+        """
+        return self._consecutive_failures
 
     def poll(self) -> int:
         """Read and ingest every entry after the cursor. Returns count ingested.
@@ -156,12 +169,23 @@ class ContinuumAdapter:
                 self._storage.read_events(self._run_id, after_sequence=self._cursor)
             )
         except Exception:
-            logger.warning(
-                "snagline continuum adapter: read failed for run %s; will retry",
-                self._run_id,
-                exc_info=True,
-            )
+            self._consecutive_failures += 1
+            if not self._read_failed:
+                logger.warning(
+                    "snagline continuum adapter: read failed for run %s; will retry",
+                    self._run_id,
+                    exc_info=True,
+                )
+                self._read_failed = True
             return 0
+        if self._read_failed:
+            logger.info(
+                "snagline continuum adapter: read recovered for run %s after %d failure(s)",
+                self._run_id,
+                self._consecutive_failures,
+            )
+            self._read_failed = False
+        self._consecutive_failures = 0
         count = 0
         for entry in entries:
             if self.push(entry):
