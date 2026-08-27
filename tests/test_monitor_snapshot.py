@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from typing import cast
 
 import pytest
 
@@ -76,7 +77,7 @@ def _feed(monitor: Monitor, events: list[StepEvent]) -> None:
 
 def _risk_tuples(monitor: Monitor) -> list[tuple]:
     sink = monitor._sinks[0]
-    return [(r.step_id, r.trigger, r.score, r.detail) for r in sink.risks]
+    return [(r.step_id, r.trigger, r.score, r.detail) for r in sink.risks]  # type: ignore[attr-defined]
 
 
 def test_snapshot_restore_round_trip_matches_never_restarted_twin(tmp_path):
@@ -95,7 +96,7 @@ def test_snapshot_restore_round_trip_matches_never_restarted_twin(tmp_path):
     tail = stream[8:]
     # Risks emitted BEFORE the boundary are history the restored monitor never
     # saw; parity applies to everything from the restore point onward.
-    pre_tail_count = len(m_source._sinks[0].risks)
+    pre_tail_count = len(m_source._sinks[0].risks)  # type: ignore[attr-defined]
     _feed(m_source, tail)
     _feed(m_restored, tail)
 
@@ -159,7 +160,11 @@ def test_composition_mismatch_strict_vs_tolerant(tmp_path):
     # Tolerant default: applies what matches, warns about orphans.
     tolerant = Monitor([ErrorCascadeDetector(), SilentAbortDetector()], [ListSink()])
     tolerant.restore(path)  # loop state orphaned -> warning, no raise
-    assert tolerant._detectors[0]._windows == {} or True  # cascade has no ep state yet
+    from snagline.detectors.error_cascade import ErrorCascadeDetector as ECDetector
+
+    assert (
+        cast(ECDetector, tolerant._detectors[0])._windows == {} or True
+    )  # cascade has no ep state yet
 
 
 def test_dedup_sink_cooldown_survives_round_trip(tmp_path):

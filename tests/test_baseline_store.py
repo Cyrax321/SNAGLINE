@@ -48,9 +48,9 @@ def test_store_versions_and_rollback(tmp_path):
     versions = store.list_versions("t", "d")
     assert versions == [v1, v2]
     # load() returns the newest.
-    assert store.load("t", "d").total_steps == 9
+    assert store.load("t", "d").total_steps == 9  # type: ignore[union-attr]
     # A specific older version can still be fetched.
-    assert store.load_version("t", "d", v1).total_steps == 0
+    assert store.load_version("t", "d", v1).total_steps == 0  # type: ignore[union-attr]
 
 
 def test_store_isolation_by_tenant(tmp_path):

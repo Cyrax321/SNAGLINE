@@ -28,7 +28,7 @@ class CustomDetector:
                 event.episode_id,
                 event.step_id,
                 0.9,
-                "custom_flag",
+                "custom_flag",  # type: ignore[arg-type]
                 "duplicate step_id seen",
                 event.timestamp,
             )
@@ -81,7 +81,7 @@ def test_per_episode_state_is_isolated_and_persists():
     # Back to A: one more repeat completes the loop for A only
     mon.ingest(_event("3", "A", "x"))
     # The single risk must belong to episode A, not B
-    risks = mon._sinks[0].risks
+    risks = mon._sinks[0].risks  # type: ignore[attr-defined]
     assert any(r.episode_id == "A" and r.trigger == "loop" for r in risks)
     assert not any(r.episode_id == "B" for r in risks)
 
@@ -95,7 +95,7 @@ def test_end_episode_clears_per_episode_state():
     mon.end_episode("A")  # should wipe A's window
     # After reset, the same signature must start fresh -- no loop yet
     mon.ingest(_event("3", "A", "x"))
-    assert not mon._sinks[0].risks
+    assert not mon._sinks[0].risks  # type: ignore[attr-defined]
 
 
 def test_fail_open_holds_for_custom_detector():

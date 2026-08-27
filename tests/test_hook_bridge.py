@@ -168,10 +168,10 @@ def children():
         if proc.poll() is None:
             _graceful_stop(proc, timeout=_STOP_TIMEOUT_S)
     for proc in handles:
-        assert proc.poll() is not None, f"lingering child not reaped: {proc.args}"
+        assert proc.poll() is not None, f"lingering child not reaped: {proc.args!r}"
 
 
-def test_sidecar_accepts_native_claude_code_payloads_and_fires_loop():
+def test_sidecar_accepts_native_claude_code_payloads_and_fires_loop() -> None:
     sink = _RecordingSink()
     server = make_server(Monitor.default(sinks=[sink]), host="127.0.0.1", port=0)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -214,7 +214,7 @@ def _run(args: list, stdin_text: str) -> subprocess.CompletedProcess:
     )
 
 
-def test_hook_cli_appends_canonical_event_to_file(tmp_path):
+def test_hook_cli_appends_canonical_event_to_file(tmp_path) -> None:
     out = tmp_path / "events.jsonl"
     for i in range(4):
         r = _run(["hook", "--out", str(out)], json.dumps(_tool_payload(i)))
@@ -229,7 +229,7 @@ def test_hook_cli_appends_canonical_event_to_file(tmp_path):
     assert '"trigger": "loop"' in r.stderr
 
 
-def test_hook_cli_forwards_to_sidecar(tmp_path):
+def test_hook_cli_forwards_to_sidecar(tmp_path) -> None:
     sink = _RecordingSink()
     server = make_server(Monitor.default(sinks=[sink]), host="127.0.0.1", port=0)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -244,7 +244,7 @@ def test_hook_cli_forwards_to_sidecar(tmp_path):
         server.server_close()
 
 
-def test_hook_cli_never_fails_the_host():
+def test_hook_cli_never_fails_the_host() -> None:
     r = _run(["hook", "--out", "/nonexistent/dir/x.jsonl"], "not json at all")
     assert r.returncode == 0
     r2 = _run(
@@ -255,7 +255,7 @@ def test_hook_cli_never_fails_the_host():
     assert r3.returncode == 0  # unmapped events are silently dropped
 
 
-def test_watch_file_follow_sees_appended_lines(tmp_path, children):
+def test_watch_file_follow_sees_appended_lines(tmp_path, children) -> None:
     path = tmp_path / "live.jsonl"
     path.write_text(json.dumps(_base_event(0)) + "\n")
     proc = subprocess.Popen(
@@ -373,7 +373,9 @@ def _spawn_follow_watcher(
     return proc
 
 
-def test_watch_follow_teardown_reaps_the_child_on_a_healthy_run(tmp_path, children):
+def test_watch_follow_teardown_reaps_the_child_on_a_healthy_run(
+    tmp_path, children
+) -> None:
     """Issue #69 regression, healthy path, runs on every platform.
 
     The follow-mode watcher dispatches its loop risk to a live localhost
@@ -428,7 +430,7 @@ def test_watch_follow_teardown_reaps_the_child_on_a_healthy_run(tmp_path, childr
 
 def test_watch_follow_cleanup_reaps_the_child_when_the_sink_endpoint_is_dead(
     tmp_path, children
-):
+) -> None:
     """Issue #69 regression, failure path, runs on every platform.
 
     The endpoint accepts connections and drops them without responding, so
@@ -465,7 +467,7 @@ def test_watch_follow_cleanup_reaps_the_child_when_the_sink_endpoint_is_dead(
         assert "webhook sink POST" in catcher.text
 
 
-def test_graceful_stop_tolerates_an_already_exited_child():
+def test_graceful_stop_tolerates_an_already_exited_child() -> None:
     """No ProcessLookupError escapes when the child died before the stop."""
     proc = subprocess.Popen([sys.executable, "-c", "pass"])
     assert proc.wait(timeout=30) == 0
@@ -483,7 +485,9 @@ _IGNORES_SIGNALS_CHILD = (
 )
 
 
-def test_graceful_stop_escalates_to_kill_when_the_child_ignores_signals(children):
+def test_graceful_stop_escalates_to_kill_when_the_child_ignores_signals(
+    children,
+) -> None:
     """A child ignoring SIGINT and SIGTERM is still torn down by kill()."""
     proc = subprocess.Popen(
         [sys.executable, "-c", _IGNORES_SIGNALS_CHILD],
@@ -505,7 +509,8 @@ def test_graceful_stop_escalates_to_kill_when_the_child_ignores_signals(children
     assert proc.poll() is not None
     pump.join(timeout=5)
     with suppress(Exception):
-        proc.stdout.close()
+        if proc.stdout is not None:
+            proc.stdout.close()
     if os.name != "nt":
         # POSIX proof of escalation: only SIGKILL gets through the ignores.
         assert proc.returncode == -signal.SIGKILL

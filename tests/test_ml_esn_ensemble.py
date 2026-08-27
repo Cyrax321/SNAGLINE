@@ -27,7 +27,7 @@ def _fast(**overrides) -> EsnCusumDetector:
     """A detector with short warm-up and a low CUSUM threshold for tests."""
     params = dict(warmup_steps=5, cusum_h=1.0)
     params.update(overrides)
-    return EsnCusumDetector(**params)
+    return EsnCusumDetector(**params)  # type: ignore[arg-type]
 
 
 def _ev(
@@ -252,7 +252,7 @@ def test_fail_open_internal_exception_is_swallowed_and_logged(caplog):
     def boom(self_event: StepEvent) -> object:
         raise RuntimeError("feature extraction exploded")
 
-    det._features = boom  # type: ignore[method-assign]
+    det._features = boom  # type: ignore[assignment]
     with caplog.at_level(logging.ERROR, logger="snagline"):
         assert det.observe(_ev(0)) is None
     assert any("fail-open" in rec.getMessage() for rec in caplog.records)

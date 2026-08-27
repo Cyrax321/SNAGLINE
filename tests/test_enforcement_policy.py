@@ -22,7 +22,7 @@ import pytest
 from snagline.config import Config
 from snagline.events import StepEvent
 from snagline.monitor import HaltDirective, Monitor
-from snagline.risk import FailureRisk
+from snagline.risk import FailureRisk, TriggerType
 
 
 def _event(step_id: str = "s1", episode_id: str = "ep1") -> StepEvent:
@@ -40,9 +40,9 @@ class _FixedRiskDetector:
 
     name = "fixed_risk"
 
-    def __init__(self, score: float = 0.9, trigger: str = "loop") -> None:
+    def __init__(self, score: float = 0.9, trigger: TriggerType = "loop") -> None:
         self.score = score
-        self.trigger = trigger
+        self.trigger: TriggerType = trigger
 
     def observe(self, event: StepEvent) -> FailureRisk | None:
         return FailureRisk(
@@ -586,7 +586,7 @@ def test_last_directive_thread_safe_under_concurrent_ingest(halt_endpoint):
     threads = [
         threading.Thread(
             target=lambda k=k: [
-                check(monitor.last_directive) or monitor.ingest(_event(f"t{k}-{i}"))
+                (check(monitor.last_directive), monitor.ingest(_event(f"t{k}-{i}")))[1]  # type: ignore[func-returns-value]
                 for i in range(10)
             ]
         )

@@ -213,7 +213,7 @@ def test_enabled_detector_joins_the_ml_ensemble_wrap():
     cfg = Config(stagnation_enabled=True, ml_ensemble_enabled=True)
     m = Monitor.default(config=cfg)
     assert [getattr(det, "name", "") for det in m._detectors] == ["ml_ensemble"]
-    wrapped_names = [getattr(det, "name", "") for det in m._detectors[0]._base]
+    wrapped_names = [getattr(det, "name", "") for det in m._detectors[0]._base]  # type: ignore[attr-defined]
     assert "stagnation" in wrapped_names
 
 

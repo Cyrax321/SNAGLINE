@@ -21,7 +21,7 @@ def _risk() -> FailureRisk:
     )
 
 
-def test_emit_posts_failure_risk_fields_only():
+def test_emit_posts_failure_risk_fields_only() -> None:
     captured = {}
 
     class _Resp:
@@ -57,7 +57,7 @@ def test_emit_posts_failure_risk_fields_only():
     assert captured["timeout"] == 1.5
 
 
-def test_emit_never_raises_on_network_failure():
+def test_emit_never_raises_on_network_failure() -> None:
     with mock.patch.object(
         urllib.request, "urlopen", side_effect=OSError("connection refused")
     ):
@@ -65,12 +65,12 @@ def test_emit_never_raises_on_network_failure():
         sink.emit(_risk())  # must be a silent no-op, not a raise
 
 
-def test_emit_never_raises_on_bad_status():
+def test_emit_never_raises_on_bad_status() -> None:
     import urllib.error
 
     with mock.patch.object(
         urllib.request,
         "urlopen",
-        side_effect=urllib.error.HTTPError("url", 500, "boom", hdrs=None, fp=None),
+        side_effect=urllib.error.HTTPError("url", 500, "boom", hdrs=None, fp=None),  # type: ignore[arg-type]
     ):
         WebhookSink("http://hooks.example/alerts").emit(_risk())

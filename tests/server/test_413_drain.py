@@ -38,7 +38,7 @@ def _start(max_body_bytes: int):
     return server, int(server.server_address[1])
 
 
-def test_overcap_streamed_body_reads_413_status_line():
+def test_overcap_streamed_body_reads_413_status_line() -> None:
     """A client streaming an over-cap body must see the 413, not EPIPE."""
     body_len = _CAP + _MAX_OVERCAP_DRAIN_EXCESS  # top of the drain window
     server, port = _start(_CAP)
@@ -70,8 +70,10 @@ def test_overcap_streamed_body_reads_413_status_line():
     assert b"payload too large" in response
 
 
-def test_exactly_at_cap_body_still_accepted():
-    event = {
+def test_exactly_at_cap_body_still_accepted() -> None:
+    from typing import Any
+
+    event: dict[str, Any] = {
         "step_id": "0",
         "episode_id": "ep-cap",
         "timestamp": 1718300000.0,
@@ -114,9 +116,9 @@ def test_exactly_at_cap_body_still_accepted():
     assert b'"status": "ingested"' in response
 
 
-def test_drain_is_bounded_regardless_of_claimed_content_length():
+def test_drain_is_bounded_regardless_of_claimed_content_length() -> None:
     """A huge claimed length must not make the sidecar read forever."""
-    handler_cls = make_handler(Monitor([], []), max_body_bytes=1_000)
+    handler_cls = make_handler(Monitor([], []), max_body_bytes=1_000)  # type: ignore[attr-defined]  # test accesses private constant via handler
 
     reads: list[int] = []
 
@@ -129,26 +131,26 @@ def test_drain_is_bounded_regardless_of_claimed_content_length():
             self.consumed += n
             return b"x" * n
 
-    fake = types.SimpleNamespace(rfile=_EndlessRFile(), snagline_max_body=1_000)
-    handler_cls._discard_overcap_body(fake, 10**9)
+    fake = types.SimpleNamespace(rfile=_EndlessRFile(), snagline_max_body=1_000)  # type: ignore[arg-type]
+    handler_cls._discard_overcap_body(fake, 10**9)  # type: ignore[attr-defined]
     assert fake.rfile.consumed == 1_000 + _MAX_OVERCAP_DRAIN_EXCESS
     assert reads
     assert max(reads) <= _DRAIN_CHUNK_BYTES
 
 
-def test_drain_survives_client_hangup_and_socket_errors():
+def test_drain_survives_client_hangup_and_socket_errors() -> None:
     handler_cls = make_handler(Monitor([], []), max_body_bytes=1_000)
 
     class _HungUpRFile:
         def read(self, n: int) -> bytes:
             return b""  # immediate EOF: client vanished mid-body
 
-    fake = types.SimpleNamespace(rfile=_HungUpRFile(), snagline_max_body=1_000)
-    handler_cls._discard_overcap_body(fake, 5_000)  # must not raise
+    fake2 = types.SimpleNamespace(rfile=_HungUpRFile(), snagline_max_body=1_000)  # type: ignore[arg-type]
+    handler_cls._discard_overcap_body(fake2, 5_000)  # type: ignore[attr-defined]  # must not raise
 
     class _ResetRFile:
         def read(self, n: int) -> bytes:
             raise ConnectionResetError("peer reset mid-drain")
 
-    fake = types.SimpleNamespace(rfile=_ResetRFile(), snagline_max_body=1_000)
-    handler_cls._discard_overcap_body(fake, 5_000)  # must not raise
+    fake3 = types.SimpleNamespace(rfile=_ResetRFile(), snagline_max_body=1_000)  # type: ignore[arg-type]
+    handler_cls._discard_overcap_body(fake3, 5_000)  # type: ignore[attr-defined]  # must not raise

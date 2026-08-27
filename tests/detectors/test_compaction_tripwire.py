@@ -293,7 +293,7 @@ def test_zero_dep_preset_ignores_compaction_events_end_to_end():
                 tool_name=f"tool-{i}",
             )
         )
-    assert mon._sinks[0].risks == []
+    assert mon._sinks[0].risks == []  # type: ignore[attr-defined]
 
 
 # --- Fixture replay parity ------------------------------------------------------

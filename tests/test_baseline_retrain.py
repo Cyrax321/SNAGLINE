@@ -323,13 +323,13 @@ def test_cli_retrain_usage_and_input_errors(tmp_path, capsys):
 def test_active_baseline_age_skips_non_numeric_ids(tmp_path):
     store = BaselineStore(str(tmp_path / "store"))
     profile = BaselineProfileStub()
-    store.save(profile, tenant="t", deployment="d", version="v-custom")
+    store.save(profile, tenant="t", deployment="d", version="v-custom")  # type: ignore[arg-type]
     # Only custom ids: age is unknowable, helper reports None (fail-open).
     assert _active_baseline_age(store, "t", "d") is None
     # Numeric timestamped id alongside custom ids: age comes from the newest
     # numeric one only.
     now_id = f"{time.time():.6f}"
-    store.save(profile, tenant="t", deployment="d", version=now_id)
+    store.save(profile, tenant="t", deployment="d", version=now_id)  # type: ignore[arg-type]
     age = _active_baseline_age(store, "t", "d")
     assert age is not None
     assert 0.0 <= age < 60.0
@@ -384,7 +384,7 @@ def test_cli_retrain_max_age_with_custom_version_and_stale_fitted_at(tmp_path, c
     # Old schema file without fitted_at still loads via fallback to id parsing.
     old_store = BaselineStore(str(tmp_path / "oldstore"))
     prof = BaselineProfileStub()
-    old_store.save(prof, tenant="t", deployment="d", version="v-old")
+    old_store.save(prof, tenant="t", deployment="d", version="v-old")  # type: ignore[arg-type]
     assert _active_baseline_age(old_store, "t", "d") is None
 
 

@@ -322,7 +322,7 @@ def test_monitor_snapshot_restore_matches_never_restarted_twin(tmp_path):
     for e in stream:
         m_source.ingest(e)
         m_twin.ingest(e)
-    pre_tail_count = len(m_source._sinks[0].risks)
+    pre_tail_count = len(m_source._sinks[0].risks)  # type: ignore[attr-defined]
     m_source.snapshot(path)
 
     # Before this issue these three serialized as null and were skipped on
@@ -350,11 +350,12 @@ def test_monitor_snapshot_restore_matches_never_restarted_twin(tmp_path):
         m_source.ingest(e)
         m_restored.ingest(e)
 
-    source_risks = [(r.step_id, r.trigger, r.score) for r in m_source._sinks[0].risks][
+    source_risks = [(r.step_id, r.trigger, r.score) for r in m_source._sinks[0].risks][  # type: ignore[attr-defined]
         pre_tail_count:
     ]
     restored_risks = [
-        (r.step_id, r.trigger, r.score) for r in m_restored._sinks[0].risks
+        (r.step_id, r.trigger, r.score)
+        for r in m_restored._sinks[0].risks  # type: ignore[attr-defined]
     ]
     assert source_risks == restored_risks
     triggers = {t for _, t, _ in source_risks}
