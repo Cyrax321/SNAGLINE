@@ -41,7 +41,7 @@ def test_console_sink_routes_through_logger():
     assert '"trigger": "loop"' in records[0].getMessage()
 
 
-def test_console_sink_is_fire_and_forget_on_broken_stream():
+def test_console_sink_is_fire_and_forget_on_broken_stream() -> None:
     # Issue #19: a broken stream must not raise out of emit(); the sink is
     # part of the fail-open ingest path.
     class BrokenStream:
@@ -51,6 +51,6 @@ def test_console_sink_is_fire_and_forget_on_broken_stream():
         def flush(self) -> None:
             raise OSError("stream broken")
 
-    sink = ConsoleSink(stream=BrokenStream())
+    sink = ConsoleSink(stream=BrokenStream())  # type: ignore[arg-type]
     # Must not raise.
     sink.emit(_risk())

@@ -45,10 +45,9 @@ def test_emit_is_also_a_touch(tmp_path) -> None:
     hb_path = tmp_path / "hb"
     hb = HeartbeatSink(str(hb_path))
 
-    class _Risk:
-        pass
+    from snagline.risk import FailureRisk
 
-    hb.emit(_Risk())  # AlertSink duck type; content never inspected
+    hb.emit(FailureRisk("ep", "s", 0.5, "loop", "", 0.0))
     assert hb_path.exists()
 
 
