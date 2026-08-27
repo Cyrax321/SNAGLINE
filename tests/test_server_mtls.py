@@ -195,7 +195,7 @@ def test_resolve_sets_verify_mode_only_when_client_ca_given(tmp_path):
     # With client_ca: verify_mode becomes CERT_REQUIRED and CA is loaded
     ctx_mtls = _resolve_ssl_context(None, server_cert, server_key, ca_cert)
     assert ctx_mtls is not None
-    assert ctx_mtls.verify_mode == ssl.CERT_REQUIRED
+    assert ctx_mtls.verify_mode == ssl.CERT_REQUIRED  # type: ignore[union-attr]
 
 
 def test_plain_and_server_tls_modes_unchanged_without_client_ca(tmp_path):
@@ -208,9 +208,11 @@ def test_plain_and_server_tls_modes_unchanged_without_client_ca(tmp_path):
         tmp_path, ca_cert, ca_key, "127.0.0.1", "server"
     )
     ctx = _resolve_ssl_context(None, server_cert, server_key)
+    assert ctx is not None
     assert ctx.verify_mode == ssl.CERT_NONE
     # Explicit None client_ca must behave identically
     ctx2 = _resolve_ssl_context(None, server_cert, server_key, None)
+    assert ctx2 is not None
     assert ctx2.verify_mode == ssl.CERT_NONE
 
 
@@ -457,7 +459,7 @@ def test_plain_and_server_tls_modes_regression(tmp_path):
         assert status == 200
         assert json.loads(body) == {"status": "ok"}
         # Verify server context is not in mTLS mode
-        assert tls_plain.snagline_ssl_context.verify_mode == ssl.CERT_NONE
+        assert tls_plain.snagline_ssl_context.verify_mode == ssl.CERT_NONE  # type: ignore[attr-defined]
     finally:
         tls_plain.shutdown()
         tls_plain.server_close()
