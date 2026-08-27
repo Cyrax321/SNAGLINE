@@ -65,6 +65,22 @@ def _step(index, sig, episode="ep-metrics", error=False):
     }
 
 
+class _AlwaysRiskDetector:
+    """Emits one risk per step, so the enforcement tail runs every time."""
+
+    name = "always_risk"
+
+    def observe(self, event):
+        from snagline.risk import FailureRisk
+
+        return FailureRisk(
+            event.episode_id, event.step_id, 0.95, "loop", "synthetic", event.timestamp
+        )
+
+    def reset(self, episode_id: str) -> None:
+        pass
+
+
 def _parse_samples(body: str) -> dict:
     """Parse exposition lines into {(name, labels): value}, asserting shape.
 
@@ -100,6 +116,7 @@ def test_empty_monitor_serves_valid_prometheus():
             "snagline_monitor_risks_emitted_total",
             "snagline_monitor_detector_errors_total",
             "snagline_monitor_sink_errors_total",
+            "snagline_monitor_policy_errors_total",
         ):
             assert f"# HELP {family} " in body, family
             assert f"# TYPE {family} " in body, family
@@ -109,6 +126,7 @@ def test_empty_monitor_serves_valid_prometheus():
         assert samples[("snagline_ingest_seconds_count", "")] == 0.0
         assert samples[("snagline_ingest_seconds_sum", "")] == 0.0
         assert samples[("snagline_monitor_detector_errors_total", "")] == 0.0
+        assert samples[("snagline_monitor_policy_errors_total", "")] == 0.0
         # No risk samples at all on an empty monitor.
         assert not any(name == "snagline_risks_total" for name, _ in samples)
     finally:
@@ -209,6 +227,7 @@ def test_classic_format_stays_available_for_old_clients():
             "risks_emitted",
             "detector_errors",
             "sink_errors",
+            "policy_errors",
         ):
             assert key in parsed
 
@@ -306,3 +325,37 @@ def test_collector_counts_risks_per_label_pair():
         samples[("snagline_risks_total", 'trigger="error_cascade",severity="critical"')]
         == 1.0
     )
+
+
+def test_policy_errors_family_grows_on_an_enforcement_fault():
+    """Issue #169: enforcement faults were invisible to scrapes.
+
+    ``policy_errors`` counts what #93 swallows fail-open -- a raising
+    callback here -- and that is precisely what an operator needs to see when
+    a halt path starts dying, so it must reach the exposition body and not
+    only the JSON one.
+    """
+
+    def _boom(risk) -> None:
+        raise RuntimeError("callback is down")
+
+    monitor = Monitor(
+        [_AlwaysRiskDetector()],
+        [],
+        policy="callback",
+        on_risk=_boom,
+    )
+    server = make_server(monitor, host="127.0.0.1", port=0)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        _post(base, _step(0, "sig-policy"))
+        _post(base, _step(1, "sig-policy"))
+        samples = _parse_samples(_get(base, "/metrics")[2])
+        assert samples[("snagline_monitor_policy_errors_total", "")] == 2.0
+        # The JSON body has always carried it; both must agree.
+        assert (
+            json.loads(_get(base, "/metrics?format=classic")[2])["policy_errors"] == 2
+        )
+    finally:
+        _stop(server)

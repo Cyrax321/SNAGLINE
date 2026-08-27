@@ -9,6 +9,7 @@ shell script, a Claude Code hook) can POST ``StepEvent`` JSON to:
     POST /episodes/end       body: {"episode_id": "<id>"}            -> monitor.end_episode()
     GET  /health                                                     -> 200 OK
     GET  /metrics                                                    -> Prometheus text exposition (v0.0.4)
+    GET  /directive                                                  -> the latest halt-webhook directive
 
 A host that knows an episode is over can signal it with ``POST
 /episodes/end`` carrying ``{"episode_id": "..."}`` (issue #123): the sidecar
@@ -50,6 +51,15 @@ clients sending ``Accept: application/json``, or when the sidecar is started
 with ``SNAGLINE_METRICS_FORMAT=classic`` (config key ``metrics_format``);
 ``?format=prometheus`` forces the new format back on per request.
 
+``GET /directive`` reports the newest halt-webhook directive as
+``{"action": "continue"|"pause", "reason": ..., "timestamp": ...}`` (issue
+#169). Without it, a sidecar started with ``--halt-forward URL`` had nowhere
+to publish the answer: the directive landed on the in-process
+``Monitor.last_directive`` and non-Python hosts, the whole point of server
+mode, could not read it. The resource exists as soon as the Monitor does and
+defaults to continue, so the endpoint always answers 200. It is auth-gated
+like ``GET /risks``, because a directive can pause the host.
+
 No framework, no third-party dependency -- this keeps the zero-dependency
 principle intact even for server mode. For high-throughput production use,
 front it with a real ASGI server / reverse proxy; that is the user's infra
@@ -77,7 +87,7 @@ from urllib.parse import parse_qs, urlsplit
 from snagline.adapters.claude_code import HookTracker, ingest_payload
 from snagline.config import Config
 from snagline.events import StepEvent
-from snagline.monitor import Monitor
+from snagline.monitor import HaltDirective, Monitor
 
 logger = logging.getLogger("snagline")
 
@@ -208,6 +218,20 @@ def _choose_metrics_format(
     return configured
 
 
+def _directive_payload(directive: Any) -> dict[str, Any]:
+    """Render a :class:`HaltDirective` as the ``GET /directive`` body.
+
+    Coerced rather than trusted: the handler holds whatever object the caller
+    passed as ``monitor``, and a body that cannot be serialized would turn a
+    read-only endpoint into a 500.
+    """
+    return {
+        "action": str(directive.action),
+        "reason": str(directive.reason),
+        "timestamp": float(directive.timestamp),
+    }
+
+
 class SidecarMetricsCollector:
     """Process-lifetime sidecar counters, renderable as Prometheus text.
 
@@ -287,10 +311,11 @@ class SidecarMetricsCollector:
     def render_prometheus(self, monitor_metrics: dict[str, int]) -> str:
         """Render the full exposition body (version 0.0.4 text format).
 
-        ``monitor_metrics`` is the ``Monitor.metrics()`` snapshot; those four
+        ``monitor_metrics`` is the ``Monitor.metrics()`` snapshot; those
         counters are exposed under ``snagline_monitor_*_total`` names so the
         sidecar view adds process-lifetime detail without renaming anything
-        the JSON endpoint already published.
+        the JSON endpoint already published. A key the snapshot does not
+        carry renders as 0, so an older Monitor still produces a valid body.
         """
         snap = self.snapshot()
         lines: list[str] = []
@@ -340,6 +365,12 @@ class SidecarMetricsCollector:
                 "sink_errors",
                 "snagline_monitor_sink_errors_total",
                 "Sink exceptions swallowed (fail-open).",
+            ),
+            (
+                "policy_errors",
+                "snagline_monitor_policy_errors_total",
+                "Enforcement faults swallowed fail-open (#93): callback raises"
+                " and halt-webhook timeout/error fallbacks.",
             ),
         )
         for key, name, help_text in monitor_families:
@@ -431,8 +462,29 @@ def make_handler(
                 self._serve_metrics(parse_qs(split.query))
             elif split.path == "/risks":
                 self._respond(200, {"risks": list(self.snagline_risks)})
+            elif split.path == "/directive":
+                self._serve_directive()
             else:
                 self._respond(404, {"error": "not found"})
+
+        def _serve_directive(self) -> None:
+            """Serve the newest halt-webhook directive (issue #169).
+
+            Read-only: the Monitor owns the directive and its lock, so this
+            renders whatever the public property hands back. A monitor that
+            predates enforcement, or any failure reading it, answers with the
+            default continue rather than raising -- the same fail-open the
+            webhook path itself takes on a timeout or a dead endpoint, and a
+            500 here would tell a polling host nothing it could act on.
+            """
+            try:
+                payload = _directive_payload(self.snagline_monitor.last_directive)
+            except Exception:
+                logger.debug(
+                    "snagline: directive unreadable, reporting continue", exc_info=True
+                )
+                payload = _directive_payload(HaltDirective())
+            self._respond(200, payload)
 
         def _serve_metrics(self, query: dict[str, list[str]]) -> None:
             """Serve either exposition format, failing open to an empty body.

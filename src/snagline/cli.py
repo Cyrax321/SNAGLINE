@@ -834,7 +834,8 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             f"snagline serve: halt forwarding enabled -> {cfg.halt_url} "
             f"(timeout {cfg.halt_timeout_s}s, min severity "
             f"{cfg.min_severity_for_halt}); directives land on "
-            "Monitor.last_directive (issue #93)",
+            "Monitor.last_directive and are readable at GET /directive "
+            "(issues #93, #169)",
             file=sys.stderr,
         )
     if not auth_token:
