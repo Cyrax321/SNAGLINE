@@ -158,6 +158,9 @@ class _CrewAIStepCallback:
 
     CrewAI only calls ``__call__``; ``close()`` mirrors
     :meth:`SnaglineAutogenHandler.close` and clears per-episode detector state.
+    ``side_effect_tools`` is the host-declared allowlist for
+    ``SideEffectGuardDetector`` (issue #150): matching ``tool_call`` steps get
+    ``side_effect=True``; nothing is inferred from payloads.
     """
 
     def __init__(
@@ -166,6 +169,7 @@ class _CrewAIStepCallback:
         episode_id: str,
         agent_name: str | None = None,
         clock: Callable[[], float] | None = None,
+        side_effect_tools: set[str] | list[str] | tuple[str, ...] | None = None,
     ) -> None:
         self._monitor = monitor
         self._episode_id = episode_id
@@ -175,8 +179,15 @@ class _CrewAIStepCallback:
         # no meaningful epoch; detectors only consume in-process differences.
         self._clock = clock or time.perf_counter
         self._counter = itertools.count()
+        self._side_effect_tools: set[str] = set(side_effect_tools or [])
 
     def __call__(self, step: Any) -> None:
+        # Host-declared allowlist (issue #150): only a tool_call whose name
+        # the host put in side_effect_tools becomes side_effect=True. Never
+        # read metadata and never guess from args or payload content.
+        d = _to_dict(step)
+        tool_name = _extract_tool_name(d)
+        side_effect = tool_name is not None and tool_name in self._side_effect_tools
         self._monitor.ingest(
             _map_step(
                 step,
@@ -184,6 +195,7 @@ class _CrewAIStepCallback:
                 step_id=str(next(self._counter)),
                 agent_name=self._agent_name,
                 clock=self._clock,
+                side_effect=side_effect,
             )
         )
 
@@ -196,6 +208,7 @@ def snagline_step_callback(
     episode_id: str,
     agent_name: str | None = None,
     clock: Callable[[], float] | None = None,
+    side_effect_tools: set[str] | list[str] | tuple[str, ...] | None = None,
 ) -> Callable[[Any], None]:
     """Build a CrewAI ``step_callback`` that monitors each agent step.
 
@@ -203,8 +216,18 @@ def snagline_step_callback(
     corresponding ``StepEvent``. Returns the callback for assignment to
     ``Agent(step_callback=...)``. After the episode finishes, call
     ``callback.close()`` to clear per-episode detector state.
+
+    ``side_effect_tools`` is the host-declared allowlist for
+    ``SideEffectGuardDetector`` (issue #150); matching ``tool_call`` steps get
+    ``side_effect=True`` and nothing is inferred from payloads.
     """
-    return _CrewAIStepCallback(monitor, episode_id, agent_name=agent_name, clock=clock)
+    return _CrewAIStepCallback(
+        monitor,
+        episode_id,
+        agent_name=agent_name,
+        clock=clock,
+        side_effect_tools=side_effect_tools,
+    )
 
 
 def observe_crewai_step(

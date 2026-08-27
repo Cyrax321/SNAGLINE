@@ -304,12 +304,31 @@ Deliberately stricter than `LoopDetector`, and different in three ways:
    modes).
 
 How hosts mark steps: adapters forward the flag mechanically and never
-invent it. Today you can pass it to the raw adapter's `step(...,
-side_effect=True)`, `observe_openai_call(...)`, `observe_anthropic_call(...)`,
-or `observe_crewai_step(...)`. Framework callback paths (LangChain hooks,
-Autogen events, LangGraph nodes, Claude Code hook payloads) have no
-caller-supplied flag source, so their events carry the schema default
-(`False`) and legacy payloads written before #88 load unchanged.
+invent it. Direct-call paths carry an explicit flag: the raw adapter's
+`step(..., side_effect=True)`, `observe_openai_call(...)`,
+`observe_anthropic_call(...)`, or `observe_crewai_step(...)`. Callback
+paths use a host-declared allowlist (issue #150):
+
+```python
+from snagline.adapters.langchain_adapter import SnaglineCallbackHandler
+from snagline.adapters.autogen import SnaglineAutogenHandler
+from snagline.adapters.crewai import snagline_step_callback
+
+# Host declares which tools are non-idempotent; adapter matches by tool_name
+langchain_handler = SnaglineCallbackHandler(monitor, "ep", side_effect_tools={"charge_card"})
+autogen_handler = SnaglineAutogenHandler(monitor, "ep", side_effect_tools={"charge_card"})
+crewai_cb = snagline_step_callback(monitor, "ep", side_effect_tools={"charge_card"})
+```
+
+Only a `tool_call` whose `tool_name` is in the allowlist becomes
+`side_effect=True`; everything else stays `False` with the default
+`_emit(side_effect=False)`. Nothing is inferred from payloads and
+`metadata["side_effect"]` is never read (rejected in #88). Pure
+payload adapters (`watch_graph` for LangGraph, `payload_to_event` for
+Claude Code) derive everything from framework payloads and have no flag
+source, so they keep the schema default `False`; their limitation is
+documented in ADAPTER_GUIDE. Legacy payloads written before #88 load
+unchanged.
 
 Privacy and cost, as everywhere: the detector reads the boolean, the tool
 name, and the one-way signature digest, nothing else, and never touches
