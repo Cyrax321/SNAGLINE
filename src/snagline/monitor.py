@@ -749,10 +749,20 @@ class Monitor:
         for i, sink in enumerate(self._sinks):
             dump = getattr(sink, "dump_state", None)
             sinks[f"{i}:{type(sink).__name__}"] = dump() if callable(dump) else None
+        time_axis: dict[str, Any] = {}
+        for episode_id, clock in self._clocks.items():
+            time_axis[episode_id] = {
+                "last_ts": clock.last_ts,
+                "elapsed": clock.elapsed,
+                "idle_fired": clock.idle_fired,
+                "warned": clock.warned,
+                "breached": clock.breached,
+            }
         return {
             "format_version": SNAPSHOT_FORMAT_VERSION,
             "detectors": detectors,
             "sinks": sinks,
+            "time_axis": time_axis,
         }
 
     def snapshot(self, path: str) -> None:
@@ -831,6 +841,55 @@ class Monitor:
             key = f"{i}:{type(sink).__name__}"
             if callable(load) and dumped_sinks.get(key) is not None:
                 load(dumped_sinks[key])
+        time_axis_data = data.get("time_axis")
+        if isinstance(time_axis_data, dict):
+            # Restore clocks in order of last_ts ascending so most recent
+            # survives if we must evict under cap. Fall back to sorted keys
+            # for deterministic behavior when last_ts is missing.
+            try:
+                ordered = sorted(
+                    time_axis_data.items(),
+                    key=lambda kv: (
+                        float(kv[1].get("last_ts", 0.0))  # type: ignore[arg-type]
+                        if isinstance(kv[1], dict)
+                        else 0.0
+                    ),
+                )
+            except Exception:
+                ordered = sorted(time_axis_data.items())
+            for episode_id, clock_data in ordered:
+                if not isinstance(episode_id, str) or not isinstance(clock_data, dict):
+                    continue
+                try:
+                    last_ts = float(clock_data.get("last_ts", 0.0))
+                    elapsed = float(clock_data.get("elapsed", 0.0))
+                    idle_fired = bool(clock_data.get("idle_fired", False))
+                    warned = bool(clock_data.get("warned", False))
+                    breached = bool(clock_data.get("breached", False))
+                except Exception:
+                    logger.warning(
+                        "snagline: malformed time_axis entry for %r; ignored",
+                        episode_id,
+                    )
+                    continue
+                if elapsed < 0.0:
+                    elapsed = 0.0
+                clock = _EpisodeClock(last_ts)
+                clock.elapsed = elapsed
+                clock.idle_fired = idle_fired
+                clock.warned = warned
+                clock.breached = breached
+                with self._live_lock:
+                    if episode_id in self._live_episodes:
+                        self._live_episodes.move_to_end(episode_id)
+                    else:
+                        self._live_episodes[episode_id] = None
+                        if len(self._live_episodes) > self._max_live_episodes:
+                            evicted, _ = self._live_episodes.popitem(last=False)
+                            self._clocks.pop(evicted, None)
+                    self._clocks[episode_id] = clock
+            # If we evicted due to cap, live_snapshot entries not in time_axis
+            # are already accounted for; no further action needed.
 
     def restore(self, path: str, strict_names: bool = False) -> None:
         """Load a JSON snapshot written by :meth:`snapshot`."""
