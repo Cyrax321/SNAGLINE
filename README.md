@@ -296,6 +296,7 @@ the path variant below.
 | `SNAGLINE_HALT_URL` | `halt_url` | *(unset)* | Halt webhook endpoint; required when policy is halt_webhook |
 | `SNAGLINE_HALT_TIMEOUT_S` | `halt_timeout_s` | 0.25 | Halt webhook round-trip budget in seconds; timeout fails open to continue |
 | `SNAGLINE_MIN_SEVERITY_FOR_HALT` | `min_severity_for_halt` | 0.8 | Minimum risk score that pays the halt-webhook cost |
+| `SNAGLINE_SERVER_READ_TIMEOUT` | `server_read_timeout` | 30.0 | Sidecar read timeout in seconds for stalled senders |
 | `SNAGLINE_MAX_LIVE_EPISODES` | `max_live_episodes` | 10000 | Per-episode LRU cap; when exceeded the least-recently-seen episode is evicted silently (no finalize). Explicit `end_episode` still frees immediately |
 
 A handful of variables sit outside `Config` because they are consumed

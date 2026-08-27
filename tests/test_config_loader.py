@@ -161,6 +161,102 @@ def test_readme_configuration_snippet_matches_config_defaults():
     assert "cusum_min_samples" in checked  # the field that motivated this guard
 
 
+def test_every_scalar_config_field_is_documented_in_readme_env_table():
+    # Mechanical guard for issue #183: the README promises
+    # "Every scalar field is settable via SNAGLINE_<UPPER_SNAKE>"
+    # but the env-var table is prose and Config is code, so they drift.
+    # This is the third occurrence after #153 (cusum_min_samples) and #133
+    # (StagnationDetector). At f7857d1, 11 scalar fields were absent:
+    # semantic_drift 6, side_effect 3, compaction_tripwire 2.
+    import ast
+    import dataclasses
+    import re
+    from pathlib import Path
+    from typing import get_type_hints
+
+    from snagline.config import Config, _coercible_hint
+
+    # Determine scalar settable fields via the same coercion logic the
+    # runtime uses: bool/int/float/str and Optional[scalar] are settable;
+    # BaselineProfile and other object types are not.
+    hints = get_type_hints(Config)
+    scalar_fields: set[str] = set()
+    for f in dataclasses.fields(Config):
+        hint = hints.get(f.name, f.type)
+        # _coercible_hint unwraps X|None where X is scalar; non-scalar
+        # unions stay as-is and will not match the scalar set.
+        coerced = _coercible_hint(hint)
+        if coerced in (bool, int, float, str):
+            scalar_fields.add(f.name)
+
+    # Parse the README env-var table: only the first table under
+    # "### Environment variables and config keys", not the
+    # "A handful of variables sit outside" second table.
+    readme = Path(__file__).resolve().parent.parent / "README.md"
+    text = readme.read_text(encoding="utf-8")
+    start = text.index("### Environment variables and config keys")
+    end = text.index("A handful of variables sit outside", start)
+    section = text[start:end]
+    # Each row is `| `SNAGLINE_X` | `field` | default |`
+    rows = re.findall(
+        r"\|\s*`SNAGLINE_([A-Z0-9_]+)`\s*\|\s*`(\w+)`\s*\|\s*([^|]+?)\s*\|",
+        section,
+    )
+    documented: dict[str, str] = {field: default.strip() for _, field, default in rows}
+
+    missing = sorted(scalar_fields - set(documented))
+    extra = sorted(set(documented) - scalar_fields)
+    assert not missing, (
+        f"README env-var table is missing {len(missing)} scalar Config field(s): "
+        f"{missing}; add rows for SNAGLINE_<UPPER_SNAKE> with correct defaults"
+    )
+    assert not extra, (
+        f"README env-var table documents {len(extra)} field(s) that are not "
+        f"scalar Config fields: {extra}; remove or correct them"
+    )
+
+    # Spot-check defaults for a few representative fields, and fully verify
+    # that every documented default matches the dataclass default (with
+    # None shown as *(unset)* or None in the table).
+    defaults = {f.name: f.default for f in dataclasses.fields(Config)}
+    for field, raw_default in documented.items():
+        cfg_default = defaults[field]
+        readme_raw = raw_default.strip()
+        # Normalize README representation of None
+        if cfg_default is None:
+            assert readme_raw in ("None", "*(unset)*", "*(unset)*"), (
+                f"README default for {field} should be *(unset)* or None "
+                f"when Config.{field} is None, got {readme_raw!r}"
+            )
+            continue
+        # For other scalars, try literal evaluation
+        # README shows booleans as True/False, numbers as 12/0.5, strings as
+        # text/manual/prometheus without quotes.
+        cleaned = readme_raw.strip("`")
+        try:
+            readme_value = ast.literal_eval(cleaned)
+        except (ValueError, SyntaxError):
+            # String defaults without quotes (e.g. all-MiniLM-L6-v2, text)
+            readme_value = cleaned
+        assert readme_value == cfg_default, (
+            f"README default for {field} is {readme_raw!r} but "
+            f"Config.{field} default is {cfg_default!r}"
+        )
+
+    # The three historic drift groups must all be present (would have caught
+    # f7857d1). Keep them as an explicit regression anchor, not just via the
+    # generic missing check, so a future refactor that accidentally narrows
+    # scalar_fields does not silently hide the gap.
+    for anchor in [
+        "semantic_drift_enabled",
+        "side_effect_guard_enabled",
+        "compaction_tripwire_enabled",
+    ]:
+        assert anchor in documented, (
+            f"historic drift anchor {anchor} missing from README"
+        )
+
+
 def test_stagnation_env_override_out_of_range_aborts_startup():
     """Issue #132 behavior B: SNAGLINE_STAGNATION_MIN_NOVELTY=99 coerces
     cleanly but is out of range. The contract (option 1) is that invalid
