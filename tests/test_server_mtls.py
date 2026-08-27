@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import socket
 import ssl
 import subprocess
 import threading
@@ -130,7 +129,11 @@ def _mtls_client_context(
     client_key: str | None = None,
 ) -> ssl.SSLContext:
     """Client context that optionally verifies server and presents a client cert."""
-    ctx = ssl.create_default_context(cafile=ca_cert) if ca_cert else ssl.create_default_context()
+    ctx = (
+        ssl.create_default_context(cafile=ca_cert)
+        if ca_cert
+        else ssl.create_default_context()
+    )
     # For test simplicity skip server verification unless a CA is given explicitly
     # to verify the server. Most mTLS tests only care about server verifying
     # the client, so we keep server verification off when ca_cert is None.
@@ -148,16 +151,14 @@ def _mtls_client_context(
     return ctx
 
 
-def _request_with_context(
-    base: str, path: str, context: ssl.SSLContext, **kw
-):
+def _request_with_context(base: str, path: str, context: ssl.SSLContext, **kw):
     req = urllib.request.Request(base + path, **kw)
     try:
         with urllib.request.urlopen(req, timeout=5, context=context) as resp:
             return int(resp.status), resp.read()
     except urllib.error.HTTPError as exc:
         return int(exc.code), exc.read()
-    except (urllib.error.URLError, ssl.SSLError, OSError) as exc:
+    except (urllib.error.URLError, ssl.SSLError, OSError):
         # Handshake failures surface here when client cert is missing or untrusted.
         raise
 
@@ -166,13 +167,16 @@ def _request_with_context(
 # _resolve_ssl_context unit tests (no network)
 # ---------------------------------------------------------------------------
 
+
 def test_client_ca_requires_certfile():
     with pytest.raises(ValueError, match="client-ca requires certfile"):
         _resolve_ssl_context(None, None, None, client_ca="/tmp/ca.pem")
 
 
 def test_client_ca_with_ssl_context_is_rejected(tmp_path):
-    cert, key = _generate_ca(tmp_path) if shutil.which("openssl") else ("/tmp/x", "/tmp/y")
+    cert, key = (
+        _generate_ca(tmp_path) if shutil.which("openssl") else ("/tmp/x", "/tmp/y")
+    )
     # Use a dummy context to test rejection logic without needing real certs
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     with pytest.raises(ValueError, match="not both"):
@@ -181,7 +185,9 @@ def test_client_ca_with_ssl_context_is_rejected(tmp_path):
 
 def test_resolve_sets_verify_mode_only_when_client_ca_given(tmp_path):
     ca_cert, ca_key = _generate_ca(tmp_path)
-    server_cert, server_key = _generate_signed_cert(tmp_path, ca_cert, ca_key, "127.0.0.1", "server")
+    server_cert, server_key = _generate_signed_cert(
+        tmp_path, ca_cert, ca_key, "127.0.0.1", "server"
+    )
     # Without client_ca: verify_mode stays CERT_NONE (default)
     ctx_plain = _resolve_ssl_context(None, server_cert, server_key, None)
     assert ctx_plain is not None
@@ -198,7 +204,9 @@ def test_plain_and_server_tls_modes_unchanged_without_client_ca(tmp_path):
     assert _resolve_ssl_context(None, None, None) is None
     assert _resolve_ssl_context(None, None, None, None) is None
     ca_cert, ca_key = _generate_ca(tmp_path)
-    server_cert, server_key = _generate_signed_cert(tmp_path, ca_cert, ca_key, "127.0.0.1", "server")
+    server_cert, server_key = _generate_signed_cert(
+        tmp_path, ca_cert, ca_key, "127.0.0.1", "server"
+    )
     ctx = _resolve_ssl_context(None, server_cert, server_key)
     assert ctx.verify_mode == ssl.CERT_NONE
     # Explicit None client_ca must behave identically
@@ -209,6 +217,7 @@ def test_plain_and_server_tls_modes_unchanged_without_client_ca(tmp_path):
 # ---------------------------------------------------------------------------
 # CLI forwarding tests
 # ---------------------------------------------------------------------------
+
 
 def test_cli_serve_forwards_client_ca(monkeypatch):
     from snagline.cli import main
@@ -249,7 +258,12 @@ def test_cli_serve_without_client_ca_passes_none_or_absent(monkeypatch):
         captured.update(kwargs)
 
     monkeypatch.setattr("snagline.server.http_server.serve", _fake_serve)
-    assert main(["serve", "--port", "0", "--certfile", "/t/c.pem", "--keyfile", "/t/k.pem"]) == 0
+    assert (
+        main(
+            ["serve", "--port", "0", "--certfile", "/t/c.pem", "--keyfile", "/t/k.pem"]
+        )
+        == 0
+    )
     # When not given, client_ca is None (explicit) or absent; both are plain server-TLS
     assert captured.get("client_ca") is None
 
@@ -284,11 +298,16 @@ def test_cli_plain_mode_still_passes_no_tls_kwargs(monkeypatch):
 # mTLS handshake tests against ephemeral loopback port
 # ---------------------------------------------------------------------------
 
+
 @requires_openssl
 def test_mtls_handshake_succeeds_with_trusted_client_cert(tmp_path):
     ca_cert, ca_key = _generate_ca(tmp_path, "ca1")
-    server_cert, server_key = _generate_signed_cert(tmp_path, ca_cert, ca_key, "127.0.0.1", "server")
-    client_cert, client_key = _generate_signed_cert(tmp_path, ca_cert, ca_key, "client", "client")
+    server_cert, server_key = _generate_signed_cert(
+        tmp_path, ca_cert, ca_key, "127.0.0.1", "server"
+    )
+    client_cert, client_key = _generate_signed_cert(
+        tmp_path, ca_cert, ca_key, "client", "client"
+    )
 
     server = make_server(
         Monitor.default(),
@@ -326,7 +345,9 @@ def test_mtls_handshake_succeeds_with_trusted_client_cert(tmp_path):
 @requires_openssl
 def test_mtls_handshake_fails_without_client_cert(tmp_path):
     ca_cert, ca_key = _generate_ca(tmp_path, "ca1")
-    server_cert, server_key = _generate_signed_cert(tmp_path, ca_cert, ca_key, "127.0.0.1", "server")
+    server_cert, server_key = _generate_signed_cert(
+        tmp_path, ca_cert, ca_key, "127.0.0.1", "server"
+    )
 
     server = make_server(
         Monitor.default(),
@@ -345,7 +366,9 @@ def test_mtls_handshake_fails_without_client_cert(tmp_path):
             _request_with_context(base, "/health", ctx, method="GET")
 
         # Server must still be alive for a trusted client after the failed handshake
-        client_cert, client_key = _generate_signed_cert(tmp_path, ca_cert, ca_key, "client2", "client2")
+        client_cert, client_key = _generate_signed_cert(
+            tmp_path, ca_cert, ca_key, "client2", "client2"
+        )
         ctx2 = _mtls_client_context(client_cert=client_cert, client_key=client_key)
         status, body = _request_with_context(base, "/health", ctx2, method="GET")
         assert status == 200
@@ -358,10 +381,14 @@ def test_mtls_handshake_fails_without_client_cert(tmp_path):
 @requires_openssl
 def test_mtls_handshake_fails_with_untrusted_client_cert(tmp_path):
     ca_cert, ca_key = _generate_ca(tmp_path, "ca1")
-    server_cert, server_key = _generate_signed_cert(tmp_path, ca_cert, ca_key, "127.0.0.1", "server")
+    server_cert, server_key = _generate_signed_cert(
+        tmp_path, ca_cert, ca_key, "127.0.0.1", "server"
+    )
     # Untrusted CA and client cert signed by it
     ca2_cert, ca2_key = _generate_ca(tmp_path, "ca2")
-    bad_client_cert, bad_client_key = _generate_signed_cert(tmp_path, ca2_cert, ca2_key, "badclient", "badclient")
+    bad_client_cert, bad_client_key = _generate_signed_cert(
+        tmp_path, ca2_cert, ca2_key, "badclient", "badclient"
+    )
 
     server = make_server(
         Monitor.default(),
@@ -374,13 +401,19 @@ def test_mtls_handshake_fails_with_untrusted_client_cert(tmp_path):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         base = f"https://127.0.0.1:{server.server_address[1]}"
-        ctx_bad = _mtls_client_context(client_cert=bad_client_cert, client_key=bad_client_key)
+        ctx_bad = _mtls_client_context(
+            client_cert=bad_client_cert, client_key=bad_client_key
+        )
         with pytest.raises((urllib.error.URLError, ssl.SSLError, OSError)):
             _request_with_context(base, "/health", ctx_bad, method="GET")
 
         # Trusted client still succeeds on same server
-        good_client_cert, good_client_key = _generate_signed_cert(tmp_path, ca_cert, ca_key, "good", "good")
-        ctx_good = _mtls_client_context(client_cert=good_client_cert, client_key=good_client_key)
+        good_client_cert, good_client_key = _generate_signed_cert(
+            tmp_path, ca_cert, ca_key, "good", "good"
+        )
+        ctx_good = _mtls_client_context(
+            client_cert=good_client_cert, client_key=good_client_key
+        )
         status, body = _request_with_context(base, "/health", ctx_good, method="GET")
         assert status == 200
         assert json.loads(body) == {"status": "ok"}
@@ -405,7 +438,9 @@ def test_plain_and_server_tls_modes_regression(tmp_path):
 
     # Server-TLS without client_ca must not require a client cert
     ca_cert, ca_key = _generate_ca(tmp_path, "ca1")
-    server_cert, server_key = _generate_signed_cert(tmp_path, ca_cert, ca_key, "127.0.0.1", "server")
+    server_cert, server_key = _generate_signed_cert(
+        tmp_path, ca_cert, ca_key, "127.0.0.1", "server"
+    )
     tls_plain = make_server(
         Monitor.default(),
         host="127.0.0.1",
