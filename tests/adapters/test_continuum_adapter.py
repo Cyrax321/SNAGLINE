@@ -382,3 +382,67 @@ def test_modules_import_without_continuum(monkeypatch: pytest.MonkeyPatch) -> No
     sink_mod = importlib.import_module("snagline.sinks.continuum_sink")
     assert adapter_mod.ContinuumAdapter is not None
     assert sink_mod.ContinuumSink is not None
+
+
+def test_poll_rate_limits_storage_warnings(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Persistent outage logs once then suppresses repeats (issue #171)."""
+    storage = FakeStorage([make_perception(1)])
+    storage.fail_reads = True
+    monitor = RecordingMonitor()
+    adapter = ContinuumAdapter(monitor, storage, "run-1", start_at_tail=False)
+    with caplog.at_level(logging.WARNING, logger="snagline"):
+        for _ in range(5):
+            assert adapter.poll() == 0
+        warnings = [
+            r for r in caplog.records if "read failed for run run-1" in r.message
+        ]
+        assert len(warnings) == 1
+        assert warnings[0].levelname == "WARNING"
+        assert adapter.consecutive_failures == 5
+    # Recovery logs exactly once and resets the counter.
+    storage.fail_reads = False
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="snagline"):
+        assert adapter.poll() == 1
+        recoveries = [
+            r for r in caplog.records if "read recovered for run run-1" in r.message
+        ]
+        assert len(recoveries) == 1
+        assert "after 5 failure" in recoveries[0].message
+        assert adapter.consecutive_failures == 0
+    # Next poll with no new data must not log another recovery.
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="snagline"):
+        adapter.poll()
+        assert not [r for r in caplog.records if "read recovered" in r.message]
+
+
+def test_poll_logs_new_warning_after_recovery(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Intermittent failure after recovery surfaces a new warning (issue #171)."""
+    storage = FakeStorage([make_perception(1)])
+    storage.fail_reads = True
+    monitor = RecordingMonitor()
+    adapter = ContinuumAdapter(monitor, storage, "run-1", start_at_tail=False)
+    with caplog.at_level(logging.WARNING, logger="snagline"):
+        adapter.poll()
+        assert len([r for r in caplog.records if "read failed" in r.message]) == 1
+    storage.fail_reads = False
+    with caplog.at_level(logging.INFO, logger="snagline"):
+        adapter.poll()
+        assert len([r for r in caplog.records if "read recovered" in r.message]) == 1
+    # New outage after recovery must log a fresh warning.
+    storage.fail_reads = True
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="snagline"):
+        adapter.poll()
+        warnings = [r for r in caplog.records if "read failed" in r.message]
+        assert len(warnings) == 1
+        assert adapter.consecutive_failures == 1
+    # Fail-open still holds throughout.
+    storage.fail_reads = False
+    assert adapter.poll() == 0  # no new entries, but read succeeded
+    assert adapter.consecutive_failures == 0
