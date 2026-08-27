@@ -292,6 +292,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="PEM private key matching --certfile.",
     )
     p_serve.add_argument(
+        "--client-ca",
+        default=None,
+        help="PEM CA bundle that client certificates must chain to "
+        "(issue #145); requires --certfile and enables mutual TLS. "
+        "When given the sidecar requests a client certificate on every "
+        "handshake and rejects untrusted or missing ones.",
+    )
+    p_serve.add_argument(
         "--max-body-bytes",
         type=int,
         default=1_000_000,
@@ -987,7 +995,13 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    scheme = "https" if (args.certfile or args.keyfile) else "http"
+    if args.client_ca and not args.certfile:
+        print(
+            "snagline serve: --client-ca requires --certfile",
+            file=sys.stderr,
+        )
+        return 2
+    scheme = "https" if (args.certfile or args.keyfile or args.client_ca) else "http"
     print(
         f"snagline serve: listening on {scheme}://{args.host}:{args.port} "
         "(POST /events, GET /health)",
@@ -1009,11 +1023,15 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
     with suppress(KeyboardInterrupt):
-        # TLS kwargs are forwarded only when requested: with no --certfile/
-        # --keyfile the serve() call is exactly what it was before issue #120.
+        # TLS kwargs are forwarded only when requested: with no TLS flags the
+        # serve() call is exactly what it was before issue #120, byte-for-byte.
         tls_kwargs = (
-            {"certfile": args.certfile, "keyfile": args.keyfile}
-            if (args.certfile or args.keyfile)
+            {
+                "certfile": args.certfile,
+                "keyfile": args.keyfile,
+                "client_ca": args.client_ca,
+            }
+            if (args.certfile or args.keyfile or args.client_ca)
             else {}
         )
         serve(

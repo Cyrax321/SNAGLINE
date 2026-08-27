@@ -803,17 +803,21 @@ def _resolve_ssl_context(
     ssl_context: ssl.SSLContext | None,
     certfile: str | None,
     keyfile: str | None,
+    client_ca: str | None = None,
 ) -> ssl.SSLContext | None:
     """Return the server-side TLS context for the listener, or None.
 
     An explicit ``ssl_context`` wins; otherwise ``certfile`` (with optional
     ``keyfile``) is loaded into a fresh ``ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)``.
-    Contradictory or incomplete arguments raise ``ValueError`` at startup:
-    silently ignoring half a TLS configuration would bind plaintext while the
-    operator believes the listener is encrypted.
+    When ``client_ca`` is given the CA bundle is loaded via
+    ``load_verify_locations`` and ``verify_mode`` is set to
+    ``ssl.CERT_REQUIRED`` so every handshake must present a trusted client
+    certificate (issue #145). Contradictory or incomplete arguments raise
+    ``ValueError`` at startup: silently ignoring half a TLS configuration
+    would bind plaintext while the operator believes the listener is encrypted.
     """
     if ssl_context is not None:
-        if certfile is not None or keyfile is not None:
+        if certfile is not None or keyfile is not None or client_ca is not None:
             raise ValueError(
                 "pass either ssl_context or certfile/keyfile to serve(), not both"
             )
@@ -821,9 +825,14 @@ def _resolve_ssl_context(
     if certfile is None:
         if keyfile is not None:
             raise ValueError("keyfile requires certfile")
+        if client_ca is not None:
+            raise ValueError("client-ca requires certfile")
         return None
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(certfile, keyfile)
+    if client_ca is not None:
+        context.load_verify_locations(client_ca)
+        context.verify_mode = ssl.CERT_REQUIRED
     return context
 
 
@@ -882,6 +891,7 @@ def make_server(
     ssl_context: ssl.SSLContext | None = None,
     certfile: str | None = None,
     keyfile: str | None = None,
+    client_ca: str | None = None,
 ) -> ThreadingHTTPServer:
     """Construct a ready-to-``serve_forever()`` sidecar server.
 
@@ -891,8 +901,10 @@ def make_server(
     worker thread. Without them the server is plain HTTP, exactly as before.
     ``read_timeout`` bounds stalled body reads (issue #130); ``None`` resolves
     via ``SNAGLINE_SERVER_READ_TIMEOUT`` / ``Config.server_read_timeout``.
+    When ``client_ca`` is given the server requests a client certificate on
+    every handshake and verifies it against that CA bundle (issue #145).
     """
-    tls_context = _resolve_ssl_context(ssl_context, certfile, keyfile)
+    tls_context = _resolve_ssl_context(ssl_context, certfile, keyfile, client_ca)
     handler = make_handler(
         monitor, auth_token, max_body_bytes, max_risks, metrics_format, read_timeout
     )
@@ -915,6 +927,7 @@ def serve(
     ssl_context: ssl.SSLContext | None = None,
     certfile: str | None = None,
     keyfile: str | None = None,
+    client_ca: str | None = None,
 ) -> None:
     """Run the sidecar server in the foreground until interrupted."""
     tls_enabled = ssl_context is not None or certfile is not None
@@ -930,6 +943,7 @@ def serve(
         ssl_context=ssl_context,
         certfile=certfile,
         keyfile=keyfile,
+        client_ca=client_ca,
     )
     logger.info(
         "snagline sidecar listening on %s://%s:%d (POST /events, GET /health)%s",
