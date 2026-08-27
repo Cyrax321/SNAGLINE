@@ -300,13 +300,17 @@ class Config:
     # Sliding-window Shannon entropy over tool-call identities; flags both the
     # low-entropy rote-collapse shape and the high-entropy thrash shape
     # documented as "meltdown" in arXiv:2603.29231. Thresholds are bits and
-    # were tuned against fixtures: uniform alternation over ~5 tools (~2.32
-    # bits) stays silent, collapse onto one tool (<0.4 bits) and churn across
-    # 12+ (~3.6 bits) fire.
+    # were tuned against fixtures: uniform alternation over eight tools
+    # (~2.97 bits at window 20) stays silent, collapse onto one tool
+    # (<0.4 bits) and churn across 12+ (~3.52 bits) fire. The high threshold
+    # of 3.4 bits corresponds to ~10.5 tools uniform (2**3.4), so an
+    # eight-tool ReAct agent used evenly is comfortably below while
+    # pathological churn across a dozen distinct tools in one window still
+    # fires; see src/snagline/detectors/meltdown.py for the full rationale.
     meltdown_enabled: bool = False
     meltdown_window_size: int = 20
     meltdown_low_entropy: float = 0.4  # bits; below this the window is rote
-    meltdown_high_entropy: float = 2.8  # bits; above this the window thrashes
+    meltdown_high_entropy: float = 3.4  # bits; above this the window thrashes
     meltdown_rearm_steps: int = 10  # in-band steps before re-arming
 
     # Silent-abort detector (issue #86, opt-in). Evaluated once at

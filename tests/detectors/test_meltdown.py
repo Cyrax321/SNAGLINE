@@ -85,6 +85,30 @@ def test_reset_clears_state():
     assert len(second) == 1, "reset must clear both window and fired flag"
 
 
+def test_healthy_eight_tool_round_robin_stays_silent():
+    """Regression for #180: uniform 8-tool rotation must not fire at default."""
+    d = MeltdownDetector()  # default high 3.4, low 0.4, window 20
+    tools = [f"tool_{i}" for i in range(8)]
+    risks = []
+    for i in range(60):
+        risks.extend(_run(d, [_event(i, tools[i % 8])]))
+    assert risks == [], (
+        f"healthy 8-tool agent false-positive: {risks[0].detail if risks else ''}"
+    )
+
+
+def test_twelve_tool_churn_still_fires():
+    """12+ distinct in one window must still fire after retuning."""
+    d = MeltdownDetector()
+    tools = [f"tool_{i}" for i in range(12)]
+    risks = []
+    for i in range(24):
+        risks.extend(_run(d, [_event(i, tools[i % 12])]))
+    assert len(risks) == 1
+    assert "spiked" in risks[0].detail
+    assert risks[0].trigger == "meltdown"
+
+
 def test_inverted_thresholds_rejected():
     with pytest.raises(ValueError):
         MeltdownDetector(low_entropy=2.0, high_entropy=1.0)

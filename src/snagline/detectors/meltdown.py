@@ -17,9 +17,12 @@ Each full window yields Shannon entropy H over the identity distribution:
   these are ambition mismatches where a context reset recovers value.
 
 Thresholds are in **bits**, tuned against fixtures so healthy purposeful work
-stays quiet: uniform alternation across five tools (~2.32 bits at window 20)
-is below the default high threshold of 2.8; collapse onto 1-2 tools (<0.4
-bits) and churn across 12+ (~3.6 bits) fire. Non-tool steps (message /
+stays quiet: uniform alternation across eight tools (~2.97 bits at window 20)
+is below the default high threshold of 3.4 (about 10.5 tools uniform,
+2**3.4); collapse onto 1-2 tools (<0.4 bits) and churn across 12+
+(~3.52 bits) fire. An eight-tool ReAct agent used evenly is therefore in
+the quiet zone while 12 distinct tools in one window still triggers.
+Non-tool steps (message /
 plan_step / observation) do not feed the window -- they dilute the tool-call
 distribution the statistic reasons about.
 

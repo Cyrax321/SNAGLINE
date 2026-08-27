@@ -356,7 +356,9 @@ Sliding-window Shannon entropy over tool-call identities, flagging both
 collapse shapes documented for long-horizon agents (arXiv:2603.29231):
 rote collapse below `meltdown_low_entropy` bits and churn above
 `meltdown_high_entropy` bits. Thresholds were tuned against fixtures so
-healthy five-tool alternation (~2.32 bits) stays silent.
+healthy eight-tool round-robin (~2.97 bits at window 20) stays silent
+(high threshold 3.4 bits, about 10.5 tools uniform), while churn across
+12+ distinct tools in one window (~3.52 bits) fires.
 
 ### `SilentAbortDetector` (`silent_abort_enabled=True`)
 

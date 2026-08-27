@@ -49,14 +49,16 @@ from snagline.events import StepEvent, make_signature
 BASE_TS = 1_700_000_000.0
 STEP_GAP_S = 1.5
 
-# Five-tool pool used wherever healthy near-uniform entropy is wanted: a
+# Five-tool pool used where healthy near-uniform entropy is wanted: a
 # strict cycle over five identities yields log2(5) ~= 2.32 bits per full
-# 20-call meltdown window, comfortably inside the silent band (0.4, 2.8).
+# 20-call meltdown window, comfortably inside the silent band (0.4, 3.4).
+# The eight-tool round-robin used in the regression corpus gives ~=2.97
+# bits, also below the 3.4 high threshold (~10.5 tools uniform).
 TOOL_POOL = ("search_web", "read_file", "run_sql", "call_api", "summarize")
 
 # Twelve-tool pool for meltdown_high churn: any full 20-window of a strict
 # 12-cycle holds eight identities twice and four once, giving H ~= 3.52
-# bits, safely above the 2.8-bit thrash threshold.
+# bits, safely above the 3.4-bit thrash threshold.
 CHURN_POOL = (
     "tool_a",
     "tool_b",
@@ -619,6 +621,17 @@ def healthy_long_cycle(ep: str, rng: random.Random) -> list[dict]:
     return b.finish_with_output()
 
 
+def healthy_eight_tool_long(ep: str, rng: random.Random) -> list[dict]:
+    """Regression for #180: 30 calls cycling over eight tools, entropy ~2.97
+    bits, comfortably below the 3.4 high threshold. A healthy ReAct agent
+    with a broad toolbelt must stay quiet; the old 2.8 threshold fired here."""
+    eight_pool = tuple(f"tool_{i}" for i in range(8))
+    b = _Builder(ep, rng)
+    for i in range(30):
+        b.add(eight_pool[i % len(eight_pool)], f"q={rng.randrange(10**6)}")
+    return b.finish_with_output()
+
+
 def healthy_spaced_errors_wide(ep: str, rng: random.Random) -> list[dict]:
     """Two errors nine steps apart: never adjacent, at most 2 in any window."""
     b = _Builder(ep, rng)
@@ -709,6 +722,7 @@ HEALTHY_BUILDERS = [
     # from list position.
     lambda ep, rng: healthy_plain(ep, rng, 17),
     lambda ep, rng: healthy_plain(ep, rng, 8),
+    healthy_eight_tool_long,
 ]
 
 

@@ -272,7 +272,7 @@ the path variant below.
 | `SNAGLINE_MELTDOWN_ENABLED` | `meltdown_enabled` | False | Enable MeltdownDetector (tool entropy collapse/churn) |
 | `SNAGLINE_MELTDOWN_WINDOW_SIZE` | `meltdown_window_size` | 20 | Entropy window (tool calls) |
 | `SNAGLINE_MELTDOWN_LOW_ENTROPY` | `meltdown_low_entropy` | 0.4 | Below this many bits the window is rote collapse |
-| `SNAGLINE_MELTDOWN_HIGH_ENTROPY` | `meltdown_high_entropy` | 2.8 | Above this many bits the window is thrash |
+| `SNAGLINE_MELTDOWN_HIGH_ENTROPY` | `meltdown_high_entropy` | 3.4 | Above this many bits the window is thrash |
 | `SNAGLINE_MELTDOWN_REARM_STEPS` | `meltdown_rearm_steps` | 10 | In-band steps before re-arming |
 | `SNAGLINE_SILENT_ABORT_ENABLED` | `silent_abort_enabled` | False | Silent-abort check at end of episode |
 | `SNAGLINE_SIDE_EFFECT_GUARD_ENABLED` | `side_effect_guard_enabled` | False | Enable SideEffectGuardDetector (duplicate non-idempotent actions) |
@@ -400,7 +400,7 @@ full list): loop `window_size=12` / `repeat_threshold=3`, cascade
 `window_size=10` / `error_threshold=3` / `consecutive_threshold=3`, CUSUM
 `k=0.5` / `h=5.0` / `min_samples=5` / `sigma_floor_abs=1.0` /
 `sigma_floor_rel=0.05`, `episode_token_budget=50000`, meltdown
-`low_entropy=0.4` / `high_entropy=2.8` / `window_size=20`, goal_drift
+`low_entropy=0.4` / `high_entropy=3.4` / `window_size=20`, goal_drift
 `latency_k=3.0` / `min_samples=10` / `score_threshold=0.5` /
 `error_tolerance=0.1`, ml_ensemble `score_threshold=0.5`. No rounding up,
 no cherry-picking, and no claim of parity with the source paper
