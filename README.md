@@ -35,9 +35,9 @@ Existing monitoring approaches have gaps:
 - **LLM-based anomaly detection** requires embeddings, a real dependency, and is too expensive to run on every step.
 - **Manual log review** does not scale to week-long unattended runs.
 
-SNAGLINE asks a narrower question: can a zero-dependency, O(1) per-step monitor catch the most common failure modes (loops, error cascades, latency drift) in any agent, running on any framework, with sub-microsecond overhead?
+SNAGLINE asks a narrower question: can a zero-dependency, O(1) per-step monitor catch the most common failure modes (loops, error cascades, latency drift) in any agent, running on any framework, at microsecond-scale overhead?
 
-The answer is yes. SNAGLINE's tier-1 detectors are deterministic, O(1) amortized per step, run with no network calls and no LLM calls, and cost approximately 1 microsecond per `ingest()` call. They run cheaply enough to instrument every step of a production agent.
+The answer is yes. SNAGLINE's tier-1 detectors are deterministic, O(1) amortized per step, run with no network calls and no LLM calls, and cost a few microseconds per `ingest()` call (measured median 1.7--2.4 us/step on Apple silicon; see [Empirical Verification](#empirical-verification) and run `snagline bench` for your own hardware). They run cheaply enough to instrument every step of a production agent.
 
 ## Quick Start
 
@@ -143,9 +143,9 @@ in [docs/RETRAIN_CADENCE.md](docs/RETRAIN_CADENCE.md)).
 
 | Capability | What it gives you |
 |:--|:--|
-| **Zero dependencies** | `pip install snagline-agent` works with nothing but Python 3.10+. Every framework adapter is an optional extra. |
+| **Zero dependencies** | The core needs nothing but Python 3.10+ -- `dependencies = []` in `pyproject.toml`, non-negotiable. Not yet published to PyPI: install with `pip install .` from a clone (see [Quick Start](#quick-start)). Every framework adapter is an optional extra. |
 | **Fail-open guarantee** | Detector/sink exceptions are caught, logged, and never propagated into the host agent. A monitoring library that can crash the thing it monitors is a non-starter. |
-| **Sub-microsecond overhead** | Median 1.9 us/step, p99 33.9 us/step over 200,000 synthetic steps. Cheap enough to run on every step of a week-long run. |
+| **Microsecond-scale overhead** | Median 2.43 us/step, p99 27.71 us/step over 200,000 synthetic steps. Cheap enough to run on every step of a week-long run. Numbers and provenance in [Empirical Verification](#automated-test-suite-and-benchmarks); reproduce with `snagline bench`. |
 | **Framework-agnostic core** | All detector and sink logic operates only on the canonical `StepEvent` schema. Framework-specific code lives in isolated adapter modules and nowhere else. |
 | **No content retention** | Detectors reason about hashes, timings, counts, and booleans -- never prompt or response content. Adoption blocker if left ambiguous. |
 | **Streaming-first, batch-capable** | Primary use is live monitoring of a running agent. The same event schema and detectors also work over an exported trajectory file for offline analysis. |
@@ -175,7 +175,7 @@ config = Config(
     # Latency anomaly (CUSUM) detector
     cusum_k=0.5,                  # slack parameter (sensitivity)
     cusum_h=5.0,                  # alarm threshold
-    cusum_min_samples=20,         # warm-up before alarming
+    cusum_min_samples=5,          # warm-up before alarming
     cusum_sigma_floor_abs=1.0,    # minimum sigma (ms) for constant baselines
     cusum_sigma_floor_rel=0.05,   # minimum sigma as fraction of mean
 
@@ -236,6 +236,12 @@ the path variant below.
 | `SNAGLINE_GOAL_DRIFT_SCORE_THRESHOLD` | `goal_drift_score_threshold` | 0.5 | Emit a goal-drift risk above this score |
 | `SNAGLINE_ML_ENSEMBLE_ENABLED` | `ml_ensemble_enabled` | False | Wrap detectors in MLOrchestrator (noisy-OR) |
 | `SNAGLINE_ML_ENSEMBLE_SCORE_THRESHOLD` | `ml_ensemble_score_threshold` | 0.5 | Emit a combined risk above this score |
+| `SNAGLINE_SEMANTIC_DRIFT_ENABLED` | `semantic_drift_enabled` | False | Enable the semantic goal-drift detector (needs the `drift` extra) |
+| `SNAGLINE_SEMANTIC_DRIFT_MODEL` | `semantic_drift_model` | all-MiniLM-L6-v2 | sentence-transformers model to load for structural-label embeddings |
+| `SNAGLINE_SEMANTIC_DRIFT_MIN_SAMPLES` | `semantic_drift_min_samples` | 10 | Live steps before semantic scoring starts |
+| `SNAGLINE_SEMANTIC_DRIFT_TOLERANCE` | `semantic_drift_tolerance` | 0.3 | Cosine deviation treated as noise |
+| `SNAGLINE_SEMANTIC_DRIFT_CUSUM_K` | `semantic_drift_cusum_k` | 0.05 | Slack subtracted per evaluation |
+| `SNAGLINE_SEMANTIC_DRIFT_CUSUM_H` | `semantic_drift_cusum_h` | 0.5 | Sustained-deviation alarm threshold |
 | `SNAGLINE_MAX_EPISODE_WALL_SECONDS` | `max_episode_wall_seconds` | None | Wall-clock budget per episode from event timestamps; unset disables |
 | `SNAGLINE_WARN_FRACTION` | `warn_fraction` | 0.8 | Fraction of the budget where the single pre-breach warning fires |
 | `SNAGLINE_IDLE_WARN_SECONDS` | `idle_warn_seconds` | None | Gap between consecutive ingests that fires one `idle_gap` risk |
@@ -265,6 +271,11 @@ the path variant below.
 | `SNAGLINE_MELTDOWN_HIGH_ENTROPY` | `meltdown_high_entropy` | 2.8 | Above this many bits the window is thrash |
 | `SNAGLINE_MELTDOWN_REARM_STEPS` | `meltdown_rearm_steps` | 10 | In-band steps before re-arming |
 | `SNAGLINE_SILENT_ABORT_ENABLED` | `silent_abort_enabled` | False | Silent-abort check at end of episode |
+| `SNAGLINE_SIDE_EFFECT_GUARD_ENABLED` | `side_effect_guard_enabled` | False | Enable SideEffectGuardDetector (duplicate non-idempotent actions) |
+| `SNAGLINE_SIDE_EFFECT_ALLOWED_REPEATS` | `side_effect_allowed_repeats` | 1 | Occurrences tolerated before firing `side_effect_duplicate` |
+| `SNAGLINE_SIDE_EFFECT_SCORE` | `side_effect_score` | 0.9 | Score for a duplicate side effect (routes as critical) |
+| `SNAGLINE_COMPACTION_TRIPWIRE_ENABLED` | `compaction_tripwire_enabled` | False | Enable the compaction tripwire (`governance_decay`) |
+| `SNAGLINE_COMPACTION_TRIPWIRE_GRACE_STEPS` | `compaction_tripwire_grace_steps` | 3 | Events a pin has to re-confirm itself after a compaction |
 | `SNAGLINE_CALIBRATION` | `calibration` | manual | manual, or auto to derive thresholds from a baseline |
 | `SNAGLINE_CALIBRATION_ALPHA` | `calibration_alpha` | 0.001 | False-alarm probability budget per window evaluation |
 | `SNAGLINE_CALIBRATION_BASELINE_PATH` | `calibration_baseline_path` | *(unset)* | Path to a saved BaselineProfile for auto calibration |
@@ -298,17 +309,28 @@ SNAGLINE is verified not just with unit tests, but against real LLM agents, live
 ### Automated Test Suite and Benchmarks
 
 ```
-tests : 531 passed, 2 skipped  (pytest, Python 3.14, 2026-08-26;
-skip = langchain integrations without optional extras)
+tests : 622 passed, 2 skipped  (pytest, CPython 3.13.5, commit f7857d1;
+        skip = langchain integrations without optional extras.
+        CI matrix is Python 3.10--3.13 on ubuntu/macos/windows.)
 bench : median 2.43 us/step, p99 27.71 us/step over 200,000 synthetic steps
         (measured 2026-08-26 on Apple M1, arm64, CPython 3.14.5;
-         earlier 1.91 / 33.90 on same hardware 2026-08-15)
+         earlier 1.91 / 33.90 on same hardware 2026-08-15;
+         independently reproduced at commit f7857d1 on Apple M4 /
+         CPython 3.13.5: median 1.70 us/step, p99 1.77 us/step)
 enforcement (issue #93): added latency per halting step, halt_timeout_s=250ms,
         Apple M1 / CPython 3.14 / 2026-08-26: responding localhost endpoint
         median 264 us/step, refused (dead) endpoint median 57 us/step,
         stalled endpoint median 252.7 ms/step = the full timeout envelope;
         observe baseline unchanged at ~2 us/step. Reproduce with
         python benchmarks/enforcement_benchmark.py
+```
+
+Reproduce the suite exactly as CI does:
+
+```bash
+pip install -e . --no-deps
+pip install pytest pytest-cov
+python -m pytest tests/ -q
 ```
 
 Coverage spans:
@@ -701,8 +723,8 @@ SNAGLINE sits at the overlap of real-time monitoring, anomaly detection, and rel
 
 ## Status and Limitations
 
-- **Tested**: 385 tests passing, 1 skipped (see [Verification Status](#empirical-verification)).
-- **Not on PyPI.** Install from a clone (see Quick Start).
+- **Tested**: 622 tests passing, 2 skipped, 88.88% line coverage (see [Empirical Verification](#automated-test-suite-and-benchmarks) for the exact command and environment).
+- **Not on PyPI.** Install from a clone (see Quick Start). The `snagline-agent[langchain]`-style names used elsewhere in this README are the extras this package declares; until it is published, install them from a clone as `pip install ".[langchain]"`.
 - **Overhead is measured, not asserted.** Run `snagline bench` to reproduce on your hardware.
 - **Framework adapters are optional extras; sinks ship in core.** The LangChain, LangGraph, Autogen, and CrewAI adapters are optional installs (`pip install snagline-agent[langchain]`, etc.). The console, webhook, Slack, PagerDuty, and dedup sinks are zero-dependency stdlib and always available.
 - **The latency anomaly detector requires warm-up.** It learns a baseline from `cusum_min_samples` (default 5) events before any alarm can fire. This prevents false positives on normal jitter but means the detector is blind during warm-up; a calibrated `BaselineProfile` (issue #101) removes the blind spot for tools it describes. With `cusum_refit_every` set, the frozen baseline is periodically re-checked against a parallel learner, so drift in the baseline itself becomes visible instead of being learned away silently.
@@ -722,6 +744,25 @@ Contributions are welcome. This project is open source under MIT and deliberatel
 - [docs/ADAPTER_GUIDE.md](docs/ADAPTER_GUIDE.md) -- wire any framework into SNAGLINE in an afternoon.
 - [docs/DETECTOR_GUIDE.md](docs/DETECTOR_GUIDE.md) -- the detector contract, constraints, and test shape.
 - [docs/FRAMEWORK_BRIDGES.md](docs/FRAMEWORK_BRIDGES.md) -- connect external agent processes via HTTP, command, or file bridges.
+
+### Local development setup
+
+The core has no runtime dependencies, but the test suite needs `pytest` and
+`pytest-cov` (`[tool.pytest.ini_options] addopts` enables coverage, so a bare
+`pytest` fails with an unrecognised `--cov` until the plugin is installed).
+There is no `dev` extra yet, so install the tooling the same way CI does:
+
+```bash
+pip install -e . --no-deps
+pip install pytest pytest-cov ruff mypy
+python -m pytest tests/ -q        # 622 passed, 2 skipped
+ruff check src tests && ruff format --check src tests
+mypy src
+```
+
+Optional extras add their own test legs: `pip install ".[langchain]"`
+un-skips the LangChain integration tests, and `pip install ".[ml]"` enables
+the ESN ensemble leg.
 
 Open an issue before submitting large PRs.
 

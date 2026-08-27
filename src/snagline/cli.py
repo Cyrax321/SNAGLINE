@@ -298,6 +298,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Reject POST bodies larger than this with 413 [default: 1000000].",
     )
     p_serve.add_argument(
+        "--read-timeout",
+        type=float,
+        default=None,
+        help="Socket read timeout in seconds for sidecar connections "
+        "(issue #130); stalled senders are closed after this. Falls back "
+        "to $SNAGLINE_SERVER_READ_TIMEOUT or Config.server_read_timeout "
+        "[default: 30]. Documented next to --max-body-bytes.",
+    )
+    p_serve.add_argument(
         "--max-risks",
         type=int,
         default=1000,
@@ -850,6 +859,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             auth_token=auth_token,
             max_body_bytes=args.max_body_bytes,
             max_risks=args.max_risks,
+            read_timeout=args.read_timeout,
             **tls_kwargs,
         )
     return 0

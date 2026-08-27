@@ -334,6 +334,14 @@ class Config:
     # ?format=prometheus; environment override SNAGLINE_METRICS_FORMAT.
     metrics_format: str = "prometheus"
 
+    # --- Sidecar read timeout (issue #130) ----------------------------------
+    # Socket read timeout in seconds for each sidecar connection; a stalled
+    # sender that declares a large Content-Length but sends only a few bytes
+    # is closed after this many seconds so one slow peer cannot pin a handler
+    # thread indefinitely. Environment override SNAGLINE_SERVER_READ_TIMEOUT.
+    # Default comfortably above legitimate slow senders (30 s).
+    server_read_timeout: float = 30.0
+
     # --- Enforcement policy (issue #93) ---------------------------------------
     # Optional escalation layer that runs AFTER the sinks on every dispatched
     # risk (documented ordering: detectors -> sinks -> policy). "observe" (the

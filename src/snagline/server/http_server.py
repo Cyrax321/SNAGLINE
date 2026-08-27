@@ -19,7 +19,10 @@ counting finished episodes without waiting for cap eviction.
 
 POST bodies are capped at ``max_body_bytes`` (default 1 MB); larger payloads
 get 413. This keeps the sidecar safe to expose and able to absorb buffered
-telemetry from any host.
+telemetry from any host. Each connection also has a read timeout
+(``server_read_timeout``, default 30 s, ``SNAGLINE_SERVER_READ_TIMEOUT``)
+so a stalled sender that declares a large ``Content-Length`` but dribbles
+a few bytes cannot pin a handler thread indefinitely.
 
 Optionally protect the endpoints with a shared secret by passing
 ``auth_token=`` to ``make_server``/``serve``. When set, requests must carry the
@@ -106,6 +109,10 @@ _MAX_OVERCAP_DRAIN_EXCESS = 65_536
 # Drain reads happen in fixed chunks, so peak memory stays at one chunk no
 # matter what Content-Length claims.
 _DRAIN_CHUNK_BYTES = 16_384
+# Default socket read timeout in seconds (issue #130). Applied to the
+# handler class via ``StreamRequestHandler.timeout``; stdlib converts a
+# stalled ``rfile.read(n)`` into a logged timeout and a closed connection.
+_DEFAULT_READ_TIMEOUT = 30.0
 
 
 def _escape_label(value: str) -> str:
@@ -147,6 +154,46 @@ def _resolve_metrics_format(explicit: str | None) -> str:
         return name
     logger.warning("snagline: unknown metrics format %r; serving prometheus", candidate)
     return "prometheus"
+
+
+def _resolve_read_timeout(explicit: float | None) -> float:
+    """Pick the effective read timeout for sidecar connections.
+
+    Precedence: explicit argument, then ``SNAGLINE_SERVER_READ_TIMEOUT`` via
+    ``Config``, then the built-in ``Config`` default (30 s). Non-positive or
+    non-numeric values are logged and replaced by the default so a bad
+    knob never takes the sidecar down (fail-open, like
+    ``_resolve_metrics_format``).
+    """
+    candidate: Any = explicit
+    if candidate is None:
+        try:
+            candidate = Config.from_env_overrides().get("server_read_timeout")
+        except Exception:
+            logger.debug(
+                "snagline: env lookup for server_read_timeout failed",
+                exc_info=True,
+            )
+            candidate = None
+    if candidate is None:
+        candidate = Config().server_read_timeout
+    try:
+        value = float(candidate)
+    except (TypeError, ValueError):
+        logger.warning(
+            "snagline: invalid server_read_timeout %r; using default %s",
+            candidate,
+            _DEFAULT_READ_TIMEOUT,
+        )
+        return _DEFAULT_READ_TIMEOUT
+    if not math.isfinite(value) or value <= 0:
+        logger.warning(
+            "snagline: server_read_timeout %r must be positive; using default %s",
+            candidate,
+            _DEFAULT_READ_TIMEOUT,
+        )
+        return _DEFAULT_READ_TIMEOUT
+    return value
 
 
 def _choose_metrics_format(
@@ -357,16 +404,25 @@ def make_handler(
     max_body_bytes: int = 1_000_000,
     max_risks: int = 1000,
     metrics_format: str | None = None,
+    read_timeout: float | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     """Build a request-handler class bound to ``monitor``.
 
     ``metrics_format`` pins the default GET /metrics body; when omitted the
     SNAGLINE_METRICS_FORMAT environment variable decides, then the built-in
     "prometheus" default (see ``_resolve_metrics_format``).
+    ``read_timeout`` sets the socket read timeout in seconds; when omitted
+    ``SNAGLINE_SERVER_READ_TIMEOUT`` / ``Config.server_read_timeout`` decides,
+    then the built-in 30 s default (see ``_resolve_read_timeout``).
     """
     tracker = HookTracker()
 
     class _Handler(BaseHTTPRequestHandler):
+        # BaseHTTPRequestHandler inherits ``timeout`` from
+        # StreamRequestHandler (default None = block forever). Setting it
+        # here bounds every ``rfile.read(n)``; stdlib turns a stall into a
+        # logged "Request timed out" and a closed connection (issue #130).
+        timeout = _DEFAULT_READ_TIMEOUT
         # Class attribute set below; typed as Any to satisfy the checker.
         snagline_monitor: Any = None
         snagline_tracker: Any = None
@@ -459,10 +515,15 @@ def make_handler(
                 # kernel send RST and the sender can lose the 401 response
                 # entirely (same rationale as the over-cap drain, #121;
                 # observed over TLS where close timing shifts the race).
-                self._discard_overcap_body(int(self.headers.get("Content-Length") or 0))
+                declared = self._parse_content_length()
+                if declared is None:
+                    return
+                self._discard_overcap_body(declared)
                 self._respond(401, {"error": "unauthorized"})
                 return
-            length = int(self.headers.get("Content-Length") or 0)
+            length = self._parse_content_length()
+            if length is None:
+                return
             if length > self.snagline_max_body:
                 # Consume the over-cap body first: closing with megabytes
                 # unread makes the peer see EPIPE/reset instead of the 413
@@ -479,7 +540,7 @@ def make_handler(
             elif self.path == "/risks":
                 self._post_risks()
             else:
-                self._discard_overcap_body(int(self.headers.get("Content-Length") or 0))
+                self._discard_overcap_body(length)
                 self._respond(404, {"error": "not found"})
 
         def _post_risks(self) -> None:
@@ -491,6 +552,8 @@ def make_handler(
             malformed body is acknowledged (202) so the sender never retries.
             """
             body = self._read_body()
+            if body is None:
+                return
             try:
                 risk = json.loads(body.decode("utf-8"))
                 if not isinstance(risk, dict):
@@ -510,6 +573,8 @@ def make_handler(
 
         def _post_events(self) -> None:
             body = self._read_body()
+            if body is None:
+                return
             try:
                 obj = json.loads(body.decode("utf-8"))
             except (ValueError, json.JSONDecodeError):
@@ -561,6 +626,8 @@ def make_handler(
             the one that takes the sidecar down.
             """
             body = self._read_body()
+            if body is None:
+                return
             try:
                 payload = json.loads(body.decode("utf-8"))
             except (ValueError, json.JSONDecodeError):
@@ -610,6 +677,8 @@ def make_handler(
             retries noise.
             """
             body = self._read_body()
+            if body is None:
+                return
             try:
                 payload = json.loads(body.decode("utf-8"))
                 if not isinstance(payload, dict):
@@ -632,6 +701,33 @@ def make_handler(
                     "step_id": event.step_id if event else None,
                 },
             )
+
+        def _parse_content_length(self) -> int | None:
+            """Parse Content-Length, or None if malformed (already answered 400).
+
+            An absent Content-Length header is treated as length 0: the body
+            is silently empty, which is acceptable for these telemetry-only
+            endpoints. A present but non-numeric or negative value is answered
+            with 400 {"error": "invalid Content-Length"} and the caller
+            must return without reading any body bytes. Shared by ``do_POST``
+            and ``_read_body`` so every entry point fails the same way.
+            """
+            raw = self.headers.get("Content-Length")
+            if raw is None:
+                return 0
+            text = raw.strip() if isinstance(raw, str) else str(raw).strip()
+            if text == "":
+                self._respond(400, {"error": "invalid Content-Length"})
+                return None
+            try:
+                length = int(text)
+            except (ValueError, TypeError):
+                self._respond(400, {"error": "invalid Content-Length"})
+                return None
+            if length < 0:
+                self._respond(400, {"error": "invalid Content-Length"})
+                return None
+            return length
 
         def _discard_overcap_body(self, declared_length: int) -> None:
             """Read and throw away an over-cap body before replying 413.
@@ -660,8 +756,17 @@ def make_handler(
                     return  # client hung up early; nothing more to discard
                 remaining -= len(chunk)
 
-        def _read_body(self) -> bytes:
-            length = int(self.headers.get("Content-Length") or 0)
+        def _read_body(self) -> bytes | None:
+            """Read the request body, or None if Content-Length was malformed.
+
+            On malformed Content-Length the helper has already sent the 400
+            response; the caller must return immediately without sending
+            another response, otherwise the connection would see two status
+            lines.
+            """
+            length = self._parse_content_length()
+            if length is None:
+                return None
             return self.rfile.read(length)
 
         def _respond(self, code: int, payload: dict) -> None:
@@ -690,6 +795,7 @@ def make_handler(
     _Handler.snagline_collector = SidecarMetricsCollector()
     _attach_metrics_collector(monitor, _Handler.snagline_collector)
     _Handler.snagline_metrics_format = _resolve_metrics_format(metrics_format)
+    _Handler.timeout = _resolve_read_timeout(read_timeout)
     return _Handler
 
 
@@ -772,6 +878,7 @@ def make_server(
     max_body_bytes: int = 1_000_000,
     max_risks: int = 1000,
     metrics_format: str | None = None,
+    read_timeout: float | None = None,
     ssl_context: ssl.SSLContext | None = None,
     certfile: str | None = None,
     keyfile: str | None = None,
@@ -782,10 +889,12 @@ def make_server(
     HTTPS directly (issue #120): connections are wrapped server-side via
     stdlib ``ssl`` with the handshake running on each connection's own
     worker thread. Without them the server is plain HTTP, exactly as before.
+    ``read_timeout`` bounds stalled body reads (issue #130); ``None`` resolves
+    via ``SNAGLINE_SERVER_READ_TIMEOUT`` / ``Config.server_read_timeout``.
     """
     tls_context = _resolve_ssl_context(ssl_context, certfile, keyfile)
     handler = make_handler(
-        monitor, auth_token, max_body_bytes, max_risks, metrics_format
+        monitor, auth_token, max_body_bytes, max_risks, metrics_format, read_timeout
     )
     if tls_context is None:
         return ThreadingHTTPServer((host, port), handler)
@@ -802,6 +911,7 @@ def serve(
     max_body_bytes: int = 1_000_000,
     max_risks: int = 1000,
     metrics_format: str | None = None,
+    read_timeout: float | None = None,
     ssl_context: ssl.SSLContext | None = None,
     certfile: str | None = None,
     keyfile: str | None = None,
@@ -810,15 +920,16 @@ def serve(
     tls_enabled = ssl_context is not None or certfile is not None
     server = make_server(
         monitor,
-        host,
-        port,
-        auth_token,
-        max_body_bytes,
-        max_risks,
-        metrics_format,
-        ssl_context,
-        certfile,
-        keyfile,
+        host=host,
+        port=port,
+        auth_token=auth_token,
+        max_body_bytes=max_body_bytes,
+        max_risks=max_risks,
+        metrics_format=metrics_format,
+        read_timeout=read_timeout,
+        ssl_context=ssl_context,
+        certfile=certfile,
+        keyfile=keyfile,
     )
     logger.info(
         "snagline sidecar listening on %s://%s:%d (POST /events, GET /health)%s",
