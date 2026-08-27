@@ -29,7 +29,7 @@ from snagline.risk import FailureRisk, TriggerType
 try:
     from importlib.metadata import version
 
-    __version__ = version("snagline-agent")
+    __version__ = version("snagline")
 except Exception:
     __version__ = "0.1.0"
 

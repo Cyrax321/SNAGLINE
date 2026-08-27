@@ -44,7 +44,7 @@ The answer is yes. SNAGLINE's tier-1 detectors are deterministic, O(1) amortized
 Zero third-party dependencies. Install from PyPI:
 
 ```bash
-pip install snagline-agent
+pip install snagline
 ```
 
 Or from source:
@@ -122,7 +122,7 @@ The `goal_drift`, `ml_ensemble`, `stagnation`, and semantic goal-drift (`drift`)
 python -m your_agent --trace run.jsonl
 # 2. Build a healthy baseline profile from it.
 snagline baseline run.jsonl --output baseline.json
-# 2b. With semantics (needs pip install snagline-agent[drift]):
+# 2b. With semantics (needs pip install snagline[drift]):
 snagline baseline run.jsonl --output baseline.json --semantic --semantic-model all-MiniLM-L6-v2
 ```
 
@@ -140,7 +140,7 @@ config = Config(
 monitor = Monitor.default(config=config)
 ```
 
-The `drift` extra adds semantic drift on top of the same `BaselineProfile` (issue #81, `pip install snagline-agent[drift]`). Fit it from the same healthy trajectory with `fit_semantic_baseline` (`snagline/drift/goal_drift.py`), then enable it with `Config(semantic_drift_enabled=True, goal_drift_baseline=profile)`. Import is lazy and any model load or inference failure leaves it inert, logged and fail-open. With `ml_ensemble_enabled` and `semantic_drift_enabled` together the semantic signal joins the ESN ensemble inside the same noisy-OR `MLOrchestrator`.
+The `drift` extra adds semantic drift on top of the same `BaselineProfile` (issue #81, `pip install snagline[drift]`). Fit it from the same healthy trajectory with `fit_semantic_baseline` (`snagline/drift/goal_drift.py`), then enable it with `Config(semantic_drift_enabled=True, goal_drift_baseline=profile)`. Import is lazy and any model load or inference failure leaves it inert, logged and fail-open. With `ml_ensemble_enabled` and `semantic_drift_enabled` together the semantic signal joins the ESN ensemble inside the same noisy-OR `MLOrchestrator`.
 
 With `ml_ensemble_enabled`, `Monitor.default()` wraps the base detectors in a single `MLOrchestrator` instead of exposing them individually, so there is no double counting. All advanced detectors are documented in [docs/DETECTOR_GUIDE.md](docs/DETECTOR_GUIDE.md).
 
@@ -153,7 +153,7 @@ in [docs/RETRAIN_CADENCE.md](docs/RETRAIN_CADENCE.md)).
 
 | Capability | What it gives you |
 |:--|:--|
-| **Zero dependencies** | The core needs nothing but Python 3.10+ -- `dependencies = []` in `pyproject.toml`, non-negotiable. Published to PyPI as `snagline-agent` (`pip install snagline-agent`, or `pip install .` from a clone, see [Quick Start](#quick-start)). Every framework adapter is an optional extra. |
+| **Zero dependencies** | The core needs nothing but Python 3.10+ -- `dependencies = []` in `pyproject.toml`, non-negotiable. Published to PyPI as `snagline` (`pip install snagline`, or `pip install .` from a clone, see [Quick Start](#quick-start)). Every framework adapter is an optional extra. |
 | **Fail-open guarantee** | Detector/sink exceptions are caught, logged, and never propagated into the host agent. A monitoring library that can crash the thing it monitors is a non-starter. |
 | **Microsecond-scale overhead** | Median 2.43 us/step, p99 27.71 us/step over 200,000 synthetic steps. Cheap enough to run on every step of a week-long run. Numbers and provenance in [Empirical Verification](#automated-test-suite-and-benchmarks); reproduce with `snagline bench`. |
 | **Framework-agnostic core** | All detector and sink logic operates only on the canonical `StepEvent` schema. Framework-specific code lives in isolated adapter modules and nowhere else. |
@@ -448,11 +448,11 @@ SNAGLINE plugs into agent frameworks without becoming one. Six adapters ship in 
 | Adapter | Module | Install | Notes |
 |:--|:--|:--|:--|
 | Raw Python loop | `raw.py` | (built-in) | Context manager + decorator. Stdlib only, always available. The most-used adapter. |
-| LangChain | `langchain_adapter.py` | `pip install snagline-agent[langchain]` | `SnaglineCallbackHandler` subclassing `BaseCallbackHandler`. |
-| LangGraph | `langgraph_adapter.py` | `pip install snagline-agent[langgraph]` | `watch_graph` pass-through iterator wrapping `graph.stream(...)`. |
+| LangChain | `langchain_adapter.py` | `pip install snagline[langchain]` | `SnaglineCallbackHandler` subclassing `BaseCallbackHandler`. |
+| LangGraph | `langgraph_adapter.py` | `pip install snagline[langgraph]` | `watch_graph` pass-through iterator wrapping `graph.stream(...)`. |
 | Claude Code | `claude_code.py` | (built-in) | Maps native hook payloads via `ingest_payload`. Works over HTTP sidecar or file bridge. |
-| Autogen | `autogen.py` | `pip install snagline-agent[autogen]` | `SnaglineAutogenHandler` + `run_and_monitor` wrapping `agent.run_stream`. Duck-typed, no hard Autogen version pin. |
-| CrewAI | `crewai.py` | `pip install snagline-agent[crewai]` | `snagline_step_callback` for `Agent(step_callback=...)`, plus `observe_crewai_step`. Duck-typed, no hard CrewAI version pin. |
+| Autogen | `autogen.py` | `pip install snagline[autogen]` | `SnaglineAutogenHandler` + `run_and_monitor` wrapping `agent.run_stream`. Duck-typed, no hard Autogen version pin. |
+| CrewAI | `crewai.py` | `pip install snagline[crewai]` | `snagline_step_callback` for `Agent(step_callback=...)`, plus `observe_crewai_step`. Duck-typed, no hard CrewAI version pin. |
 
 Each adapter translates framework-specific events into `StepEvent`s and calls `monitor.ingest()`. None of them contain detection logic.
 
@@ -737,12 +737,12 @@ SNAGLINE sits at the overlap of real-time monitoring, anomaly detection, and rel
 ## Status and Limitations
 
 - **Tested**: 622 tests passing, 2 skipped, 88.88% line coverage (see [Empirical Verification](#automated-test-suite-and-benchmarks) for the exact command and environment).
-- **On PyPI as `snagline-agent` 0.1.0** (`pip install snagline-agent`; clone still works via `pip install .` see Quick Start). The `snagline-agent[langchain]`-style names used elsewhere in this README are the extras this package declares.
+- **On PyPI as `snagline` 0.1.0** (`pip install snagline`; clone still works via `pip install .` see Quick Start). The `snagline[langchain]`-style names used elsewhere in this README are the extras this package declares.
 - **Overhead is measured, not asserted.** Run `snagline bench` to reproduce on your hardware.
-- **Framework adapters are optional extras; sinks ship in core.** The LangChain, LangGraph, Autogen, and CrewAI adapters are optional installs (`pip install snagline-agent[langchain]`, etc.). The console, webhook, Slack, PagerDuty, and dedup sinks are zero-dependency stdlib and always available.
+- **Framework adapters are optional extras; sinks ship in core.** The LangChain, LangGraph, Autogen, and CrewAI adapters are optional installs (`pip install snagline[langchain]`, etc.). The console, webhook, Slack, PagerDuty, and dedup sinks are zero-dependency stdlib and always available.
 - **The latency anomaly detector requires warm-up.** It learns a baseline from `cusum_min_samples` (default 5) events before any alarm can fire. This prevents false positives on normal jitter but means the detector is blind during warm-up. The default was deliberately lowered from 20 to 5 (issue #9) so tools called only a handful of times are still monitored; the frozen baseline plus sigma floors keep a single large spike alarmable right after warm-up instead of requiring several sustained ones. A calibrated `BaselineProfile` (issue #101) removes the blind spot for tools it describes. With `cusum_refit_every` set, the frozen baseline is periodically re-checked against a parallel learner, so drift in the baseline itself becomes visible instead of being learned away silently.
 - **Idle detection and the silence hole.** In-band detectors can never see a hung host: no events means no `observe()` calls, so a deadlocked tool or an OOM-stopped worker produces no signal at all. The opt-in time axis narrows this from inside (`idle_warn_seconds` fires one `idle_gap` risk when consecutive ingests drift too far apart, derived from event timestamps so replay stays deterministic), but only while events were flowing to snagline in the first place. For full coverage pair it with `snagline watch --heartbeat PATH` plus an external watcher (cron, systemd timer, k8s probe): the heartbeat file's mtime going stale is the externally detectable "host is silent" signal.
-- **Goal-drift without the drift extra is structural only.** The built-in detector compares per-tool error rate, latency, and tool-name sets. Semantic (embedding) drift needs `pip install snagline-agent[drift]` (sentence-transformers, issue #81) and a baseline fitted with `fit_semantic_baseline`; without it the semantic side stays inert, logged and fail-open.
+- **Goal-drift without the drift extra is structural only.** The built-in detector compares per-tool error rate, latency, and tool-name sets. Semantic (embedding) drift needs `pip install snagline[drift]` (sentence-transformers, issue #81) and a baseline fitted with `fit_semantic_baseline`; without it the semantic side stays inert, logged and fail-open.
 - **No automatic repair.** Detection and escalation only. Repair is a distinct, harder problem.
 - **Alert spam under sustained anomalies.** The loop and error-cascade detectors emit a risk on every step while the triggering condition holds. Wrap a sink in `DedupSink` to suppress repeats within a cooldown window ([#4](https://github.com/Cyrax321/SNAGLINE/issues/4)).
 - **Slack delivery is fire-and-forget.** `SlackSink` posts to an incoming webhook with a short timeout; it never raises and never blocks `ingest()` for long.

@@ -144,7 +144,7 @@ to protect constraints it cannot see. Enable it with
 Both the Autogen and CrewAI adapters are duck-typed: they read event objects via
 `model_dump()` with attribute/dict fallbacks, so they import without the
 framework installed and never hard-couple to a specific release. The CONTINUUM
-adapter (`pip install snagline-agent[continuum]`, issue #79) is duck-typed the
+adapter (`pip install snagline[continuum]`, issue #79) is duck-typed the
 same way: it calls only the verified public read pair
 (`read_events(run_id, *, after_sequence=0, upto=None)` + `last_sequence(run_id)`)
 and never imports `continuum`. It maps `PERCEPTION_OBSERVED` to an observation,

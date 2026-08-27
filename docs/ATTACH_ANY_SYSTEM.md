@@ -69,7 +69,7 @@ enterprise-grade alerting. Concretely:
 - Config is a Python dataclass; no env/yml/toml loader, no secrets management
   (not 12-factor).
 - Not on PyPI (`version = 0.1.0`, README says "Not on PyPI"). `pip install
-  snagline-agent` does not work yet.
+  snagline` does not work yet.
 - No self-observability: no metrics endpoint, no health check, no structured
   logs for the monitor itself.
 
@@ -96,7 +96,7 @@ enterprise-grade alerting. Concretely:
    from env/yml with secret handling (12-factor).
    - **Done (code side):** PyPI-ready metadata + verified `python -m build`
      sdist/wheel (#37); `Config.from_env` / `load_file` / `resolve` 12-factor
-     loader (#30) wired into the CLI (#36). Actual `pip install snagline-agent`
+     loader (#30) wired into the CLI (#36). Actual `pip install snagline`
      upload still needs a PyPI token (not performed automatically).
 
 ### P1 (production readiness)

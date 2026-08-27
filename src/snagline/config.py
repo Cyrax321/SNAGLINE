@@ -238,7 +238,7 @@ class Config:
     # episode's running embedding centroid against the persisted
     # BaselineProfile's embedding_centroid through cosine distance. A CUSUM
     # over the deviation keeps it silent unless the divergence is sustained.
-    # Requires ``pip install snagline-agent[drift]`` AND a baseline fitted with
+    # Requires ``pip install snagline[drift]`` AND a baseline fitted with
     # snagline.drift.fit_semantic_baseline; anything missing degrades fail-open
     # to an inert, logged detector and the zero-dep preset is untouched.
     semantic_drift_enabled: bool = False

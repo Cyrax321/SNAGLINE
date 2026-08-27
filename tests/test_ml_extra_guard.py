@@ -45,7 +45,7 @@ def test_esn_module_raises_helpful_importerror_without_numpy(monkeypatch):
     try:
         importlib.import_module("snagline.ml.esn_ensemble")
     except ImportError as exc:
-        assert "snagline-agent[ml]" in str(exc)
+        assert "snagline[ml]" in str(exc)
     else:
         raise AssertionError("esn_ensemble imported without numpy")
 

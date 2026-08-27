@@ -201,7 +201,7 @@ def test_cli_baseline_semantic_missing_extra_exits_nonzero(
     rc = main(["baseline", str(traj), "--output", str(out), "--semantic"])
     assert rc != 0
     err = capsys.readouterr().err
-    assert "pip install snagline-agent[drift]" in err
+    assert "pip install snagline[drift]" in err
     assert not out.exists()  # never a half-fitted file
 
 
@@ -227,7 +227,7 @@ def test_cli_baseline_semantic_model_load_failure_exits_nonzero(
     rc = main(["baseline", str(traj), "--output", str(out), "--semantic"])
     assert rc != 0
     err = capsys.readouterr().err
-    assert "pip install snagline-agent[drift]" in err
+    assert "pip install snagline[drift]" in err
     assert not out.exists()
 
 

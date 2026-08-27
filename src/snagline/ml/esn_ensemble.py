@@ -1,6 +1,6 @@
 """Optional echo-state-network + CUSUM ensemble detector (the ``ml`` extra).
 
-Part of the optional ``ml`` extra: ``pip install snagline-agent[ml]`` (numpy
+Part of the optional ``ml`` extra: ``pip install snagline[ml]`` (numpy
 and scikit-learn). Core code never imports this module unconditionally:
 ``import snagline`` works with nothing but the standard library, and
 ``Monitor.default()`` only attempts the guarded import when
@@ -47,7 +47,7 @@ try:
 except ImportError as _exc:  # pragma: no cover - exercised via guard tests
     raise ImportError(
         "snagline.ml.esn_ensemble requires the optional 'ml' extra: "
-        "pip install snagline-agent[ml]"
+        "pip install snagline[ml]"
     ) from _exc
 
 from snagline.baseline import BaselineProfile

@@ -3,7 +3,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "snagline-agent"
+name = "snagline"
 version = "0.1.0"
 description = "Lightweight, dependency-free real-time failure detection for AI agents."
 readme = "README.md"
@@ -46,7 +46,7 @@ drift      = ["sentence-transformers>=2.2"]          # semantic goal-drift (issu
 dev        = ["pytest", "pytest-cov==7.1.0", "ruff==0.16.3", "mypy"]
 # Slack and PagerDuty sinks ship in the core and use only the stdlib, so they
 # need no extra dependency; the `all` extra pulls in the framework/SDK extras.
-all        = ["snagline-agent[langchain,langgraph,autogen,crewai,openai,anthropic,ml,drift,continuum]"]
+all        = ["snagline[langchain,langgraph,autogen,crewai,openai,anthropic,ml,drift,continuum]"]
 
 [project.scripts]
 snagline = "snagline.cli:main"

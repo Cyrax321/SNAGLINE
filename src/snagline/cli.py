@@ -483,7 +483,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--semantic",
         action="store_true",
         help="Also fit a semantic embedding centroid (requires pip install "
-        "snagline-agent[drift]; streams the trajectory fail-soft and "
+        "snagline[drift]; streams the trajectory fail-soft and "
         "persists via save_baseline).",
     )
     sp.add_argument(
@@ -809,7 +809,7 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
             except Exception as exc:
                 print(
                     "snagline baseline: drift extra not installed "
-                    f"({exc}); run `pip install snagline-agent[drift]` for semantic baseline",
+                    f"({exc}); run `pip install snagline[drift]` for semantic baseline",
                     file=sys.stderr,
                 )
                 return 1
@@ -818,7 +818,7 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
             except Exception as exc:
                 print(
                     f"snagline baseline: embedding model {semantic_model!r} failed to load "
-                    f"({exc}); run `pip install snagline-agent[drift]`",
+                    f"({exc}); run `pip install snagline[drift]`",
                     file=sys.stderr,
                 )
                 return 1
@@ -831,7 +831,7 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
             except Exception as exc:
                 print(
                     f"snagline baseline: semantic fit unavailable ({exc}); "
-                    "run `pip install snagline-agent[drift]`",
+                    "run `pip install snagline[drift]`",
                     file=sys.stderr,
                 )
                 return 1
@@ -894,7 +894,7 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
         except Exception as exc:
             print(
                 "snagline baseline: drift extra not installed "
-                f"({exc}); run `pip install snagline-agent[drift]` for semantic baseline",
+                f"({exc}); run `pip install snagline[drift]` for semantic baseline",
                 file=sys.stderr,
             )
             return 1
@@ -903,7 +903,7 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
         except Exception as exc:
             print(
                 f"snagline baseline: embedding model {semantic_model!r} failed to load "
-                f"({exc}); run `pip install snagline-agent[drift]`",
+                f"({exc}); run `pip install snagline[drift]`",
                 file=sys.stderr,
             )
             return 1
@@ -913,7 +913,7 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
         except Exception as exc:
             print(
                 f"snagline baseline: semantic fit unavailable ({exc}); "
-                "run `pip install snagline-agent[drift]`",
+                "run `pip install snagline[drift]`",
                 file=sys.stderr,
             )
             return 1

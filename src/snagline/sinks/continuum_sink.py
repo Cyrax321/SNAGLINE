@@ -20,7 +20,7 @@ Risks with no resolvable action key are dropped with a log line rather than
 fabricated onto the ledger: an invented key would either raise inside
 CONTINUUM or, worse, attach SNAGLINE's opinion to the wrong action.
 
-Optional extra ``snagline-agent[continuum]``. The ``continuum`` import is
+Optional extra ``snagline[continuum]``. The ``continuum`` import is
 lazy and guarded: constructing the sink without CONTINUUM installed raises a
 helpful ``ImportError`` naming the extra (host setup error), while runtime
 ``emit()`` failures are caught and logged -- monitoring must never break the
@@ -52,7 +52,7 @@ def _default_ledger_factory(storage: Any, run_id: str) -> Any:
     except ImportError as exc:  # pragma: no cover - exercised via fake factory
         raise ImportError(
             "ContinuumSink needs CONTINUUM's ActionLedger; install the "
-            "'snagline-agent[continuum]' extra or pass ledger_factory="
+            "'snagline[continuum]' extra or pass ledger_factory="
             "for a duck-typed replacement"
         ) from exc
     return ActionLedger(storage, run_id)

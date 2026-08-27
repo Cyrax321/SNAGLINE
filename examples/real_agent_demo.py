@@ -21,7 +21,7 @@ Model selection:
       tool-call sequence for the chosen chaos mode, so the run is fully
       deterministic and needs no API key.
 
-Requires: pip install snagline-agent[langchain]
+Requires: pip install snagline[langchain]
 
 Run:
     PYTHONPATH=src python3 examples/real_agent_demo.py --mode healthy
@@ -172,7 +172,7 @@ def main() -> None:
     if not LANGCHAIN_AVAILABLE:
         print(
             "This example needs langchain-core. Install it with:\n"
-            "    pip install snagline-agent[langchain]",
+            "    pip install snagline[langchain]",
             file=sys.stderr,
         )
         return

@@ -277,7 +277,7 @@ class SemanticGoalDriftDetector:
             except Exception as exc:
                 logger.warning(
                     "snagline: drift extra unavailable (%s); run "
-                    "`pip install snagline-agent[drift]` for semantic "
+                    "`pip install snagline[drift]` for semantic "
                     "goal-drift",
                     exc,
                 )

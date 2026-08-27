@@ -1,4 +1,4 @@
-"""LangGraph adapter (optional extra: ``pip install snagline-agent[langgraph]``).
+"""LangGraph adapter (optional extra: ``pip install snagline[langgraph]``).
 
 Wraps ``graph.stream(...)`` -- LangGraph's public streaming API -- and turns
 each node update into a ``StepEvent`` for the Monitor (project.md §6.3).
