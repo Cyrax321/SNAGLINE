@@ -7,6 +7,8 @@ contract, plus backward compatibility with payloads written before #88.
 
 from __future__ import annotations
 
+from typing import Any
+
 from snagline.adapters.anthropic import observe_anthropic_call
 from snagline.adapters.crewai import observe_crewai_step
 from snagline.adapters.openai import observe_openai_call
@@ -36,14 +38,14 @@ def test_side_effect_defaults_to_false():
 
 
 def test_step_event_loads_old_payloads_without_the_field():
-    payload = {
+    payload: dict[str, Any] = {
         "step_id": "s1",
         "episode_id": "ep",
         "timestamp": 1.0,
         "action_type": "tool_call",
         "action_signature": "abc123",
     }
-    assert StepEvent(**payload).side_effect is False
+    assert StepEvent(**payload).side_effect is False  # type: ignore[arg-type]
 
 
 def test_raw_adapter_passes_side_effect_through():

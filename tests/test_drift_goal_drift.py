@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+from typing import Any
 
 import pytest
 
@@ -150,9 +151,11 @@ DRIFT_VEC = [-1.0, 0.05]
 ALL_VECS = {**HEALTHY_VECS, "wipe_disk": DRIFT_VEC}
 
 
-def _map_embedder(table):
+def _map_embedder(table: dict[str, list[float]]) -> Any:
     def _embed(event: StepEvent) -> list[float]:
-        return list(table[event.tool_name])
+        tool = event.tool_name
+        assert tool is not None
+        return list(table[tool])
 
     return _embed
 
@@ -164,9 +167,9 @@ def _healthy(n: int, start: int = 0, episode: str = "ep") -> list[StepEvent]:
 
 def _detector(
     baseline: BaselineProfile,
-    embedder=None,
-    **overrides,
-) -> object:
+    embedder: Any = None,
+    **overrides: Any,
+) -> SemanticGoalDriftDetector:
 
     cfg = Config(**{"semantic_drift_model": "fake-model", **overrides})
     return SemanticGoalDriftDetector(
@@ -176,7 +179,7 @@ def _detector(
     )
 
 
-def _semantic_baseline(n: int = 30) -> object:
+def _semantic_baseline(n: int = 30) -> BaselineProfile:
 
     return fit_semantic_baseline(
         _healthy(n), _map_embedder(HEALTHY_VECS), model="fake-model"
@@ -496,7 +499,12 @@ def test_dimension_mismatch_in_monitor_path_is_fail_open(caplog):
     mon = Monitor.default(config=cfg)
     # Replace its semantic detector's embedder with a 2-dim one (setup for
     # the mismatch path): find it inside monitor.
-    sem = next(d for d in mon._detectors if d.name == "semantic_goal_drift")
+    from typing import cast
+
+    sem = cast(
+        SemanticGoalDriftDetector,
+        next(d for d in mon._detectors if d.name == "semantic_goal_drift"),
+    )
     sem._embedder = _map_embedder({"search": [0.0, 1.0]})  # type: ignore[attr-defined]
     sem._resolved = True  # type: ignore[attr-defined]
     with caplog.at_level(logging.WARNING, logger="snagline"):
@@ -560,7 +568,7 @@ def test_non_finite_embedding_is_skipped_without_poisoning(caplog):
     def flaky(event: StepEvent) -> list[float]:
         if event.step_id == "s5":
             return [float("nan"), 0.0]
-        return list(ALL_VECS[event.tool_name])
+        return list(ALL_VECS[event.tool_name])  # type: ignore[index]
 
     det._embedder = flaky  # type: ignore[attr-defined]
     det._resolved = True  # type: ignore[attr-defined]

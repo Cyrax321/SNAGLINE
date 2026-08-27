@@ -272,7 +272,7 @@ class TestConfigPlumbing:
         assert resolve_baseline_profile(both) is profile
         # Path loads a real file.
         assert (
-            resolve_baseline_profile(Config(calibration_baseline_path=str(path)))
+            resolve_baseline_profile(Config(calibration_baseline_path=str(path)))  # type: ignore[union-attr]
             .tools["search_web"]
             .count
             == 100
@@ -311,8 +311,8 @@ class TestMonitorWiring:
         cascade = next(
             d for d in auto._detectors if getattr(d, "name", "") == "error_cascade"
         )
-        assert cascade.error_threshold == 2
-        assert cascade.consecutive_threshold == 2
+        assert cascade.error_threshold == 2  # type: ignore[attr-defined]
+        assert cascade.consecutive_threshold == 2  # type: ignore[attr-defined]
 
     def test_corrupt_baseline_file_fails_open(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture

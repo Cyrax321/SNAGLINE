@@ -9,17 +9,21 @@ silent. Runs in CI with zero dependencies.
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 from snagline import Monitor, watch
 from snagline.detectors.error_cascade import ErrorCascadeDetector
 from snagline.detectors.latency_anomaly import LatencyAnomalyDetector
 from snagline.detectors.loop import LoopDetector
+from snagline.events import StepEvent
+from snagline.risk import FailureRisk
 
 
 class RecordingSink:
     def __init__(self) -> None:
-        self.risks: list = []
+        self.risks: list[FailureRisk] = []
 
-    def emit(self, risk) -> None:
+    def emit(self, risk: FailureRisk) -> None:
         self.risks.append(risk)
 
 
@@ -27,9 +31,9 @@ class EventRecorder:
     name = "rec"
 
     def __init__(self) -> None:
-        self.events: list = []
+        self.events: list[StepEvent] = []
 
-    def observe(self, event):
+    def observe(self, event: StepEvent) -> Any:
         self.events.append(event)
         return None
 
@@ -44,11 +48,11 @@ def _monitor() -> Monitor:
         [LoopDetector(), ErrorCascadeDetector(), LatencyAnomalyDetector(), rec],
         [sink],
     )
-    mon._recorder = rec
+    mon._recorder = rec  # type: ignore[attr-defined]
     return mon
 
 
-def test_full_agent_run_triggers_all_three_detectors():
+def test_full_agent_run_triggers_all_three_detectors() -> None:
     mon = _monitor()
     with watch(mon, "agent-ep") as step:
         # 1) healthy baseline: unique calls, stable latency (no false positives)
@@ -72,18 +76,20 @@ def test_full_agent_run_triggers_all_three_detectors():
         for j in range(6):
             step("tool_call", tool_name="search", args=f"heavy-{j}", latency_ms=400.0)
 
-    triggers = {r.trigger for r in mon._sinks[0].risks}
+    triggers = {r.trigger for r in cast(RecordingSink, mon._sinks[0]).risks}
     assert "loop" in triggers, triggers
     assert "error_cascade" in triggers, triggers
     assert "latency_anomaly" in triggers, triggers
     # events actually flowed through the adapter into every detector
-    assert len(mon._recorder.events) == 20 + 4 + 3 + 6
+    assert len(cast(EventRecorder, cast(Any, mon)._recorder).events) == 20 + 4 + 3 + 6
 
 
-def test_clean_run_stays_silent():
+def test_clean_run_stays_silent() -> None:
     mon = _monitor()
     with watch(mon, "clean-ep") as step:
         for i in range(25):
             step("tool_call", tool_name="search", args=f"q-{i}", latency_ms=80.0)
-    assert mon._sinks[0].risks == [], mon._sinks[0].risks
-    assert len(mon._recorder.events) == 25
+    assert cast(RecordingSink, mon._sinks[0]).risks == [], cast(
+        RecordingSink, mon._sinks[0]
+    ).risks
+    assert len(cast(EventRecorder, cast(Any, mon)._recorder).events) == 25

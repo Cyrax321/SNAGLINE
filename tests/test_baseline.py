@@ -157,7 +157,7 @@ def test_cli_baseline_semantic_with_fake_embedder(tmp_path, capsys, monkeypatch)
         def __call__(self, *a, **kw):
             return self.encode(*a, **kw)
 
-    fake_mod.SentenceTransformer = FakeST
+    fake_mod.SentenceTransformer = FakeST  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "sentence_transformers", fake_mod)
 
     rc = main(["baseline", str(traj), "--output", str(out), "--semantic"])
@@ -220,7 +220,7 @@ def test_cli_baseline_semantic_model_load_failure_exits_nonzero(
         def __init__(self, *a, **kw):
             raise RuntimeError("model download failed")
 
-    fake_mod.SentenceTransformer = FailingST
+    fake_mod.SentenceTransformer = FailingST  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "sentence_transformers", fake_mod)
     if out.exists():
         out.unlink()

@@ -197,7 +197,7 @@ def test_replay_fingerprints_unchanged_when_options_unset() -> None:
                 event = StepEvent(**json.loads(line))
                 episode = event.episode_id
                 monitor.ingest(event)
-        monitor.end_episode(episode)
+        monitor.end_episode(episode)  # type: ignore[arg-type]
         got = [(r.trigger, r.step_id, round(r.score, 4)) for r in sink.risks]
         assert got == expected[name], f"fingerprint changed for {name}"
 

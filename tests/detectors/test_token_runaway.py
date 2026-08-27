@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from snagline.detectors.token_runaway import TokenRunawayDetector
 from snagline.events import StepEvent
 
@@ -10,7 +12,7 @@ def _event(
     step_id: int,
     tokens: int | None,
     episode: str = "ep",
-    **kwargs: object,
+    **kwargs: Any,
 ) -> StepEvent:
     return StepEvent(
         step_id=str(step_id),

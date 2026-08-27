@@ -262,7 +262,7 @@ def test_config_flag_wires_detector_into_default_monitor():
 def test_enabled_detector_joins_the_ml_ensemble_wrap():
     cfg = Config(side_effect_guard_enabled=True, ml_ensemble_enabled=True)
     m = Monitor.default(config=cfg)
-    wrapped_names = [getattr(det, "name", "") for det in m._detectors[0]._base]
+    wrapped_names = [getattr(det, "name", "") for det in m._detectors[0]._base]  # type: ignore[attr-defined]
     assert "side_effect_guard" in wrapped_names
 
 

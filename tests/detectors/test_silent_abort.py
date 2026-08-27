@@ -52,12 +52,12 @@ def test_errored_final_step_not_flagged():
     assert d.finalize("ep") is None, "error-cascade owns error signals"
 
 
-def test_finalize_is_consumed_once():
+def test_finalize_is_consumed_once() -> None:
     d = SilentAbortDetector()
     d.observe(_event(0))
     assert d.finalize("ep") is not None
     assert d.finalize("ep") is None, "finalize pops its state"
-    assert d.reset("ep") is None or True  # reset safe on empty state
+    d.reset("ep")  # reset safe on empty state
 
 
 def test_unknown_episode_finalizes_to_none():

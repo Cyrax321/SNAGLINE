@@ -22,7 +22,7 @@ class _Stub:
             event.episode_id,
             event.step_id,
             self._score,
-            "stub",
+            "stub",  # type: ignore[arg-type]
             "stub",
             event.timestamp,
         )
