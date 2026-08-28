@@ -306,3 +306,39 @@ def test_from_env_overrides_still_drops_uncoercible_values():
     assert "stagnation_min_novelty" not in overrides
     cfg = Config.from_env(environ=env)  # default survives
     assert cfg.stagnation_min_novelty == 0.05
+
+
+def test_every_shipped_detector_is_in_readme_detector_table():
+    """Guard for issue #206: README detector table must list every detector wired in Monitor.default()."""
+    import pathlib
+    import re
+
+    readme = pathlib.Path(__file__).resolve().parent.parent / "README.md"
+    text = readme.read_text(encoding="utf-8")
+    start = text.index("## What it detects")
+    table_text = text[start : text.index("Detection is deterministic", start)]
+    # Extract detector names from table rows: | **Name** |
+    documented_raw = re.findall(r"\|\s*\*\*([A-Za-z\- ]+?)(?:\s*\(opt-in\))?\s*\*\*", table_text)
+    # Normalize: lower, hyphens to spaces, collapse whitespace
+    def norm(s: str) -> str:
+        s = s.lower().replace("-", " ")
+        s = re.sub(r"\s+", " ", s).strip()
+        return s
+
+    documented_norm = {norm(d) for d in documented_raw}
+    detectors_dir = pathlib.Path(__file__).resolve().parent.parent / "src/snagline/detectors"
+    shipped = set()
+    for fp in detectors_dir.glob("*.py"):
+        if fp.name in ("__init__.py", "base.py", "windowing.py"):
+            continue
+        src = fp.read_text(encoding="utf-8")
+        for m in re.finditer(r"class\s+(\w+Detector)\b", src):
+            name = m.group(1)
+            words = re.sub(r"([a-z])([A-Z])", r"\1 \2", name).lower()
+            words = words.replace("-", " ")
+            shipped.add(words)
+    # The README also lists Horizon-scale time axis and ML ensemble which are not Detector subclasses in the same sense;
+    # we only check that every shipped Detector appears in the table, not the converse.
+    for det in shipped:
+        assert det in documented_norm, f"Detector {det!r} not found in README detector table; add a row under '## What it detects'"
+
