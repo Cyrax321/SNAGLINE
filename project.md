@@ -411,8 +411,11 @@ class Monitor:
 
 **Snapshot / restore (issue #91).** `Monitor.snapshot(path)` writes a
 versioned JSON payload: snapshot-format constant, per-detector
-`dump_state()` output for every `StatefulDetector`, and `DedupSink`
-cooldowns under its default key function. Writes are atomic (tmp file +
+`dump_state()` output for every `StatefulDetector`, `DedupSink`
+cooldowns under its default key function, and time-axis clocks
+under `"time_axis"` keyed by episode_id and bounded by the same
+`max_live_episodes` LRU (issue #172). All are restored tolerantly
+so new snapshots remain loadable by older code without a format-version bump. Writes are atomic (tmp file +
 `os.replace`). `Monitor.restore(path)` is a setup-time operation with the
 one deliberate exception to fail-open: a version or strict-composition
 mismatch raises, because a monitor that silently starts blank is exactly
