@@ -318,7 +318,10 @@ def test_every_shipped_detector_is_in_readme_detector_table():
     start = text.index("## What it detects")
     table_text = text[start : text.index("Detection is deterministic", start)]
     # Extract detector names from table rows: | **Name** |
-    documented_raw = re.findall(r"\|\s*\*\*([A-Za-z\- ]+?)(?:\s*\(opt-in\))?\s*\*\*", table_text)
+    documented_raw = re.findall(
+        r"\|\s*\*\*([A-Za-z\- ]+?)(?:\s*\(opt-in\))?\s*\*\*", table_text
+    )
+
     # Normalize: lower, hyphens to spaces, collapse whitespace
     def norm(s: str) -> str:
         s = s.lower().replace("-", " ")
@@ -326,7 +329,9 @@ def test_every_shipped_detector_is_in_readme_detector_table():
         return s
 
     documented_norm = {norm(d) for d in documented_raw}
-    detectors_dir = pathlib.Path(__file__).resolve().parent.parent / "src/snagline/detectors"
+    detectors_dir = (
+        pathlib.Path(__file__).resolve().parent.parent / "src/snagline/detectors"
+    )
     shipped = set()
     for fp in detectors_dir.glob("*.py"):
         if fp.name in ("__init__.py", "base.py", "windowing.py"):
@@ -340,5 +345,6 @@ def test_every_shipped_detector_is_in_readme_detector_table():
     # The README also lists Horizon-scale time axis and ML ensemble which are not Detector subclasses in the same sense;
     # we only check that every shipped Detector appears in the table, not the converse.
     for det in shipped:
-        assert det in documented_norm, f"Detector {det!r} not found in README detector table; add a row under '## What it detects'"
-
+        assert det in documented_norm, (
+            f"Detector {det!r} not found in README detector table; add a row under '## What it detects'"
+        )
