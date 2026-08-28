@@ -405,7 +405,7 @@ cannot.
 
 Detectors that implement the duck-typed `dump_state()` / `load_state(state)`
 pair (`detectors.base.StatefulDetector`; JSON-compatible data only, never
-pickle) participate in `Monitor.snapshot(path)` / `Monitor.restore(path)`.
+pickle) participate in `Monitor.snapshot(path)` / `Monitor.restore(path)`, and Monitor-level time-axis clocks (`_EpisodeClock` per episode_id) are captured alongside them under `"time_axis"` and restored tolerantly (issue #172).
 Snapshots are written atomically (tmp + `os.replace`). Restore is a
 setup-time operation: a version or strict-composition mismatch raises rather
 than failing open -- a monitor that silently starts blank is exactly the quiet
