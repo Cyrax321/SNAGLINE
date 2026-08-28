@@ -66,10 +66,18 @@ class _HookTargetServer:
     """Minimal localhost POST target for webhook-sink teardown tests.
 
     Raw stdlib socket accept loop on an ephemeral 127.0.0.1 port. With
-    ``respond_ok`` it answers 200 like a healthy sink endpoint; in drop mode
-    it accepts and immediately closes, forcing the WebhookSink failure path
-    while still giving the test a deterministic readiness signal (the first
-    accepted connection). No sleeps needed anywhere.
+    ``respond_ok`` it reads one whole request (headers plus the declared
+    ``Content-Length``) and answers 200 like a healthy sink endpoint; in drop
+    mode it accepts and immediately closes, forcing the WebhookSink failure
+    path while still giving the test a deterministic readiness signal (the
+    first accepted connection). No sleeps needed anywhere.
+
+    Reading the *whole* request matters (issue #215): ``http.client`` writes
+    the header block and the body as two separate sends on a TCP_NODELAY
+    socket, so they arrive as two segments whenever this listener reaches
+    ``recv()`` before the second one lands. A single ``recv()`` then recorded
+    the headers alone, the ``"trigger": "loop"`` assertions below could never
+    match, and replying 200 that early reset the client mid-body.
     """
 
     def __init__(self, respond_ok: bool) -> None:
@@ -103,17 +111,52 @@ class _HookTargetServer:
             self.accepts += 1
             self._connected.set()
             try:
-                data = conn.recv(65536)
-                if self.respond_ok and data:
-                    self.bodies.append(data)
-                    conn.sendall(b"HTTP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n")
-                # Drop mode: closing with no response IS the failure the
-                # sink must survive.
+                if self.respond_ok:
+                    data = self._read_request(conn)
+                    if data:
+                        self.bodies.append(data)
+                        conn.sendall(b"HTTP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n")
+                else:
+                    # Drop mode: reading one segment and closing with no
+                    # response IS the failure the sink must survive.
+                    conn.recv(65536)
             except OSError:
                 pass
             finally:
                 with suppress(OSError):
                     conn.close()
+
+    @staticmethod
+    def _read_request(conn: socket.socket) -> bytes:
+        """Read one complete HTTP request: headers plus ``Content-Length`` bytes.
+
+        Returns the raw request as received, so callers keep asserting over the
+        same headers-plus-body bytes they always did. A client that hangs up
+        early yields the partial request rather than blocking; reads are bounded
+        by a socket timeout so a client that never finishes cannot pin this
+        thread for the life of the test session.
+        """
+        conn.settimeout(_STOP_TIMEOUT_S)
+        buf = b""
+        while b"\r\n\r\n" not in buf:
+            chunk = conn.recv(65536)
+            if not chunk:
+                return buf  # hung up before finishing the header block
+            buf += chunk
+        head, _, body = buf.partition(b"\r\n\r\n")
+        length = 0
+        for line in head.split(b"\r\n")[1:]:
+            name, _, value = line.partition(b":")
+            if name.strip().lower() == b"content-length":
+                with suppress(ValueError):
+                    length = int(value.strip())
+                break
+        while len(body) < length:
+            chunk = conn.recv(65536)
+            if not chunk:
+                break  # short body: record what arrived, let the test say so
+            body += chunk
+        return head + b"\r\n\r\n" + body
 
 
 def _await_exit(proc: subprocess.Popen, timeout: float) -> None:
@@ -434,6 +477,44 @@ def test_watch_follow_teardown_reaps_the_child_on_a_healthy_run(
         assert proc.returncode in (0, -signal.SIGTERM)
         if proc.returncode == 0:
             assert "ingested 4 step(s)" in catcher.text
+
+
+def test_hook_target_server_records_a_body_that_arrives_in_a_second_segment() -> None:
+    """Issue #215 regression: the stub sink must read a whole request.
+
+    Drives the segmentation deliberately instead of waiting for the kernel to
+    do it: the header block goes out on its own, and the stub must stay silent
+    until the body lands. The silence is the proof that it already consumed the
+    header segment by itself, which is exactly the case where a single
+    ``recv()`` used to record headers with no body and answer 200 mid-request.
+    """
+    server = _HookTargetServer(respond_ok=True)
+    server.start()
+    body = json.dumps({"trigger": "loop", "episode_id": "ep-follow"}).encode()
+    head = (
+        b"POST /sink HTTP/1.1\r\n"
+        b"Host: 127.0.0.1\r\n"
+        b"Content-Type: application/json\r\n"
+        b"Content-Length: " + str(len(body)).encode() + b"\r\n"
+        b"Connection: close\r\n\r\n"
+    )
+    client = socket.create_connection(("127.0.0.1", server.port), timeout=30)
+    try:
+        client.sendall(head)
+        # An incomplete request must not be answered: nothing may come back
+        # while the declared body is still outstanding.
+        client.settimeout(0.5)
+        with pytest.raises(TimeoutError):
+            client.recv(1024)
+        client.settimeout(30)
+        client.sendall(body)
+        assert b"200 OK" in client.recv(1024)
+    finally:
+        with suppress(OSError):
+            client.close()
+        server.close()
+    assert server.bodies, "stub recorded no request at all"
+    assert body in server.bodies[0], server.bodies
 
 
 def test_watch_follow_cleanup_reaps_the_child_when_the_sink_endpoint_is_dead(
