@@ -85,6 +85,7 @@ class _HookTargetServer:
         self.bodies: list[bytes] = []
         self.accepts = 0
         self._connected = threading.Event()
+        self.headers_read = threading.Event()
         self._sock = socket.socket()
         self._sock.bind(("127.0.0.1", 0))
         self._sock.listen(8)
@@ -103,6 +104,13 @@ class _HookTargetServer:
         return self._connected.wait(timeout)
 
     def _serve(self) -> None:
+        """Accept connections forever until ``close()`` shuts the listener down.
+
+        In ``respond_ok`` mode each connection is read to completion and then
+        answered 200; in drop mode it is read once and closed with no response.
+        Both modes always close the connection, so a failing test leaves no
+        socket behind.
+        """
         while True:
             try:
                 conn, _ = self._sock.accept()
@@ -126,8 +134,7 @@ class _HookTargetServer:
                 with suppress(OSError):
                     conn.close()
 
-    @staticmethod
-    def _read_request(conn: socket.socket) -> bytes:
+    def _read_request(self, conn: socket.socket) -> bytes:
         """Read one complete HTTP request: headers plus ``Content-Length`` bytes.
 
         Returns the raw request as received, so callers keep asserting over the
@@ -135,14 +142,22 @@ class _HookTargetServer:
         early yields the partial request rather than blocking; reads are bounded
         by a socket timeout so a client that never finishes cannot pin this
         thread for the life of the test session.
+
+        ``headers_read`` is set as soon as the header terminator is consumed, so
+        a test can drive segmentation deliberately: without it, "no response
+        arrived" only means this thread had not run yet, and a single-``recv()``
+        listener that woke up late enough to get both segments at once would
+        look just as correct.
         """
         conn.settimeout(_STOP_TIMEOUT_S)
         buf = b""
         while b"\r\n\r\n" not in buf:
             chunk = conn.recv(65536)
             if not chunk:
+                self.headers_read.set()
                 return buf  # hung up before finishing the header block
             buf += chunk
+        self.headers_read.set()
         head, _, body = buf.partition(b"\r\n\r\n")
         length = 0
         for line in head.split(b"\r\n")[1:]:
@@ -483,10 +498,12 @@ def test_hook_target_server_records_a_body_that_arrives_in_a_second_segment() ->
     """Issue #215 regression: the stub sink must read a whole request.
 
     Drives the segmentation deliberately instead of waiting for the kernel to
-    do it: the header block goes out on its own, and the stub must stay silent
-    until the body lands. The silence is the proof that it already consumed the
-    header segment by itself, which is exactly the case where a single
-    ``recv()`` used to record headers with no body and answer 200 mid-request.
+    do it: the header block goes out on its own, the stub is made to consume it
+    before the body is sent, and it must stay silent until the body lands. That
+    ordering is what makes the silence meaningful -- a single ``recv()`` that
+    happened to run after both sends would see one coalesced segment and look
+    perfectly healthy, so the test waits for ``headers_read`` rather than
+    trusting the scheduler to interleave the way it wants.
     """
     server = _HookTargetServer(respond_ok=True)
     server.start()
@@ -501,6 +518,9 @@ def test_hook_target_server_records_a_body_that_arrives_in_a_second_segment() ->
     client = socket.create_connection(("127.0.0.1", server.port), timeout=30)
     try:
         client.sendall(head)
+        # The stub has now taken the header segment on its own: whatever it does
+        # next, it did it knowing only the headers.
+        assert server.headers_read.wait(30), "stub never read the request headers"
         # An incomplete request must not be answered: nothing may come back
         # while the declared body is still outstanding.
         client.settimeout(0.5)
