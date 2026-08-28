@@ -167,6 +167,10 @@ jobs:
           ver=$(python -c "import re, pathlib; t=pathlib.Path('pyproject.toml').read_text(); m=re.search(r'^version\s*=\s*\"([^\"]+)\"', t, re.M); print(m.group(1) if m else '')")
           echo "pyproject version: $ver"
           if [ -z "$ver" ]; then echo "could not parse version from pyproject.toml"; exit 1; fi
+          if [[ "$ver" == *".dev"* ]]; then
+            echo "dev version $ver, skipping tag check"
+            exit 0
+          fi
           if ! git rev-parse "v$ver" >/dev/null 2>&1; then
             echo "missing tag v$ver for pyproject version $ver"
             echo "create it with: git tag -a v$ver -m \"SNAGLINE $ver -- see CHANGELOG.md\" && git push origin v$ver"
