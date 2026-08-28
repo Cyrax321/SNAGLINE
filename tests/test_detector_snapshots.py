@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import json
 
+from snagline.config import Config
 from snagline.detectors.compaction_tripwire import CompactionTripwireDetector
 from snagline.detectors.side_effect_guard import SideEffectGuardDetector
 from snagline.detectors.stagnation import StagnationDetector
+from snagline.detectors.windowing import effective_window_size
 from snagline.events import StepEvent
 from snagline.monitor import Monitor
 
@@ -169,6 +171,54 @@ def test_stagnation_restore_clamps_flags_to_current_window_size():
     for i in range(10):
         d_small.observe(_ev(100 + i, signature="stale"))
     assert len(d_small._windows["ep"].flags) == 4
+
+
+def test_stagnation_restore_keeps_the_scaled_window_and_still_fires_on_time():
+    """Issue #218: with auto-scaling on (#92) the clamp must use the *effective*
+    window for the restored scaler position, not the base. Clamping to the base
+    dropped flags observe() had already accumulated, and since every check there
+    is gated on ``len(flags) >= target`` the detector went blind for
+    ``target - window_size`` steps -- long enough to miss a collapse outright."""
+    cfg = Config(stagnation_enabled=True, window_scale_steps=10, max_window=512)
+    base = 4
+
+    def fresh() -> StagnationDetector:
+        return StagnationDetector(
+            window_size=base, min_novelty=0.25, patience=1, config=cfg
+        )
+
+    # 24 distinct actions grow the window past the base, then the agent stalls.
+    warmup = [_ev(i, signature=f"u{i}") for i in range(24)]
+    stall = _repeats(24, 40)
+
+    live = fresh()
+    assert _risks(live, warmup) == [], "novel work must stay quiet"
+    dumped = json.loads(json.dumps(live.dump_state()))
+    live_flags = len(live._windows["ep"].flags)
+    assert live_flags > base, "window scaled past its base"
+    assert dumped["counts"]["ep"] == len(warmup)
+
+    restored = fresh()
+    restored.load_state(dumped)
+    w = restored._windows["ep"]
+    assert len(w.flags) == live_flags, (
+        "restore must keep the scaled window, not clamp it to the base"
+    )
+    assert w.novel_in_window == sum(w.flags), "counter must match kept flags"
+
+    # Behavioral consequence: the restarted detector reports the collapse on the
+    # same step as the one that never restarted.
+    live_fires = [r.step_id for r in _risks(live, stall)]
+    assert live_fires, "the uninterrupted detector must report the collapse"
+    assert [r.step_id for r in _risks(restored, stall)] == live_fires
+
+    # Still bounded afterwards: the window tracks the live effective target.
+    for i in range(60):
+        restored.observe(_ev(200 + i, signature="stale"))
+    n = len(warmup) + len(stall) + 60
+    assert len(restored._windows["ep"].flags) == effective_window_size(
+        base, n, cfg.window_scale_steps, cfg.max_window
+    )
 
 
 def test_stagnation_recovery_rearms_after_restore():

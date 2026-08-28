@@ -181,25 +181,36 @@ class StagnationDetector:
 
     def load_state(self, state: dict[str, Any]) -> None:
         self._windows = {}
+        # Read the scaler positions first: they decide how large the restored
+        # window is allowed to be when auto-scaling is on (issue #92).
+        self._counts = {ep: int(n) for ep, n in state.get("counts", {}).items()}
         for ep, raw in state.get("windows", {}).items():
             w = _EpisodeWindow()
-            # Clamp to the CURRENT window_size: restore is tolerant by default
-            # (matches by name, ignores config), so a snapshot taken with a
-            # larger window must not leave an overlong deque whose equality-
-            # based eviction never fires again. Mirrors LoopDetector's
-            # deque(sigs, maxlen=self.window_size) rebuild; the sliding
-            # counter is recomputed from the truncated flags so the two stay
-            # consistent. With auto-scaling enabled (issue #92) the deque is
-            # deliberately UNCAPPED: observe() trims at the current effective
-            # target every step, and a base-sized maxlen would silently drop
-            # flags and blind the detector once the target grows past it.
-            flags = [bool(b) for b in raw.get("flags", [])][-self.window_size :]
+            # Clamp to the window this detector will actually evaluate against:
+            # restore is tolerant by default (matches by name, ignores config),
+            # so a snapshot taken with a larger window must not leave an
+            # overlong deque whose eviction never fires again (issue #149). With
+            # auto-scaling that bound is the *effective* target for the restored
+            # scaler position, not the base -- clamping to the base would drop
+            # the very flags the snapshot carries and blind observe(), whose
+            # every check is gated on ``len(flags) >= target``, for
+            # ``target - window_size`` steps. The deque itself stays UNCAPPED
+            # under scaling: observe() trims at the live target every step, and
+            # a fixed maxlen would blind it again once the target grows past it.
+            target = effective_window_size(
+                self.window_size,
+                self._counts.get(str(ep), 0),
+                self._scale_steps,
+                self._max_window,
+            )
+            flags = [bool(b) for b in raw.get("flags", [])][-target:]
             w.flags = deque(
                 flags,
                 maxlen=self.window_size if self._scale_steps <= 0 else None,
             )
+            # The sliding counter is recomputed from the kept flags so the two
+            # stay consistent.
             w.novel_in_window = sum(flags)
             w.stale_windows = int(raw.get("stale_windows", 0))
             w.seen_all_time = set(raw.get("seen_all_time", []))
             self._windows[str(ep)] = w
-        self._counts = {ep: int(n) for ep, n in state.get("counts", {}).items()}
