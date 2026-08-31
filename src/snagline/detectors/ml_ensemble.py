@@ -14,16 +14,26 @@ upgrade path; it is never imported here, so the zero-dep default holds.
 When ``Config.ml_ensemble_enabled`` is set, ``Monitor.default()`` wraps the
 base detectors in a single ``MLOrchestrator`` instead of exposing them
 individually, so there is no double counting.
+
+Fail-open isolation is this class's own responsibility. ``Monitor.ingest``
+guards every detector slot individually, but wrapping the base detectors
+collapses them into one slot, so the Monitor's guard has nothing left to
+isolate: without the per-base guards below, one raising detector would block
+all the others and the Monitor would swallow the evidence. Every delegation
+loop here therefore logs the fault once and moves on to the next detector.
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Sequence
 from typing import Any
 
 from snagline.config import Config
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk
+
+logger = logging.getLogger("snagline")
 
 
 class MLOrchestrator:
@@ -38,11 +48,33 @@ class MLOrchestrator:
         self._base = list(detectors)
         self._cfg = config or Config()
         self._model = model
+        # A faulty base detector must not spam the logs on every step; mirror
+        # Monitor._log_fault_once and report each distinct fault exactly once.
+        self._fault_logged: set[str] = set()
+
+    @staticmethod
+    def _base_name(det: Any) -> str:
+        return str(getattr(det, "name", type(det).__name__))
+
+    def _log_fault_once(self, det: Any, phase: str) -> None:
+        key = f"{self._base_name(det)}:{phase}"
+        if key in self._fault_logged:
+            return
+        self._fault_logged.add(key)
+        logger.warning(
+            "snagline: ml_ensemble base detector %s %s raised; ignoring (fail-open)",
+            self._base_name(det),
+            phase,
+        )
 
     def observe(self, event: StepEvent) -> FailureRisk | None:
         scores: list[float] = []
         for det in self._base:
-            risk = det.observe(event)
+            try:
+                risk = det.observe(event)
+            except Exception:
+                self._log_fault_once(det, "observe")
+                continue
             if risk is not None and 0.0 < risk.score <= 1.0:
                 scores.append(risk.score)
         if not scores:
@@ -73,7 +105,16 @@ class MLOrchestrator:
 
     def reset(self, episode_id: str) -> None:
         for det in self._base:
-            det.reset(episode_id)
+            reset = getattr(det, "reset", None)
+            if not callable(reset):
+                continue
+            try:
+                reset(episode_id)
+            except Exception:
+                # A leaked reset strands that episode's state forever and
+                # defeats the retention cap (issue #184); it must never also
+                # strand every sibling's state.
+                self._log_fault_once(det, "reset")
 
     def finalize(self, episode_id: str) -> FailureRisk | None:
         # Passthrough for EpisodeFinalizer bases (issue #86): Monitor.end_episode
@@ -83,7 +124,11 @@ class MLOrchestrator:
         for det in self._base:
             finalize = getattr(det, "finalize", None)
             if callable(finalize):
-                risk = finalize(episode_id)
+                try:
+                    risk = finalize(episode_id)
+                except Exception:
+                    self._log_fault_once(det, "finalize")
+                    continue
                 if risk is not None:
                     return risk
         return None
@@ -93,9 +138,17 @@ class MLOrchestrator:
         merged: dict[str, Any] = {}
         for det in self._base:
             dump = getattr(det, "dump_state", None)
-            state = dump() if callable(dump) else None
+            if not callable(dump):
+                continue
+            try:
+                state = dump()
+            except Exception:
+                # Losing one base detector's state is recoverable (it restarts
+                # cold); losing the whole snapshot is not.
+                self._log_fault_once(det, "dump_state")
+                continue
             if state is not None:
-                merged[getattr(det, "name", type(det).__name__)] = state
+                merged[self._base_name(det)] = state
         return merged or None
 
     def load_state(self, state: dict[str, Any]) -> None:
@@ -103,6 +156,11 @@ class MLOrchestrator:
             load = getattr(det, "load_state", None)
             if not callable(load):
                 continue
-            sub = state.get(getattr(det, "name", type(det).__name__))
+            sub = state.get(self._base_name(det))
             if sub is not None:
-                load(sub)
+                try:
+                    load(sub)
+                except Exception:
+                    # Skipping one entry leaves that detector cold rather than
+                    # leaving every later sibling silently unrestored.
+                    self._log_fault_once(det, "load_state")
