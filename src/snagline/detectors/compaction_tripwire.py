@@ -50,6 +50,7 @@ from __future__ import annotations
 from typing import Any
 
 from snagline.config import Config
+from snagline.detectors.base import snapshot_items
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk
 
@@ -163,9 +164,12 @@ class CompactionTripwireDetector:
         A restart between a compaction and its confirmations must not let the
         grace deadline vanish silently: the pending set, its deadline ordinal,
         and the fired latch all survive.
+
+        The walk goes through ``snapshot_items``: a concurrent ingest meeting a
+        new episode must not change the key set mid-loop (issue #231).
         """
         episodes: dict[str, Any] = {}
-        for ep, st in self._episodes.items():
+        for ep, st in snapshot_items(self._episodes):
             entry: dict[str, Any] = {"ordinal": st.ordinal, "pending": None}
             if st.pending is not None:
                 entry["pending"] = {

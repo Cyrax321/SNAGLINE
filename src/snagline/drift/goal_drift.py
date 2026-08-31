@@ -43,6 +43,7 @@ from typing import Any
 
 from snagline.baseline import BaselineProfile
 from snagline.config import Config
+from snagline.detectors.base import snapshot_items
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk
 
@@ -160,10 +161,12 @@ class SemanticGoalDriftDetector:
         self._episodes.pop(episode_id, None)
 
     def dump_state(self) -> dict[str, Any]:
+        # snapshot_items: a concurrent ingest meeting a new episode must not
+        # change the key set mid-comprehension (issue #231).
         return {
             "episodes": {
                 ep: {"sum": st.sum, "n": st.n, "debt": st.debt}
-                for ep, st in self._episodes.items()
+                for ep, st in snapshot_items(self._episodes)
                 if st.sum is not None
             }
         }

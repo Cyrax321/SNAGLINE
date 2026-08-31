@@ -23,6 +23,7 @@ from __future__ import annotations
 from typing import Any
 
 from snagline.config import Config
+from snagline.detectors.base import snapshot_items
 from snagline.detectors.latency_anomaly import _WelfordCUSUM
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk
@@ -127,6 +128,8 @@ class TokenRunawayDetector:
         self._breached.pop(episode_id, None)
 
     def dump_state(self) -> dict[str, Any]:
+        # snapshot_items: a concurrent ingest meeting a new episode must not
+        # change the key set mid-comprehension (issue #231).
         return {
             "states": {
                 ep: {
@@ -138,7 +141,7 @@ class TokenRunawayDetector:
                     "sigma0": s.sigma0,
                     "frozen": s.frozen,
                 }
-                for ep, s in self._states.items()
+                for ep, s in snapshot_items(self._states)
             },
             "totals": dict(self._totals),
             "warned": dict(self._warned),
