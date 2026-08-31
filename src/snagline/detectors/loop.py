@@ -45,6 +45,7 @@ from collections.abc import Callable
 from typing import Any, cast
 
 from snagline.config import Config
+from snagline.detectors.base import snapshot_items
 from snagline.detectors.windowing import next_window
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk, TriggerType
@@ -370,14 +371,24 @@ class LoopDetector:
         # re-arm semantics); sort so the JSON snapshot is deterministic.
         # Hardening modes (#89) persist their state too: a restart must not
         # silently reset an in-progress stall streak or cycle track.
+        # Every dict walked below is copied via snapshot_items first: a
+        # concurrent ingest meeting a new episode would otherwise change the
+        # key set mid-comprehension (issue #231). The dict(...) copies are
+        # already atomic C-level builds and need no wrapper.
         return {
-            "windows": {ep: list(w) for ep, w in self._windows.items()},
+            "windows": {ep: list(w) for ep, w in snapshot_items(self._windows)},
             "counts": dict(self._counts),
-            "fired": {ep: sorted(sigs) for ep, sigs in self._fired.items()},
-            "near_windows": {ep: list(w) for ep, w in self._near_windows.items()},
+            "fired": {ep: sorted(sigs) for ep, sigs in snapshot_items(self._fired)},
+            "near_windows": {
+                ep: list(w) for ep, w in snapshot_items(self._near_windows)
+            },
             "near_counts": dict(self._near_counts),
-            "near_fired": {ep: sorted(sigs) for ep, sigs in self._near_fired.items()},
-            "cycle_windows": {ep: list(w) for ep, w in self._cycle_windows.items()},
+            "near_fired": {
+                ep: sorted(sigs) for ep, sigs in snapshot_items(self._near_fired)
+            },
+            "cycle_windows": {
+                ep: list(w) for ep, w in snapshot_items(self._cycle_windows)
+            },
             "cycle_counts": dict(self._cycle_counts),
             "cycle_fired": dict(self._cycle_fired),
             "stall_sig": dict(self._stall_sig),

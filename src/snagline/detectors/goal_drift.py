@@ -21,6 +21,7 @@ from typing import Any
 
 from snagline.baseline import BaselineProfile
 from snagline.config import Config
+from snagline.detectors.base import snapshot_items
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk
 
@@ -98,8 +99,10 @@ class GoalDriftDetector:
         self._fired.pop(episode_id, None)
 
     def dump_state(self) -> dict[str, Any]:
+        # snapshot_items: a concurrent ingest meeting a new episode must not
+        # change the key set mid-comprehension (issue #231).
         return {
-            "live": {ep: p.to_dict() for ep, p in self._live.items()},
+            "live": {ep: p.to_dict() for ep, p in snapshot_items(self._live)},
             "fired": dict(self._fired),
         }
 

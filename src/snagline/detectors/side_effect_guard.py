@@ -42,6 +42,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 from snagline.config import Config
+from snagline.detectors.base import snapshot_items
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk, TriggerType
 
@@ -109,6 +110,11 @@ class SideEffectGuardDetector:
         Plain nested dicts of ints by construction; only the inner
         ``(tool_name, action_signature)`` tuple keys need encoding, which
         become two-element JSON lists. Sorted so snapshots are deterministic.
+
+        The outer walk goes through ``snapshot_items``: a concurrent ingest
+        meeting a new episode must not change the key set mid-comprehension
+        (issue #231). The inner ``sorted(...)`` is already an atomic C-level
+        copy, and that dict is only ever touched under one episode's lock.
         """
         return {
             "counts": {
@@ -118,7 +124,7 @@ class SideEffectGuardDetector:
                         per_episode.items(), key=lambda kv: repr(kv[0])
                     )
                 ]
-                for ep, per_episode in self._counts.items()
+                for ep, per_episode in snapshot_items(self._counts)
             }
         }
 

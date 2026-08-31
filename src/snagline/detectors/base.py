@@ -8,10 +8,14 @@ episode ends so per-episode state does not leak across runs.
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from collections.abc import Mapping
+from typing import Any, Protocol, TypeVar
 
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk
+
+_K = TypeVar("_K")
+_V = TypeVar("_V")
 
 
 class Detector(Protocol):
@@ -66,3 +70,32 @@ class StatefulDetector(Protocol):
     def load_state(self, state: dict[str, Any]) -> None:
         """Restore internal state previously produced by ``dump_state``."""
         ...
+
+
+def snapshot_items(state: Mapping[_K, _V]) -> list[tuple[_K, _V]]:
+    """Atomically copy a per-episode state dict before serializing it (#231).
+
+    ``dump_state`` runs on whichever thread called ``Monitor.snapshot`` and
+    takes no lock, while an ingest on another thread may be meeting a new
+    episode and inserting its first-sight key. Detector state is partitioned by
+    ``episode_id``, so the *values* are safe -- but the key set is shared, and
+    the Monitor's per-episode lock cannot serialize a walk of it against an
+    insert for a different episode.
+
+    A Python-level comprehension over ``state.items()`` yields between
+    bytecodes, so that insert lands mid-walk and ``RuntimeError: dictionary
+    changed size during iteration`` escapes ``Monitor.snapshot`` -- a public API
+    with no fail-open guard, because restore-time errors are deliberately loud.
+    ``list(state.items())`` builds the copy inside a single C call with no
+    Python executing in between, so it cannot be interrupted; callers then
+    build their JSON payload from the returned copy.
+
+    Cross-dict atomicity is deliberately *not* provided: a detector holding
+    several dicts may snapshot episode X in one and miss it in another. Every
+    ``load_state`` already reads each dict independently and defaults what is
+    absent, and a snapshot taken during live ingest is a point-in-time smear
+    either way. Guaranteeing more would mean holding one lock across the whole
+    of ``observe``, which would serialize ingest across episodes and cost the
+    per-episode concurrency the Monitor is built around.
+    """
+    return list(state.items())

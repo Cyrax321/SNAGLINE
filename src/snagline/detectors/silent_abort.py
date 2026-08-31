@@ -28,6 +28,7 @@ from __future__ import annotations
 from typing import Any
 
 from snagline.config import Config
+from snagline.detectors.base import snapshot_items
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk
 
@@ -73,6 +74,8 @@ class SilentAbortDetector:
         self._last.pop(episode_id, None)
 
     def dump_state(self) -> dict[str, Any]:
+        # snapshot_items: a concurrent ingest meeting a new episode must not
+        # change the key set mid-comprehension (issue #231).
         return {
             "output_action_types": sorted(self.output_action_types),
             "last": {
@@ -82,7 +85,7 @@ class SilentAbortDetector:
                     "action_type": ev.action_type,
                     "error": ev.error,
                 }
-                for ep, ev in self._last.items()
+                for ep, ev in snapshot_items(self._last)
             },
         }
 

@@ -38,6 +38,7 @@ from collections import Counter, deque
 from typing import Any
 
 from snagline.config import Config
+from snagline.detectors.base import snapshot_items
 from snagline.detectors.windowing import effective_window_size
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk
@@ -164,9 +165,11 @@ class MeltdownDetector:
         self._clear_streak.pop(episode_id, None)
 
     def dump_state(self) -> dict[str, Any]:
+        # snapshot_items: a concurrent ingest meeting a new episode must not
+        # change the key set mid-comprehension (issue #231).
         return {
             "window_size": self.window_size,
-            "windows": {ep: list(w.window) for ep, w in self._eps.items()},
+            "windows": {ep: list(w.window) for ep, w in snapshot_items(self._eps)},
             "counts": dict(self._counts),
             "fired": dict(self._fired),
             "clear_streak": dict(self._clear_streak),
