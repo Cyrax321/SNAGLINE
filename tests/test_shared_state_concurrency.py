@@ -87,7 +87,8 @@ class _Worker:
 
 def test_snapshot_dict_survives_concurrent_ingest_of_new_episodes() -> None:
     monitor = Monitor(detectors=[], sinks=[], config=_HORIZON)
-    stop, errors = threading.Event(), []
+    stop = threading.Event()
+    errors: list[BaseException] = []
 
     class Ingest(_Worker):
         def __init__(self, tag: str) -> None:
@@ -109,7 +110,8 @@ def test_snapshot_dict_survives_concurrent_ingest_of_new_episodes() -> None:
 def test_snapshot_dict_survives_concurrent_end_episode() -> None:
     """Teardown pops from _clocks; the snapshot walk must tolerate that too."""
     monitor = Monitor(detectors=[], sinks=[], config=_HORIZON)
-    stop, errors = threading.Event(), []
+    stop = threading.Event()
+    errors: list[BaseException] = []
 
     class Churn(_Worker):
         def __init__(self, tag: str) -> None:
@@ -177,7 +179,8 @@ def test_time_axis_round_trip_still_restores(tmp_path) -> None:
 
 def test_reset_survives_concurrent_observe_of_other_episodes() -> None:
     detector = LatencyAnomalyDetector()
-    stop, errors = threading.Event(), []
+    stop = threading.Event()
+    errors: list[BaseException] = []
 
     class Observe(_Worker):
         def __init__(self, tag: str) -> None:
@@ -202,7 +205,8 @@ def test_reset_survives_concurrent_observe_of_other_episodes() -> None:
 
 def test_dump_state_survives_concurrent_observe() -> None:
     detector = LatencyAnomalyDetector()
-    stop, errors = threading.Event(), []
+    stop = threading.Event()
+    errors: list[BaseException] = []
 
     class Observe(_Worker):
         def __init__(self, tag: str) -> None:
