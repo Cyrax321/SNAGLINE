@@ -8,13 +8,18 @@ from typing import cast
 
 import pytest
 
+from snagline.detectors.compaction_tripwire import CompactionTripwireDetector
 from snagline.detectors.error_cascade import ErrorCascadeDetector
+from snagline.detectors.goal_drift import GoalDriftDetector
 from snagline.detectors.latency_anomaly import LatencyAnomalyDetector
 from snagline.detectors.loop import LoopDetector
+from snagline.detectors.meltdown import MeltdownDetector
+from snagline.detectors.side_effect_guard import SideEffectGuardDetector
 from snagline.detectors.silent_abort import SilentAbortDetector
+from snagline.detectors.stagnation import StagnationDetector
 from snagline.detectors.token_runaway import TokenRunawayDetector
 from snagline.events import StepEvent
-from snagline.monitor import Monitor
+from snagline.monitor import SNAPSHOT_FORMAT_VERSION, Monitor
 from snagline.sinks.dedup import DedupSink
 
 
@@ -216,3 +221,128 @@ def test_latency_state_round_trip_behavioral():
     scores_2 = [r.score for e in tail if (r := d2.observe(e)) is not None]
     assert scores_1 == scores_2
     assert scores_1, "sustained shift after restored baseline must still alarm"
+
+
+# --- strict_names slot ordering (issue #217) --------------------------------
+#
+# Snapshot keys are "<slot>:<name>", so sorting them as plain strings puts slot
+# 10 between 1 and 2. Below 11 detectors every index is one digit and the bug
+# is invisible, which is why the coverage above (1-5 detectors) misses it.
+
+_DETECTOR_CLASSES = {
+    "loop": LoopDetector,
+    "error_cascade": ErrorCascadeDetector,
+    "latency_anomaly": LatencyAnomalyDetector,
+    "stagnation": StagnationDetector,
+    "token_runaway": TokenRunawayDetector,
+    "meltdown": MeltdownDetector,
+    "silent_abort": SilentAbortDetector,
+    "side_effect_guard": SideEffectGuardDetector,
+    "governance_decay": CompactionTripwireDetector,
+    "goal_drift": GoalDriftDetector,
+}
+
+# Eleven slots is not a synthetic number: it is what Monitor.default() builds
+# once the opt-in detectors are enabled, with no extras installed.
+_ELEVEN_NAMES = [*_DETECTOR_CLASSES, "loop"]
+
+
+def _eleven() -> list:
+    return [_DETECTOR_CLASSES[name]() for name in _ELEVEN_NAMES]
+
+
+def test_strict_names_accepts_identical_11_detector_composition(tmp_path):
+    path = str(tmp_path / "state.json")
+    a = Monitor(_eleven(), [ListSink()])
+    a.ingest(
+        StepEvent(
+            step_id="0",
+            episode_id="ep",
+            timestamp=0.0,
+            action_type="tool_call",
+            action_signature="s0",
+            tool_name="api",
+            latency_ms=10.0,
+        )
+    )
+    a.snapshot(path)
+
+    b = Monitor(_eleven(), [ListSink()])
+    assert [d.name for d in a._detectors] == [d.name for d in b._detectors]
+    b.restore(path, strict_names=True)  # raised "composition mismatch" pre-#217
+
+
+def test_strict_names_rejects_mismatch_in_lexicographic_key_order(tmp_path):
+    """The false-accept direction: a genuinely wrong composition that happens
+    to equal the *string* order of the snapshot's keys must still raise."""
+    path = str(tmp_path / "state.json")
+    snapshotted = _eleven()
+    Monitor(snapshotted, [ListSink()]).snapshot(path)
+
+    with open(path, encoding="utf-8") as fh:
+        keys = json.load(fh)["detectors"]
+    lexicographic = [k.split(":", 1)[1] for k in sorted(keys)]
+    assert lexicographic != [d.name for d in snapshotted], (
+        "11 slots must reorder under string sorting, or the test proves nothing"
+    )
+
+    wrong = Monitor([_DETECTOR_CLASSES[n]() for n in lexicographic], [ListSink()])
+    with pytest.raises(ValueError, match="composition mismatch"):
+        wrong.restore(path, strict_names=True)
+
+
+def test_strict_names_survives_key_without_integer_slot_prefix():
+    """restore_dict takes caller-supplied dicts; an unparseable slot prefix
+    must not crash the strict check (setup-time raise stays a ValueError)."""
+    monitor = Monitor([LoopDetector()], [ListSink()])
+    with pytest.raises(ValueError, match="composition mismatch"):
+        monitor.restore_dict(
+            {
+                "format_version": SNAPSHOT_FORMAT_VERSION,
+                "detectors": {"0:loop": None, "x:error_cascade": None},
+            },
+            strict_names=True,
+        )
+
+
+def test_strict_names_rejection_applies_no_state(tmp_path):
+    """A rejected strict restore must leave the monitor untouched.
+
+    The composition check runs *before* the load loop. After the loop it
+    would be too late: the name-suffix fallback would already have loaded
+    the snapshot's per-episode windows into detectors by name, so a caller
+    that catches the ValueError keeps a monitor contaminated with state
+    from the snapshot it just rejected.
+    """
+    path = str(tmp_path / "state.json")
+    a = Monitor([LoopDetector(), ErrorCascadeDetector()], [ListSink()])
+    a.ingest(
+        StepEvent(
+            step_id="0",
+            episode_id="ep",
+            timestamp=0.0,
+            action_type="tool_call",
+            action_signature="q-a",
+            tool_name="search",
+        )
+    )
+    a.ingest(
+        StepEvent(
+            step_id="1",
+            episode_id="ep",
+            timestamp=1.0,
+            action_type="tool_call",
+            action_signature="q-a",
+            tool_name="search",
+        )
+    )
+    a.snapshot(path)
+
+    b = Monitor([ErrorCascadeDetector(), LoopDetector()], [ListSink()])
+    with pytest.raises(ValueError, match="composition mismatch"):
+        b.restore(path, strict_names=True)
+    b_loop = cast(LoopDetector, next(d for d in b._detectors if d.name == "loop"))
+    assert b_loop._windows == {}, (
+        "rejected snapshot must not leave per-episode state behind "
+        "(name-suffix fallback loaded it pre-fix)"
+    )
