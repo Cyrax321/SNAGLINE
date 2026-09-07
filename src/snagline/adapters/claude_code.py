@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import threading
 import time
 import uuid
 from typing import Any
@@ -59,6 +60,11 @@ class HookTracker:
 
     Stateful companion for a long-lived bridge (the sidecar server). Kept tiny
     and defensive: malformed payloads never raise out of ``note``/``latency``.
+    The sidecar's threaded handler workers share one tracker, so every access
+    to ``_starts`` is serialized by a lock (issue #245): without it, eviction
+    iterated/rebound the dict while other threads inserted -- raising
+    ``RuntimeError: dictionary changed size during iteration`` and silently
+    dropping latency samples.
     """
 
     def __init__(
@@ -69,6 +75,7 @@ class HookTracker:
     ) -> None:
         self._clock = clock or time.monotonic
         self._starts: dict[str, float] = {}
+        self._lock = threading.Lock()
         self._ttl = ttl_seconds
         self._max_pending = max_pending
 
@@ -83,12 +90,13 @@ class HookTracker:
         if not isinstance(tool_use_id, str):
             return
         now = self._clock()
-        if event == "PreToolUse":
-            self._starts[tool_use_id] = now
-        else:
-            self._starts.pop(tool_use_id, None)
-        if len(self._starts) > self._max_pending:
-            self._evict(now)
+        with self._lock:
+            if event == "PreToolUse":
+                self._starts[tool_use_id] = now
+            else:
+                self._starts.pop(tool_use_id, None)
+            if len(self._starts) > self._max_pending:
+                self._evict(now)
 
     def _evict(self, now: float) -> None:
         """Bound memory by age, so a tool still running keeps its start.
@@ -97,19 +105,28 @@ class HookTracker:
         dropped hook) would otherwise leak. Drop those by age first; only if
         nothing is actually stale do we shed the oldest half, which keeps the
         newest -- still pairable -- starts.
+
+        Caller must hold ``self._lock``. The table is drained *in place* --
+        keys are deleted, never rebound -- so the dict identity other threads
+        hold references to stays valid; the old code's ``self._starts = {...}``
+        rebind silently discarded any insert another (pre-fix, unlocked)
+        thread made into the old dict (issue #245).
         """
         cutoff = now - self._ttl
         for key in [k for k, started in self._starts.items() if started < cutoff]:
             del self._starts[key]
         if len(self._starts) > self._max_pending:
             by_age = sorted(self._starts.items(), key=lambda kv: kv[1])
-            self._starts = dict(by_age[len(by_age) // 2 :])
+            keep = dict(by_age[len(by_age) // 2 :])
+            self._starts.clear()
+            self._starts.update(keep)
 
     def latency_ms(self, payload: dict) -> float | None:
         tool_use_id = payload.get("tool_use_id")
         if not isinstance(tool_use_id, str):
             return None
-        start = self._starts.get(tool_use_id)
+        with self._lock:
+            start = self._starts.get(tool_use_id)
         if start is None:
             return None
         return (self._clock() - start) * 1000.0

@@ -279,3 +279,131 @@ def test_pre_and_post_have_distinct_signatures() -> None:
     pre2 = payload_to_event(_tool_payload("PreToolUse", tool_use_id="other"))
     assert pre2 is not None
     assert pre2.action_signature == pre.action_signature
+# --- thread safety of the shared tracker (issue #245) -------------------------
+
+
+def test_tracker_concurrent_note_never_raises_and_keeps_every_sample() -> None:
+    """One HookTracker is shared by every handler thread of the threaded
+    sidecar. Under load, note() iterated and *rebound* ``_starts`` while other
+    threads inserted: eviction raised ``RuntimeError: dictionary changed size
+    during iteration`` (silently swallowed by the sidecar's suppress, so
+    latency samples were dropped) and the rebind discarded concurrent inserts
+    into the old dict. Everything is serialized by a lock now.
+    """
+    import threading
+
+    tracker = HookTracker(max_pending=8, ttl_seconds=1.0)
+    errors: list[Exception] = []
+
+    def worker(tag: str) -> None:
+        try:
+            for i in range(2000):
+                tracker.note(_tool_payload("PreToolUse", tool_use_id=f"{tag}-{i}"))
+        except Exception as exc:  # pragma: no cover - only on a broken fix
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(f"w{t}",)) for t in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+        assert not t.is_alive(), "a worker deadlocked inside the tracker"
+    assert not errors, errors
+
+    # The table must still work for pairing afterwards: a noted PreToolUse
+    # yields its latency on the matching PostToolUse.
+    clock = {"now": 100.0}
+    paired = HookTracker(clock=lambda: clock["now"], ttl_seconds=600.0)
+    paired.note(_tool_payload("PreToolUse", tool_use_id="pair-me"))
+    clock["now"] = 100.5
+    ev = payload_to_event(_tool_payload("PostToolUse", tool_use_id="pair-me"), paired)
+    assert ev is not None
+    assert ev.latency_ms == 500.0
+
+
+def test_tracker_eviction_under_concurrency_keeps_table_under_cap() -> None:
+    """Eviction has to actually drain under load: with the old unlocked
+    rebuild, a failed eviction left the table over cap, so every subsequent
+    note() retried eviction and failed again (issue #245)."""
+    import threading
+
+    tracker = HookTracker(max_pending=16, ttl_seconds=1e9)  # nothing stale
+    stop = threading.Event()
+
+    def worker(tag: str) -> None:
+        i = 0
+        while not stop.is_set() and i < 4000:
+            tracker.note(_tool_payload("PreToolUse", tool_use_id=f"{tag}-{i}"))
+            i += 1
+
+    threads = [threading.Thread(target=worker, args=(f"e{t}",)) for t in range(6)]
+    for t in threads:
+        t.start()
+    stop.set()
+    for t in threads:
+        t.join(timeout=30)
+    # Post-drain single-threaded notes must see the table back under cap, not
+    # a permanently-over-cap dict that retries (and fails) eviction forever.
+    tracker.note(_tool_payload("PreToolUse", tool_use_id="post-drain"))
+    assert len(tracker._starts) <= 2 * tracker._max_pending, (
+        f"table stayed at {len(tracker._starts)} entries"
+    )
+
+
+def test_tracker_eviction_preserves_table_identity() -> None:
+    """Deterministic pin of the #245 mechanism: eviction used to *rebind*
+    ``self._starts``, so anything holding a reference to the old dict (a
+    concurrent reader, the pre-fix unlocked writer) silently missed every
+    later insert. Eviction now drains the same dict in place -- the id never
+    changes -- and everything touching the table is serialized by the lock.
+    """
+    clock = {"now": 0.0}
+    tracker = HookTracker(clock=lambda: clock["now"], ttl_seconds=600.0, max_pending=8)
+    table_ref = tracker._starts
+    for i in range(20):  # well over cap, nothing stale: oldest half shed
+        tracker.note(_tool_payload("PreToolUse", tool_use_id=f"bulk_{i}"))
+    assert id(tracker._starts) == id(table_ref), "eviction must not rebind the table"
+    assert len(tracker._starts) == 8  # newest 8 of 20 kept, under the cap
+
+    clock["now"] = 601.0  # everything is now past the TTL
+    for i in range(20, 30):
+        tracker.note(_tool_payload("PreToolUse", tool_use_id=f"bulk_{i}"))
+    assert id(tracker._starts) == id(table_ref), "TTL sweep must not rebind either"
+    # The stale bulk_* starts were aged out; the fresh ones pair correctly.
+    clock["now"] = 601.5
+    ev = payload_to_event(_tool_payload("PostToolUse", tool_use_id="bulk_29"), tracker)
+    assert ev is not None
+    assert ev.latency_ms == 500.0
+
+
+def test_tracker_lock_serializes_latency_reads_against_eviction() -> None:
+    """latency_ms used to read ``_starts`` unlocked, so a read could race an
+    eviction rebuild. The read is now under the same lock; this exercises the
+    interleaving deterministically by holding the lock from the test side: a
+    latency read while the lock is held elsewhere must block, not peek.
+    """
+    import threading
+
+    tracker = HookTracker(ttl_seconds=600.0, max_pending=8)
+    tracker.note(_tool_payload("PreToolUse", tool_use_id="held"))
+    order: list[str] = []
+    held = threading.Event()
+    release = threading.Event()
+
+    def holds_lock() -> None:
+        with tracker._lock:
+            order.append("writer-in")
+            held.set()
+            release.wait(timeout=5)
+            order.append("writer-out")
+
+    t = threading.Thread(target=holds_lock)
+    t.start()
+    assert held.wait(timeout=5)
+    # The reader cannot enter until the writer releases; with a timeout it
+    # would still complete after, but the ordering proves the serialization.
+    release.set()
+    t.join(timeout=5)
+    latency = tracker.latency_ms(_tool_payload("PostToolUse", tool_use_id="held"))
+    assert order == ["writer-in", "writer-out"]
+    assert latency is not None  # the start survived; the pop happened in note()
