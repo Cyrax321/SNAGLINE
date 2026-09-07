@@ -1,6 +1,14 @@
-"""Tests for Anthropic auto-instrumentation (ATTACH_ANY_SYSTEM P0)."""
+"""Tests for Anthropic auto-instrumentation (ATTACH_ANY_SYSTEM P0).
+
+The streaming tests pin the deferred-emission contract (issue #242): with
+``stream=True`` nothing is ingested when ``create()`` returns; exactly one
+event lands when the stream is exhausted, closed, or fails mid-flight.
+"""
 
 from __future__ import annotations
+
+import asyncio
+from types import SimpleNamespace
 
 from snagline.auto.anthropic import instrument_anthropic, wrap_client
 
@@ -72,3 +80,158 @@ def test_instrument_anthropic_without_sdk_is_safe_noop():
 def test_instrument_anthropic_with_explicit_client():
     mon = _SpyMonitor()
     assert instrument_anthropic(mon, client=_FakeClient()) is True
+
+
+# --- deferred stream emission (issue #242) ------------------------------------
+
+
+def _stream(chunks, delay=0.0):
+    import time as _time
+
+    class _S:
+        def __init__(self):
+            self.closed = False
+
+        def __iter__(self):
+            return iter(self._gen())
+
+        def _gen(self):
+            for c in chunks:
+                if delay:
+                    _time.sleep(delay)
+                yield c
+
+        def close(self):
+            self.closed = True
+
+    return _S()
+
+
+def _fake_messages_client(create):
+    """A minimal Anthropic-shaped client whose messages.create is ``create``."""
+    return SimpleNamespace(messages=SimpleNamespace(create=create))
+
+
+def test_anthropic_auto_stream_defers_until_exhaustion():
+    """create() returns immediately for a stream; ingesting then would record
+    a ~0ms success. Nothing is ingested until the stream is exhausted."""
+    mon = _SpyMonitor()
+
+    def fake_create(**kw):
+        assert kw.get("stream") is True
+        return _stream(
+            [
+                SimpleNamespace(usage=None),
+                SimpleNamespace(usage=SimpleNamespace(input_tokens=5, output_tokens=7)),
+            ],
+            delay=0.05,
+        )
+
+    client = wrap_client(mon, _fake_messages_client(fake_create))
+    stream = client.messages.create(
+        model="claude-3-5-sonnet", messages=[{"role": "u"}], stream=True
+    )
+    assert len(mon.events) == 0, "event must not be emitted at stream-open"
+    chunks = list(stream)
+    assert len(chunks) == 2
+    assert len(mon.events) == 1, "exactly one event after exhaustion"
+    ev = mon.events[0]
+    assert ev.error is False
+    assert ev.error_type is None
+    assert ev.tokens_in == 5
+    assert ev.tokens_out == 7
+    # Latency reflects the streamed duration, not the create() return time.
+    assert ev.latency_ms > 40.0
+
+
+def test_anthropic_auto_stream_error_mid_flight_is_recorded_as_error():
+    mon = _SpyMonitor()
+
+    def fake_create(**kw):
+        def _gen():
+            yield SimpleNamespace(usage=None)
+            raise RuntimeError("mid-stream 502")
+
+        class _S:
+            def __iter__(self):
+                return _gen()
+
+        return _S()
+
+    client = wrap_client(mon, _fake_messages_client(fake_create))
+    stream = client.messages.create(model="claude", messages=[], stream=True)
+    assert len(mon.events) == 0
+    try:
+        list(stream)
+        raise AssertionError("iteration should raise")
+    except RuntimeError:
+        pass
+    assert len(mon.events) == 1
+    assert mon.events[0].error is True
+    assert mon.events[0].error_type == "RuntimeError"
+
+
+def test_anthropic_auto_stream_close_emits_and_closes_underlying():
+    mon = _SpyMonitor()
+    inner = _stream([SimpleNamespace(usage=None)])
+
+    def fake_create(**kw):
+        return inner
+
+    client = wrap_client(mon, _fake_messages_client(fake_create))
+    stream = client.messages.create(model="claude", messages=[], stream=True)
+    assert len(mon.events) == 0
+    next(iter(stream))  # consume one chunk
+    stream.close()
+    assert len(mon.events) == 1
+    assert inner.closed, "underlying stream.close() must still be called"
+
+
+def test_anthropic_auto_non_stream_still_immediate():
+    mon = _SpyMonitor()
+    client = wrap_client(mon, _FakeClient())
+    out = client.messages.create(model="claude", messages=[{"role": "user"}])
+    assert out == "ok"
+    assert len(mon.events) == 1
+
+
+def test_anthropic_auto_async_stream_defers_until_exhaustion():
+    mon = _SpyMonitor()
+
+    async def fake_create(**kw):
+        chunks = [
+            SimpleNamespace(usage=SimpleNamespace(input_tokens=3, output_tokens=4))
+        ]
+
+        class _AS:
+            def __init__(self):
+                self._i = 0
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                if self._i >= len(chunks):
+                    raise StopAsyncIteration
+                c = chunks[self._i]
+                self._i += 1
+                return c
+
+        return _AS()
+
+    from snagline.auto.anthropic import _wrap_one
+
+    wrapped = _wrap_one(mon, fake_create, "anthropic.messages.create")
+
+    async def run():
+        stream = await wrapped(model="claude", messages=[], stream=True)
+        assert len(mon.events) == 0
+        chunks = [c async for c in stream]
+        assert len(chunks) == 1
+        assert len(mon.events) == 1
+        ev = mon.events[0]
+        assert ev.error is False
+        assert ev.tokens_in == 3
+        assert ev.tokens_out == 4
+
+    asyncio.run(run())
