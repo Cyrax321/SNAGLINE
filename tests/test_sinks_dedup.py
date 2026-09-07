@@ -44,6 +44,18 @@ def test_risk_explicit_severity_kept():
     assert _risk(0.9, severity=SEVERITY_INFO).severity == SEVERITY_INFO
 
 
+def test_risk_explicit_warning_survives():
+    # Issue #246: the default used to BE "warning", so an explicitly
+    # requested warning was indistinguishable from "unset" and silently
+    # re-derived from the score -- becoming "critical" above 0.8 (paging
+    # on-call against the caller's intent) and "info" below 0.5 (dropped
+    # by min_severity="warning" filters). The None default keeps all
+    # three legal values literal.
+    assert _risk(0.9, severity=SEVERITY_WARNING).severity == SEVERITY_WARNING
+    assert _risk(0.6, severity=SEVERITY_WARNING).severity == SEVERITY_WARNING
+    assert _risk(0.2, severity=SEVERITY_WARNING).severity == SEVERITY_WARNING
+
+
 class _RecordingSink:
     def __init__(self):
         self.emitted: list[FailureRisk] = []
