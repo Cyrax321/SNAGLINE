@@ -213,7 +213,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p_watch.add_argument(
         "--episode-id",
         default=None,
-        help="Episode id override [default: from the events / file name].",
+        help="Episode id to attribute events to [default: each event's own "
+        "episode_id; a synthesized id otherwise].",
     )
     p_watch.add_argument(
         "--sink",
@@ -548,6 +549,12 @@ def _cmd_watch(args: argparse.Namespace) -> int:
         heartbeat.touch()  # evidence of life from startup
     episode = args.episode_id or (args.file or "stdin")
     steps = 0
+    # Finalize every episode actually ingested, not the filename (issue
+    # #225): end_episode must be asked about the ids the events carried or
+    # finalize-based detectors (silent_abort) can never fire in watch. A
+    # set, like replay, so a multi-episode file/follow session finalizes
+    # each one exactly once.
+    episodes: set = set()
     try:
         with suppress(KeyboardInterrupt):
             for line in _iter_lines(
@@ -568,11 +575,20 @@ def _cmd_watch(args: argparse.Namespace) -> int:
                     )
                     continue
                 monitor.ingest(event)
+                episodes.add(event.episode_id)
                 steps += 1
                 if heartbeat is not None:
                     heartbeat.touch()
     finally:
-        monitor.end_episode(episode)
+        # Fail-open teardown (issue #225): finalize every episode that was
+        # actually ingested; ``episode`` (the override, the filename or
+        # "stdin") is still finalized so the zero-events case -- and any
+        # operator override -- keeps today's behaviour. Finalize-based
+        # detectors see the right ids; an id already in the set is harmless
+        # (end_episode is idempotent for unknown ids).
+        for episode_id in episodes | {episode}:
+            with suppress(Exception):
+                monitor.end_episode(episode_id)
     print(f"snagline watch: ingested {steps} step(s)", file=sys.stderr)
     return 0
 
