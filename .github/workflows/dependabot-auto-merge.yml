@@ -26,14 +26,25 @@ jobs:
             });
             const alreadyApproved = reviews.some((r) => r.user.login === "github-actions[bot]" && r.state === "APPROVED");
             if (!alreadyApproved) {
-              await github.rest.pulls.createReview({
-                owner,
-                repo,
-                pull_number: prNumber,
-                event: "APPROVE",
-                body: "Dependabot dependency bump approved automatically. Merging once all required checks pass.",
-              });
-              console.log(`Approved Dependabot PR #${prNumber}`);
+              // Guarded (issue #266): repositories with "Allow GitHub Actions
+              // to create and approve pull requests" disabled (the default
+              // off) reject this call with 422, which used to crash the job
+              // before enableAutoMerge was ever reached -- so auto-merge was
+              // silently never enabled and every bump needed a manual merge.
+              // Approval is advisory; branch protection still enforces any
+              // required reviews. Keep going either way.
+              try {
+                await github.rest.pulls.createReview({
+                  owner,
+                  repo,
+                  pull_number: prNumber,
+                  event: "APPROVE",
+                  body: "Dependabot dependency bump approved automatically. Merging once all required checks pass.",
+                });
+                console.log(`Approved Dependabot PR #${prNumber}`);
+              } catch (error) {
+                console.log(`Could not approve #${prNumber} (${error.message}); continuing without the bot review.`);
+              }
             }
 
             try {
