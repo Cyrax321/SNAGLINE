@@ -46,7 +46,7 @@ from typing import Any, cast
 
 from snagline.config import Config
 from snagline.detectors.base import snapshot_items
-from snagline.detectors.windowing import next_window
+from snagline.detectors.windowing import effective_window_size, next_window
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk, TriggerType
 
@@ -398,31 +398,61 @@ class LoopDetector:
         }
 
     def load_state(self, state: dict[str, Any]) -> None:
-        self._windows = {
-            ep: deque(sigs, maxlen=self.window_size)
-            for ep, sigs in state.get("windows", {}).items()
-        }
+        # Restore each window at its effective size, not the base (issue
+        # #268): a snapshot taken mid-episode with auto-scaling on holds
+        # ``effective_window_size(...)`` signatures, and a base-sized maxlen
+        # discards the oldest occurrences -- a loop whose early repeats live
+        # inside the scaled window falls below threshold exactly when the
+        # live detector would escalate. With scaling off the effective size
+        # is always the base, so defaults are unchanged.
         # Tolerant .get() so pre-#92 snapshots restore cleanly; the counts only
         # position the auto-scaler and default to the window they imply.
-        self._counts = {ep: int(n) for ep, n in state.get("counts", {}).items()}
+        counts = state.get("counts", {})
+        self._windows = {
+            ep: deque(
+                sigs,
+                maxlen=effective_window_size(
+                    self.window_size,
+                    int(counts.get(ep, len(sigs))),
+                    self._scale_steps,
+                    self._max_window,
+                ),
+            )
+            for ep, sigs in state.get("windows", {}).items()
+        }
+        self._counts = {ep: int(n) for ep, n in counts.items()}
         self._fired = {ep: set(sigs) for ep, sigs in state.get("fired", {}).items()}
+        near_counts = state.get("near_counts", {})
         self._near_windows = {
-            ep: deque(sigs, maxlen=self.window_size)
+            ep: deque(
+                sigs,
+                maxlen=effective_window_size(
+                    self.window_size,
+                    int(near_counts.get(ep, len(sigs))),
+                    self._scale_steps,
+                    self._max_window,
+                ),
+            )
             for ep, sigs in state.get("near_windows", {}).items()
         }
         self._near_fired = {
             ep: set(sigs) for ep, sigs in state.get("near_fired", {}).items()
         }
-        self._near_counts = {
-            ep: int(n) for ep, n in state.get("near_counts", {}).items()
-        }
+        self._near_counts = {ep: int(n) for ep, n in near_counts.items()}
+        cycle_counts = state.get("cycle_counts", {})
         self._cycle_windows = {
-            ep: deque(sigs, maxlen=self.loop_cycle_window_size)
+            ep: deque(
+                sigs,
+                maxlen=effective_window_size(
+                    self.loop_cycle_window_size,
+                    int(cycle_counts.get(ep, len(sigs))),
+                    self._scale_steps,
+                    self._max_window,
+                ),
+            )
             for ep, sigs in state.get("cycle_windows", {}).items()
         }
-        self._cycle_counts = {
-            ep: int(n) for ep, n in state.get("cycle_counts", {}).items()
-        }
+        self._cycle_counts = {ep: int(n) for ep, n in cycle_counts.items()}
         self._cycle_fired = dict(state.get("cycle_fired", {}))
         self._stall_sig = dict(state.get("stall_sig", {}))
         self._stall_count = dict(state.get("stall_count", {}))

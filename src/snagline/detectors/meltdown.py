@@ -179,10 +179,23 @@ class MeltdownDetector:
         self._eps = {}
         for ep, keys in state.get("windows", {}).items():
             w = _EpisodeWindow()
+            # Tolerant .get(): pre-#92 snapshots carry no scaler positions.
+            n = int(state.get("counts", {}).get(ep, len(keys)))
+            # Restore at the window's effective size, not the base (issue
+            # #268): a snapshot taken mid-episode with auto-scaling on holds
+            # ``effective_window_size(...)`` identities, and pushing them
+            # through a base-sized cap discards exactly the history the
+            # scaler grew the window to preserve. ``observe`` then gates on
+            # ``len(w.window) < target`` and stays silent for the
+            # (effective - base) refill steps while entropy is actively
+            # collapsed. With scaling off the effective size is always the
+            # base, so defaults are unchanged.
+            target = effective_window_size(
+                self.window_size, n, self._scale_steps, self._max_window
+            )
             for key in keys:
-                w.push(key, self.window_size)
+                w.push(key, target)
             self._eps[ep] = w
-        # Tolerant .get(): pre-#92 snapshots carry no scaler positions.
         self._counts = {ep: int(n) for ep, n in state.get("counts", {}).items()}
         self._fired = {ep: bool(v) for ep, v in state.get("fired", {}).items()}
         self._clear_streak = {

@@ -20,7 +20,7 @@ from typing import Any
 
 from snagline.config import Config
 from snagline.detectors.base import snapshot_items
-from snagline.detectors.windowing import next_window
+from snagline.detectors.windowing import effective_window_size, next_window
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk
 
@@ -148,8 +148,22 @@ class ErrorCascadeDetector:
         }
 
     def load_state(self, state: dict[str, Any]) -> None:
+        # Restore each window at its effective size, not the base (issue
+        # #268): a snapshot taken mid-episode with auto-scaling on holds
+        # ``effective_window_size(...)`` flags, and a base-sized maxlen
+        # discards the oldest -- errors that lived inside the scaled window
+        # fall out of the density count exactly when a cascade is in
+        # progress. With scaling off the effective size is always the base.
         self._windows = {
-            ep: deque(flags, maxlen=self.window_size)
+            ep: deque(
+                flags,
+                maxlen=effective_window_size(
+                    self.window_size,
+                    int(state.get("counts", {}).get(ep, len(flags))),
+                    self._scale_steps,
+                    self._max_window,
+                ),
+            )
             for ep, flags in state.get("windows", {}).items()
         }
         # Tolerant .get(): pre-#92 snapshots carry no scaler positions.
