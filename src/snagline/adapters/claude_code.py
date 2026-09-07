@@ -143,14 +143,21 @@ def payload_to_event(
 
     # Stable, structural parts only: the same logical attempt (same tool,
     # same input) must hash identically for loop detection to see a retry.
+    # The start/end subkind is included for tool calls: Claude Code fires
+    # PreToolUse and PostToolUse for ONE logical call with the same tool and
+    # input, and a signature blind to the subkind made that single attempt
+    # count twice in the loop window (issue #237), halving the effective
+    # repeat_threshold for every Claude Code host.
     if is_tool:
         stable = json.dumps(payload.get("tool_input") or {}, sort_keys=True)
         tool_for_sig = str(tool_name or "tool")
+        stable_parts: tuple[str, ...] = (subkind,)
     else:
         stable = str(payload.get("prompt") or payload.get("error") or subkind)
         # prompt_id is volatile (unique per turn): excluding it from the
         # signature lets a repeated identical prompt be loop-detectable.
         tool_for_sig = "claude-code"
+        stable_parts = ()
 
     error = payload.get("hook_event_name") in _ERROR_EVENTS
     error_type = None
@@ -176,7 +183,9 @@ def payload_to_event(
         episode_id=episode_id,
         timestamp=timestamp if timestamp is not None else time.time(),
         action_type=action_type,
-        action_signature=make_signature(action_type, tool_for_sig, stable),
+        action_signature=make_signature(
+            action_type, tool_for_sig, stable, *stable_parts
+        ),
         tool_name=str(tool_name) if tool_name is not None else None,
         latency_ms=latency_ms,
         error=error,
