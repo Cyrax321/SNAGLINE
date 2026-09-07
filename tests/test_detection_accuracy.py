@@ -741,3 +741,74 @@ def test_cli_exit_zero_on_committed_fixtures(harness) -> None:
     table = stdout.getvalue()
     assert "macro-F1" in table
     assert "silent_abort" in table
+
+
+# --- issue #223: table alignment must survive long trigger names -------------
+
+
+def _table_rows(harness, report):
+    """Return (header, trigger_rows): only the rows carrying per-trigger stats."""
+    table = harness.format_table(report)
+    lines = table.splitlines()
+    header = lines[0]
+    trig_rows = [
+        ln
+        for ln in lines[2:]
+        if ln
+        and not ln.startswith("-")
+        and not ln.startswith(("macro-F1", "episodes", "confusion", "  "))
+        and "healthy controls that fired" not in ln
+    ]
+    return header, trig_rows
+
+
+def test_format_table_aligns_columns_for_long_trigger_names(harness) -> None:
+    """side_effect_duplicate (21 chars) and wall_clock_budget (17) must not
+    push their numeric columns out of line (issue #223): every trigger row and
+    the header share one derived trigger-column width, so all numeric columns
+    start at the same offset everywhere."""
+    report = harness.ScoreReport(
+        per_trigger={},
+        confusion={},
+        healthy_fired=0,
+        n_labeled=0,
+        n_healthy=0,
+    )
+    header, rows = _table_rows(harness, report)
+    assert set(harness.SHIPPED_TRIGGERS) >= {
+        "side_effect_duplicate",
+        "wall_clock_budget",
+    }
+    # The numeric block (TP FP FN precision recall f1) must begin at the same
+    # offset in the header and in EVERY trigger row: on master the two long
+    # names pushed their numbers right, off the header's grid.
+    offset = header.index("TP")
+    for row in rows:
+        assert row[: offset - 1].strip() in harness.SHIPPED_TRIGGERS, row
+        numeric = row[offset:]
+        assert numeric.startswith(" "), row  # TP is right-aligned in 4 cols
+        assert numeric[:4].strip().isdigit(), row
+    # And the rules still span exactly the header width.
+    lines = harness.format_table(report).splitlines()
+    assert lines[1] == "-" * len(header)
+
+
+def test_format_table_extra_trigger_widens_the_column(harness) -> None:
+    """An out-of-vocabulary trigger longer than every shipped one still gets
+    an aligned row: the width derives from all rows, not just SHIPPED_TRIGGERS
+    (issue #223's "as triggers are added")."""
+    stats = harness.TriggerStats(tp=1, fp=0, fn=0)
+    report = harness.ScoreReport(
+        per_trigger={"a_very_long_unshipped_trigger_name": stats},
+        confusion={},
+        healthy_fired=0,
+        n_labeled=1,
+        n_healthy=0,
+    )
+    header, rows = _table_rows(harness, report)
+    offset = header.index("TP")
+    extra = next(ln for ln in rows if ln.startswith("a_very_long"))
+    # The long name fits in the cell (no truncation) and its TP column starts
+    # at the header's TP offset.
+    assert extra[: offset - 1].strip() == "a_very_long_unshipped_trigger_name"
+    assert extra[offset : offset + 4].strip() == "1"
