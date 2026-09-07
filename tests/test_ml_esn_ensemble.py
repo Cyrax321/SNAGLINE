@@ -394,3 +394,54 @@ def test_features_ignore_metadata_content():
     scores_a = [r.score if (r := det_a.observe(e)) else None for e in stream_a]
     scores_b = [r.score if (r := det_b.observe(e)) else None for e in stream_b]
     assert scores_a == scores_b
+
+
+# --- live scoring uses the fit-consistent pairing (issue #243) ----------------
+
+
+def test_fitted_live_residuals_match_fit_pairing_on_healthy_traffic():
+    """Issue #243: fit() solves beta for (state after x_{t-1}) -> x_t, but
+    live scoring advanced the reservoir with x_t *first* and predicted x_t
+    from the post-advance state. The step leaked into the context judging it,
+    so even a perfectly healthy continuation carried a systematic residual
+    bias over the trained mean, and the running residual-stat update absorbed
+    it (res_mu drifting ~2 sigma on clean data). Drives the real observe()
+    path: on healthy traffic the running res_mu must stay centered on the
+    fitted mean.
+    """
+    det = EsnCusumDetector(seed=7, warmup_steps=5, cusum_h=1.0)
+    healthy = [
+        _ev(i, signature=f"a{i % 2}", latency=100.0 if i % 2 else 200.0)
+        for i in range(40)
+    ]
+    det.fit(healthy)
+    fitted_mu = det._fitted_res_mu
+    fitted_sigma = det._fitted_res_sigma
+    assert fitted_sigma > 0.0
+
+    # Long, perfectly in-pattern continuation: nothing here is anomalous, so
+    # every step updates the running residual stats with a "healthy" residual.
+    for i in range(40, 240):
+        det.observe(_ev(i, signature=f"a{i % 2}", latency=100.0 if i % 2 else 200.0))
+    st = det._episodes["ep"]
+    drift = st.res_mu - fitted_mu
+    assert abs(drift) < 0.5 * fitted_sigma, (
+        f"healthy continuation drifted res_mu by {drift / fitted_sigma:.2f} "
+        f"sigma from the fitted mean: the live pairing does not match fit()"
+    )
+
+
+def test_fitted_first_live_step_is_silent_then_scores():
+    """The first scored step has no pre-advance context (fit() skips the same
+    step); it stays silent once, and the second step scores normally."""
+    det = _fast()
+    healthy = [_ev(i, signature=f"a{i % 4}", latency=100.0) for i in range(12)]
+    det.fit(healthy)
+    st = det._new_state()
+
+    det._episodes["ep"] = st
+    first = det._esn_anomaly(st, det._features(healthy[0]))
+    assert first == 0.0, "no pre-advance context exists for the first step"
+    assert st.context_prev is not None
+    second = det._esn_anomaly(st, det._features(healthy[1]))
+    assert second is not None  # scores from the previous context
