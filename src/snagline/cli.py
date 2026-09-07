@@ -1050,8 +1050,22 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             auth_token=auth_token,
             max_body_bytes=args.max_body_bytes,
             max_risks=args.max_risks,
-            read_timeout=args.read_timeout,
-            episode_ttl_seconds=args.episode_ttl_seconds,
+            metrics_format=cfg.metrics_format,
+            # Flag, else the layered config (issue #240): the _resolve_*
+            # helpers in http_server re-resolve from env only, so a value
+            # that came from the --config file was silently dropped for
+            # exactly these three knobs. Passing the resolved cfg value
+            # when the flag is unset keeps one layering everywhere.
+            read_timeout=(
+                args.read_timeout
+                if args.read_timeout is not None
+                else cfg.server_read_timeout
+            ),
+            episode_ttl_seconds=(
+                args.episode_ttl_seconds
+                if args.episode_ttl_seconds is not None
+                else cfg.episode_ttl_seconds
+            ),
             **tls_kwargs,
         )
     return 0
