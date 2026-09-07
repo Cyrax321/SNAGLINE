@@ -15,7 +15,7 @@
   <a href="https://pypi.org/project/snagline/"><img src="https://img.shields.io/pypi/v/snagline?style=flat-square&label=PyPI" alt="PyPI" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License" /></a>
   <a href="https://github.com/Cyrax321/SNAGLINE/issues"><img src="https://img.shields.io/github/issues/Cyrax321/SNAGLINE?style=flat-square" alt="Issues" /></a>
-  <a href="https://github.com/Cyrax321/SNAGLINE/actions"><img src="https://img.shields.io/badge/tests-694%20passed-brightgreen?style=flat-square" alt="Tests" /></a>
+  <a href="https://github.com/Cyrax321/SNAGLINE/actions"><img src="https://img.shields.io/badge/tests-715%20passed-brightgreen?style=flat-square" alt="Tests" /></a>
 </p>
 
 ---
@@ -45,7 +45,7 @@ The answer is yes. SNAGLINE's tier-1 detectors are deterministic, O(1) amortized
 Zero third-party dependencies. Install from PyPI:
 
 ```bash
-pip install snagline==0.1.0  # 694 tests, zero required deps
+pip install snagline==0.1.0  # 715 tests, zero required deps
 ```
 
 Or from source:
@@ -328,8 +328,10 @@ SNAGLINE is verified not just with unit tests, but against real LLM agents, live
 ### Automated Test Suite and Benchmarks
 
 ```
-tests : 622 passed, 2 skipped  (pytest, CPython 3.13.5, commit f7857d1;
-        skip = langchain integrations without optional extras.
+tests : 715 passed, 2 skipped  (pytest, CPython 3.13.5, commit 22faeae;
+        skip = langchain/continuum integrations without optional extras.
+        With the optional numpy extra installed the ml-ensemble tests run
+        too; the CI core leg installs no extras, so its counts differ.
         CI matrix is Python 3.10--3.13 on ubuntu/macos/windows.)
 bench : median 2.43 us/step, p99 27.71 us/step over 200,000 synthetic steps
         (measured 2026-08-26 on Apple M1, arm64, CPython 3.14.5;
@@ -391,10 +393,12 @@ snagline replay tests/fixtures/trajectories/healthy_run.jsonl --summary
 
 `benchmarks/detection_accuracy.py` is the honesty gate for every detection-
 accuracy claim (issue #82). It replays the labeled fixture corpus under
-`benchmarks/fixtures/` (76 episodes: four labeled failures per shipped
-trigger (10 triggers: loop, error_cascade, latency_anomaly, token_runaway,
+`benchmarks/fixtures/` (109 episodes: four labeled failures per shipped
+trigger (17 triggers: loop, error_cascade, latency_anomaly, token_runaway,
 budget_breach, meltdown_low, meltdown_high, silent_abort, goal_drift,
-ml_ensemble) plus 36 healthy controls, including near-threshold cases) through
+ml_ensemble, stagnation, side_effect_duplicate, governance_decay, cycle,
+stall, idle_gap, wall_clock_budget) plus 41 healthy controls, including
+near-threshold cases) through
 harness config variants (`benchmarks/detection_accuracy.py::harness_config`
 with thresholds from `src/snagline/config.py`), then reports per-trigger
 TP/FP/FN, precision, recall, F1, macro-F1, and a confusion summary. It exits
@@ -407,8 +411,10 @@ false-positive gate. The corpus is generated deterministically by
 python benchmarks/detection_accuracy.py --fixtures benchmarks/fixtures --format table
 ```
 
-Reproduced on corpus commit `eaf237b` (PR #141, 76 episodes) and on this docs
-commit, identical output. Thresholds are `Config` defaults as of that commit
+The numbers below were re-run on commit `22faeae`; earlier blocks pinned to
+corpus commit `eaf237b` (PR #141, 76 episodes, macro-F1 1.000) predate the
+seven triggers added by #181 and #118, whose cross-firings now show up
+honestly below. Thresholds are `Config` defaults as of that commit
 (see `src/snagline/config.py` and `benchmarks/detection_accuracy.py` for the
 full list): loop `window_size=12` / `repeat_threshold=3`, cascade
 `window_size=10` / `error_threshold=3` / `consecutive_threshold=3`, CUSUM
@@ -424,25 +430,41 @@ replay results on the synthetic fixture corpus:
 ```
 trigger            TP   FP   FN  precision   recall      f1
 -----------------------------------------------------------
-loop                4    0    0      1.000    1.000   1.000
+loop                4    8    0      0.333    1.000   0.500
 error_cascade       4    0    0      1.000    1.000   1.000
 latency_anomaly     4    0    0      1.000    1.000   1.000
 token_runaway       4    0    0      1.000    1.000   1.000
 budget_breach       4    0    0      1.000    1.000   1.000
-meltdown_low        4    0    0      1.000    1.000   1.000
+meltdown_low        4    4    0      0.500    1.000   0.667
 meltdown_high       4    0    0      1.000    1.000   1.000
 silent_abort        4    0    0      1.000    1.000   1.000
 goal_drift          4    0    0      1.000    1.000   1.000
 ml_ensemble         4    0    0      1.000    1.000   1.000
+stagnation          4    0    0      1.000    1.000   1.000
+side_effect_duplicate    4    0    0      1.000    1.000   1.000
+governance_decay    4    0    0      1.000    1.000   1.000
+cycle               4    0    0      1.000    1.000   1.000
+stall               4    0    0      1.000    1.000   1.000
+idle_gap            4    0    0      1.000    1.000   1.000
+wall_clock_budget    4    0    0      1.000    1.000   1.000
 -----------------------------------------------------------
-macro-F1: 1.000
-episodes: 76 (40 labeled, 36 healthy controls)
+macro-F1: 0.951
+episodes: 109 (68 labeled, 41 healthy controls)
 confusion (firings on other data):
-  (none)
+  stagnation -> loop: 4
+  stall -> loop: 4
+  stall -> meltdown_low: 4
 healthy controls that fired: 0
 ```
 
-Ingest overhead on the same commit and hardware: median 2.43 us/step,
+The sub-1.0 precisions are cross-firings on *other failure* fixtures, not
+false alarms on healthy traffic: the `stagnation` and `stall` episodes
+genuinely are loops, so the loop detector (and the meltdown detector for
+`stall`) correctly fires on them too, which counts as FP against those
+labels. The gate the harness exists for -- `healthy controls that fired: 0`,
+exit code 0 -- still holds.
+
+Ingest overhead on commit `22faeae`'s parent-line hardware: median 2.43 us/step,
 p99 27.71 us/step over 200,000 synthetic steps
 (`python benchmarks/overhead_benchmark.py` or `snagline bench`; Apple M1,
 arm64, CPython 3.14.5).
@@ -742,7 +764,7 @@ SNAGLINE sits at the overlap of real-time monitoring, anomaly detection, and rel
 
 ## Status and Limitations
 
-- **Tested**: 694 tests passing, 3 skipped, 88.88% line coverage (see [Empirical Verification](#automated-test-suite-and-benchmarks) for the exact command and environment).
+- **Tested**: 715 tests passing, 2 skipped, 87.50% line coverage (see [Empirical Verification](#automated-test-suite-and-benchmarks) for the exact command and environment).
 - **On PyPI as `snagline` 0.1.0** (`pip install snagline`; clone still works via `pip install .` see Quick Start). The `snagline[langchain]`-style names used elsewhere in this README are the extras this package declares.
 - **Overhead is measured, not asserted.** Run `snagline bench` to reproduce on your hardware.
 - **Framework adapters are optional extras; sinks ship in core.** The LangChain, LangGraph, Autogen, and CrewAI adapters are optional installs (`pip install snagline[langchain]`, etc.). The console, webhook, Slack, PagerDuty, and dedup sinks are zero-dependency stdlib and always available.
@@ -770,7 +792,7 @@ The core has no runtime dependencies; dev tooling is in the `dev` extra:
 
 ```bash
 pip install -e ".[dev]"
-python -m pytest tests/ -q        # 622 passed, 2 skipped
+python -m pytest tests/ -q        # 715 passed, 2 skipped
 ruff check src tests && ruff format --check src tests
 mypy src
 ```
