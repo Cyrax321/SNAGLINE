@@ -380,7 +380,9 @@ class Monitor:
           "warning" severity band) at ``warn_fraction`` of
           ``max_episode_wall_seconds``, then a breach (score 1.0) at the limit;
           a single delta that jumps straight past the limit fires only the
-          breach (mirrors TokenRunawayDetector's envelope ordering).
+          breach (mirrors TokenRunawayDetector's envelope ordering) -- and
+          suppresses the warning for good, so severity never runs backwards
+          after a breach (issue #224).
         """
         out: list[FailureRisk] = []
         # Inert unless one of the opt-in horizon knobs is set (issue #92). When
@@ -428,6 +430,13 @@ class Monitor:
             if budget is not None:
                 if not clock.breached and clock.elapsed >= budget:
                     clock.breached = True
+                    # The warning threshold was passed on the way to the
+                    # breach, so a jump straight past the budget must not
+                    # leave a stale warning to fire on the *next* step --
+                    # that downgraded a critical to a warning after the fact
+                    # and read "at N% of budget" for an episode already over
+                    # it (issue #224).
+                    clock.warned = True
                     out.append(
                         FailureRisk(
                             event.episode_id,
