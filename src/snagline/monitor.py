@@ -96,7 +96,7 @@ class _EpisodeClock:
 
     def __init__(self, first_ts: float) -> None:
         self.last_ts = first_ts
-        self.elapsed = 0.0  # sum of positive inter-event deltas
+        self.elapsed = 0.0  # wall-clock span covered; last_ts only moves fwd
         self.idle_fired = False  # "idle_gap" fires once per episode
         self.warned = False  # budget warning fires once per episode
         self.breached = False  # budget breach fires once per episode
@@ -397,7 +397,16 @@ class Monitor:
                 self._clocks[event.episode_id] = _EpisodeClock(event.timestamp)
                 return out
             delta = event.timestamp - clock.last_ts
-            clock.last_ts = event.timestamp
+            if delta > 0.0:
+                # Out-of-order or skewed sources (merged adapter streams, clock
+                # skew between hook processes) must not reduce consumed budget
+                # -- and must not rewind ``last_ts`` either: rewinding makes
+                # the *next* event measure its delta from the moved-back
+                # reference, counting an already-counted span a second time
+                # (issue #249). ``last_ts`` only moves forward, so a late
+                # event neither spends nor un-spends budget.
+                clock.elapsed += delta
+                clock.last_ts = event.timestamp
             if (
                 self._idle_warn_seconds is not None
                 and not clock.idle_fired
@@ -415,10 +424,6 @@ class Monitor:
                         event.timestamp,
                     )
                 )
-            if delta > 0.0:
-                # Negative deltas (out-of-order or skewed sources) must not
-                # reduce consumed budget; clamp them out of the accumulation.
-                clock.elapsed += delta
             budget = self._max_wall_seconds
             if budget is not None:
                 if not clock.breached and clock.elapsed >= budget:

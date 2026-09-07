@@ -152,6 +152,49 @@ def test_negative_delta_does_not_refund_budget() -> None:
     assert len(breaches) == 1
 
 
+def test_out_of_order_events_do_not_double_count_the_same_span() -> None:
+    """Issue #249: a negative delta was excluded from ``elapsed`` but still
+    rewound ``last_ts``, so the next event measured its delta from the moved-
+    back reference and counted an already-counted span a second time. Events
+    at ts 0, 60, 0, 60 -- a 60-second true span, the second half a skewed
+    replay of the same range -- used to yield ``elapsed == 120`` and breach a
+    100 s budget. ``last_ts`` must only move forward.
+    """
+    sink = CapturingSink()
+    m = _monitor(sink, max_episode_wall_seconds=100.0)
+    _feed(
+        m,
+        _event("s1", 0.0),
+        _event("s2", 60.0),
+        _event("s3", 0.0),  # skewed backwards: rewinds nothing now
+        _event("s4", 60.0),  # delta measured from 60, not from 0
+    )
+    clock = m._clocks["ep1"]
+    assert clock.elapsed == 60.0, "the same wall-clock span was counted twice"
+    assert clock.last_ts == 60.0, "last_ts must not move backwards"
+    assert sink.risks == [], "60s of real time must not breach a 100s budget"
+
+
+def test_out_of_order_replay_still_counts_genuinely_new_time() -> None:
+    """The fix must not under-count either: after a backwards event, a delta
+    past the previous high-water mark is real new time and still spends
+    budget."""
+    sink = CapturingSink()
+    m = _monitor(sink, max_episode_wall_seconds=100.0)
+    _feed(
+        m,
+        _event("s1", 0.0),
+        _event("s2", 60.0),
+        _event("s3", 0.0),
+        _event("s4", 150.0),  # 90s past the high-water mark of 60
+    )
+    breaches = [
+        r for r in sink.risks if r.trigger == "wall_clock_budget" and r.score == 1.0
+    ]
+    assert len(breaches) == 1, "genuinely new time must still breach"
+    assert m._clocks["ep1"].elapsed == 150.0
+
+
 # --- determinism / fail-open / region contract ------------------------------
 
 
