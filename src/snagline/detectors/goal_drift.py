@@ -51,6 +51,14 @@ class GoalDriftDetector:
             return None
         score = self._drift_score(event.episode_id, baseline)
         if score < self._cfg.goal_drift_score_threshold:
+            # Below threshold: the episode has recovered from whatever fired
+            # before, so re-arm. Without this the latch held forever (issue
+            # #247) -- a long-lived episode that recovered from one drift and
+            # later hit a second, independent one never alerted again. This
+            # mirrors the re-arm semantics every other shipped detector has
+            # (loop clears when the signature leaves the window; the ESN
+            # CUSUM resets to re-alarm on persistent faults).
+            self._fired[event.episode_id] = False
             return None
         if self._fired.get(event.episode_id, False):
             return None
