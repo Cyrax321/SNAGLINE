@@ -758,11 +758,14 @@ class Monitor:
                 "warned": clock.warned,
                 "breached": clock.breached,
             }
+        with self._live_lock:
+            live_episodes = list(self._live_episodes.keys())
         return {
             "format_version": SNAPSHOT_FORMAT_VERSION,
             "detectors": detectors,
             "sinks": sinks,
             "time_axis": time_axis,
+            "live_episodes": live_episodes,
         }
 
     def snapshot(self, path: str) -> None:
@@ -843,21 +846,7 @@ class Monitor:
                 load(dumped_sinks[key])
         time_axis_data = data.get("time_axis")
         if isinstance(time_axis_data, dict):
-            # Restore clocks in order of last_ts ascending so most recent
-            # survives if we must evict under cap. Fall back to sorted keys
-            # for deterministic behavior when last_ts is missing.
-            try:
-                ordered = sorted(
-                    time_axis_data.items(),
-                    key=lambda kv: (
-                        float(kv[1].get("last_ts", 0.0))  # type: ignore[arg-type]
-                        if isinstance(kv[1], dict)
-                        else 0.0
-                    ),
-                )
-            except Exception:
-                ordered = sorted(time_axis_data.items())
-            for episode_id, clock_data in ordered:
+            for episode_id, clock_data in time_axis_data.items():
                 if not isinstance(episode_id, str) or not isinstance(clock_data, dict):
                     continue
                 try:
@@ -879,17 +868,82 @@ class Monitor:
                 clock.idle_fired = idle_fired
                 clock.warned = warned
                 clock.breached = breached
-                with self._live_lock:
-                    if episode_id in self._live_episodes:
-                        self._live_episodes.move_to_end(episode_id)
-                    else:
-                        self._live_episodes[episode_id] = None
-                        if len(self._live_episodes) > self._max_live_episodes:
-                            evicted, _ = self._live_episodes.popitem(last=False)
-                            self._clocks.pop(evicted, None)
-                    self._clocks[episode_id] = clock
-            # If we evicted due to cap, live_snapshot entries not in time_axis
-            # are already accounted for; no further action needed.
+                self._clocks[episode_id] = clock
+
+        # Issue #273: Gather restored episode ids in ascending LRU order and
+        # register them in _live_episodes so the per-episode retention cap
+        # (#184) holds across restore and over-cap detector state is evicted.
+        ordered_episodes: list[str] = []
+        seen_episodes: set[str] = set()
+
+        recorded_live = data.get("live_episodes")
+        if isinstance(recorded_live, list):
+            for ep in recorded_live:
+                if isinstance(ep, str) and ep not in seen_episodes:
+                    seen_episodes.add(ep)
+                    ordered_episodes.append(ep)
+
+        if isinstance(time_axis_data, dict):
+            try:
+                sorted_clocks = sorted(
+                    time_axis_data.items(),
+                    key=lambda kv: (
+                        float(kv[1].get("last_ts", 0.0))
+                        if isinstance(kv[1], dict)
+                        else 0.0
+                    ),
+                )
+            except Exception:
+                sorted_clocks = sorted(time_axis_data.items())
+            for ep, _ in sorted_clocks:
+                if isinstance(ep, str) and ep not in seen_episodes:
+                    seen_episodes.add(ep)
+                    ordered_episodes.append(ep)
+
+        # Inspect loaded detectors for any remaining episodes (e.g. snapshots
+        # taken when horizon knobs were off or from older snapshot versions)
+        for detector in self._detectors:
+            for attr in (
+                "_windows",
+                "_counts",
+                "_fired",
+                "_near_windows",
+                "_cycle_windows",
+                "_tokens",
+                "_last",
+                "_live",
+                "_eps",
+                "_episodes",
+            ):
+                mapping = getattr(detector, attr, None)
+                if isinstance(mapping, dict):
+                    for ep in mapping.keys():
+                        if isinstance(ep, str) and ep not in seen_episodes:
+                            seen_episodes.add(ep)
+                            ordered_episodes.append(ep)
+            states = getattr(detector, "_states", None)
+            if isinstance(states, dict):
+                for key in states.keys():
+                    ep = key[0] if isinstance(key, tuple) else key
+                    if isinstance(ep, str) and ep not in seen_episodes:
+                        seen_episodes.add(ep)
+                        ordered_episodes.append(ep)
+
+        # Register restored episodes in _live_episodes and enforce retention cap
+        to_evict: list[str] = []
+        with self._live_lock:
+            self._live_episodes.clear()
+            for ep in ordered_episodes:
+                if ep in self._live_episodes:
+                    self._live_episodes.move_to_end(ep)
+                else:
+                    self._live_episodes[ep] = None
+            while len(self._live_episodes) > self._max_live_episodes:
+                evicted, _ = self._live_episodes.popitem(last=False)
+                to_evict.append(evicted)
+
+        for evicted in to_evict:
+            self._evict_episode(evicted)
 
     def restore(self, path: str, strict_names: bool = False) -> None:
         """Load a JSON snapshot written by :meth:`snapshot`."""

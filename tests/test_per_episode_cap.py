@@ -159,3 +159,62 @@ def test_bounded_memory_repro() -> None:
         )
     )
     assert mon.retained_episodes == 10000
+
+
+def test_cap_enforced_across_restore_and_detector_freed(tmp_path) -> None:
+    """Issue #273: restore() must enforce retention cap and evict detector state."""
+    path = str(tmp_path / "snapshot.json")
+
+    # Source monitor with high cap ingests 5 episodes A..E
+    source = Monitor.default(
+        config=Config(max_live_episodes=100, max_episode_wall_seconds=1000), sinks=[]
+    )
+    for i, ep in enumerate(["A", "B", "C", "D", "E"]):
+        source.ingest(_event(ep, ts=float(i + 1)))
+    source.snapshot(path)
+
+    # Destination monitor has cap of 2
+    target = Monitor.default(
+        config=Config(max_live_episodes=2, max_episode_wall_seconds=1000), sinks=[]
+    )
+    target.restore(path)
+
+    # Live episodes and retained count must be capped at 2, preserving the newest ('D', 'E')
+    assert target.retained_episodes == 2
+    assert target.metrics()["retained_episodes"] == 2
+    assert list(target._live_episodes.keys()) == ["D", "E"]
+
+    # Over-cap episodes' detector state ('A', 'B', 'C') must be completely evicted
+    for det in target._detectors:
+        if hasattr(det, "_windows"):
+            windows = det._windows
+            assert "A" not in windows
+            assert "B" not in windows
+            assert "C" not in windows
+            assert "D" in windows
+            assert "E" in windows
+
+    # Clocks must also reflect only 'D' and 'E'
+    assert set(target._clocks.keys()) == {"D", "E"}
+
+
+def test_cap_enforced_across_restore_without_horizon_knobs(tmp_path) -> None:
+    """Issue #273: restore() enforces cap even when horizon time-axis is inactive."""
+    path = str(tmp_path / "snapshot_nohorizon.json")
+
+    source = Monitor.default(
+        config=Config(max_live_episodes=100, max_episode_wall_seconds=None), sinks=[]
+    )
+    for i, ep in enumerate(["A", "B", "C", "D", "E"]):
+        source.ingest(_event(ep, ts=float(i + 1)))
+    source.snapshot(path)
+
+    target = Monitor.default(
+        config=Config(max_live_episodes=2, max_episode_wall_seconds=None), sinks=[]
+    )
+    target.restore(path)
+
+    assert target.retained_episodes == 2
+    for det in target._detectors:
+        if hasattr(det, "_windows"):
+            assert len(det._windows) == 2
