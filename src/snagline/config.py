@@ -53,7 +53,12 @@ def _coercible_hint(hint: Any) -> Any:
 
 def _coerce(hint: type, value: str) -> Any:
     if hint is bool:
-        return value.strip().lower() in ("1", "true", "yes", "on", "t")
+        normalized = value.strip().lower()
+        if normalized in ("1", "true", "yes", "on", "t"):
+            return True
+        if normalized in ("0", "false", "no", "off", "f"):
+            return False
+        raise ValueError(f"invalid boolean value: {value!r}")
     if hint is int:
         return int(value)
     if hint is float:

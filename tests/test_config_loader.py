@@ -40,6 +40,27 @@ def test_from_env_skips_uncoercible_values():
     assert cfg.cusum_k == 0.5  # default unchanged, no raise
 
 
+def test_from_env_skips_uncoercible_boolean_values():
+    env = {"SNAGLINE_FAIL_OPEN": "flase"}
+    overrides = Config.from_env_overrides(environ=env)
+    assert "fail_open" not in overrides
+    assert Config.from_env(environ=env).fail_open is True
+
+
+def test_from_env_accepts_false_boolean_aliases():
+    for value in ("0", "false", "no", "off", "f"):
+        assert Config.from_env(environ={"SNAGLINE_FAIL_OPEN": value}).fail_open is False
+
+
+def test_resolve_invalid_boolean_env_keeps_file_value(tmp_path):
+    path = tmp_path / "cfg.json"
+    path.write_text(json.dumps({"fail_open": False}))
+    cfg = Config.resolve(
+        path=str(path), environ={"SNAGLINE_FAIL_OPEN": "definitely-not-a-bool"}
+    )
+    assert cfg.fail_open is False
+
+
 def test_load_file_json(tmp_path):
     path = tmp_path / "cfg.json"
     path.write_text(
