@@ -172,6 +172,40 @@ def test_composition_mismatch_strict_vs_tolerant(tmp_path):
     )  # cascade has no ep state yet
 
 
+def test_strict_restore_rejection_does_not_apply_detector_state(tmp_path):
+    """A rejected strict restore leaves the target monitor untouched."""
+    path = str(tmp_path / "state.json")
+    source = Monitor([LoopDetector(), ErrorCascadeDetector()], [ListSink()])
+    source.ingest(
+        StepEvent(
+            step_id="0",
+            episode_id="ep",
+            timestamp=0.0,
+            action_type="tool_call",
+            action_signature="q-a",
+            tool_name="search",
+        )
+    )
+    source.ingest(
+        StepEvent(
+            step_id="1",
+            episode_id="ep",
+            timestamp=1.0,
+            action_type="tool_call",
+            action_signature="q-a",
+            tool_name="search",
+        )
+    )
+    source.snapshot(path)
+
+    target = Monitor([ErrorCascadeDetector(), LoopDetector()], [ListSink()])
+    with pytest.raises(ValueError, match="composition mismatch"):
+        target.restore(path, strict_names=True)
+
+    loop = cast(LoopDetector, target._detectors[1])
+    assert loop._windows == {}
+
+
 def test_dedup_sink_cooldown_survives_round_trip(tmp_path):
     from snagline.risk import FailureRisk
 
