@@ -178,6 +178,38 @@ def test_cusum_refit_surfaces_baseline_drift() -> None:
     assert all(r is None for r in risks[-5:])
 
 
+def test_cusum_alarm_coincident_with_adoption_keeps_severity_and_detail() -> None:
+    """Issue #244: the alarm was scored *after* the periodic re-fit advanced.
+    When adoption landed on the same step as an alarm, adopt_candidate() had
+    already reset cusum to 0 and replaced mu0, so the risk came out with a
+    flat 0.6 score and the self-contradictory detail "300ms deviates from
+    baseline (mean 300ms)". The alarm must be scored against the snapshot
+    taken at alarm time, before the re-fit touches the state.
+    """
+    cfg = Config(cusum_min_samples=5, cusum_refit_every=3)
+    det = LatencyAnomalyDetector(config=cfg)
+    ts = 0.0
+    for i in range(5):  # healthy warm-up at 100ms, then frozen
+        det.observe(_event(f"w{i}", ts, "s", latency_ms=100.0))
+        ts += 1.0
+    risks = []
+    for i in range(10):  # sustained regression at 300ms
+        risks.append(det.observe(_event(f"x{i}", ts, "s", latency_ms=300.0)))
+        ts += 1.0
+    alarm_risks = [
+        r for r in risks if r is not None and "deviates from baseline" in r.detail
+    ]
+    assert alarm_risks, "the sustained shift must alarm"
+    for r in alarm_risks:
+        # Score: pre-adoption cusum was far above h, so the alarm must carry
+        # the severity bonus, not the 0.6 floor an adopted-reset produces.
+        assert r.score > 0.6, f"coincident alarm scored flat {r.score}"
+        # Detail: the mean cited must be the baseline the alarm was measured
+        # against (100ms), never the just-adopted 300ms.
+        assert "mean 100ms" in r.detail, f"self-contradictory detail: {r.detail}"
+        assert "mean 300ms" not in r.detail
+
+
 def test_cusum_refit_disabled_by_default_matches_pre92_behavior() -> None:
     cfg = Config()
     det = LatencyAnomalyDetector(config=cfg)

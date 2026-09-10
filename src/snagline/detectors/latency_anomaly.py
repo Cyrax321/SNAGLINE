@@ -232,6 +232,13 @@ class LatencyAnomalyDetector:
             return None
 
         alarm = state.update(event.latency_ms)
+        # Snapshot the alarm-time accumulator and baseline *before* the
+        # re-fit advances: a coincident adoption resets cusum to zero and
+        # replaces mu0, so scoring the alarm after _advance_refit reads the
+        # already-reset state -- a flat 0.6 score and a self-contradictory
+        # "300ms deviates from baseline (mean 300ms)" detail (issue #244).
+        alarm_cusum = state.cusum
+        alarm_mu0 = state.mu0
         drift_risk: FailureRisk | None = None
         if self.refit_every > 0:
             shifted, old_mu, shift = self._advance_refit(state, event.latency_ms)
@@ -256,14 +263,15 @@ class LatencyAnomalyDetector:
                         event.timestamp,
                     )
         if alarm:
-            score = min(1.0, 0.6 + 0.1 * max(0.0, state.cusum / self.h - 1.0))
+            assert alarm_mu0 is not None
+            score = min(1.0, 0.6 + 0.1 * max(0.0, alarm_cusum / self.h - 1.0))
             return FailureRisk(
                 event.episode_id,
                 event.step_id,
                 score,
                 "latency_anomaly",
                 f"latency {event.latency_ms:.0f}ms deviates from baseline "
-                f"(mean {state.mu0:.0f}ms)",
+                f"(mean {alarm_mu0:.0f}ms)",
                 event.timestamp,
             )
         return drift_risk
