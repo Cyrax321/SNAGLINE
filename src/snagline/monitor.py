@@ -107,6 +107,23 @@ def _detector_key(index: int, detector: Any) -> str:
     return f"{index}:{getattr(detector, 'name', type(detector).__name__)}"
 
 
+def _detector_slot_order(key: str) -> tuple[int, int, str]:
+    """Sort key recovering the numeric slot order of a snapshot detector key.
+
+    ``sorted()`` on the raw ``"<index>:<name>"`` strings is lexicographic, so
+    slot ``10`` lands between ``1`` and ``2``. Any monitor with 11+ detectors
+    then compared two differently-ordered name lists in the ``strict_names``
+    check, rejecting a matching composition and accepting a mismatched one
+    (issue #217). Keys without an integer prefix cannot be placed by slot, so
+    they sort after the numbered ones, deterministically by the raw key.
+    """
+    head, _, _ = key.partition(":")
+    try:
+        return (0, int(head), key)
+    except ValueError:
+        return (1, 0, key)
+
+
 def _auto_calibration_plan(cfg: Config) -> CalibrationPlan | None:
     """Resolve the auto-calibration plan for ``cfg``, fail-open (issue #101).
 
@@ -806,6 +823,10 @@ class Monitor:
         default is tolerant: matching entries are applied by key, missing
         detectors are skipped with a warning, and states without a home are
         ignored with a warning.
+
+        The strict check runs *before* any state is applied, so a rejected
+        restore leaves the monitor untouched: a caller that catches the
+        ``ValueError`` never has to wonder which half of the snapshot landed.
         """
         version = data.get("format_version")
         if version != SNAPSHOT_FORMAT_VERSION:
@@ -814,6 +835,23 @@ class Monitor:
                 f"{SNAPSHOT_FORMAT_VERSION}"
             )
         dumped_detectors: dict[str, Any] = data.get("detectors") or {}
+        # Validate before mutating (strict mode): the composition check below
+        # reads only the snapshot's keys and the monitor's detector list, so
+        # running it first guarantees a rejected restore applies no state at
+        # all. After the loop it would be too late -- the per-key and
+        # name-suffix fallbacks would already have loaded windows into
+        # detectors that the check then rejects the snapshot for.
+        if strict_names:
+            expected = [
+                k.split(":", 1)[1]
+                for k in sorted(dumped_detectors, key=_detector_slot_order)
+            ]
+            current = [getattr(d, "name", type(d).__name__) for d in self._detectors]
+            if expected != current:
+                raise ValueError(
+                    "snapshot detector composition mismatch: "
+                    f"snapshot={expected} monitor={current}"
+                )
         consumed: set[str] = set()
         for i, detector in enumerate(self._detectors):
             load = getattr(detector, "load_state", None)
@@ -852,14 +890,6 @@ class Monitor:
                 "slot(s); ignored",
                 len(orphaned),
             )
-        if strict_names:
-            expected = [k.split(":", 1)[1] for k in sorted(dumped_detectors)]
-            current = [getattr(d, "name", type(d).__name__) for d in self._detectors]
-            if expected != current:
-                raise ValueError(
-                    "snapshot detector composition mismatch: "
-                    f"snapshot={expected} monitor={current}"
-                )
         dumped_sinks: dict[str, Any] = data.get("sinks") or {}
         for i, sink in enumerate(self._sinks):
             load = getattr(sink, "load_state", None)
