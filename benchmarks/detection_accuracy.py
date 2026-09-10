@@ -435,14 +435,27 @@ def score(outcomes: Sequence[EpisodeOutcome]) -> ScoreReport:
 
 
 def format_table(report: ScoreReport) -> str:
+    # Width is derived, not hardcoded (issue #223): side_effect_duplicate (21)
+    # and wall_clock_budget (17) both overflowed the old fixed 16-char column
+    # and pushed their numeric columns out of alignment with the header and
+    # rules. Deriving from every row's trigger keeps the table aligned as
+    # triggers are added.
+    width = max(
+        len("trigger"),
+        *(len(t) for t in SHIPPED_TRIGGERS),
+        *(len(t) for t in report.per_trigger),
+    )
     lines: list[str] = []
-    header = f"{'trigger':<16} {'TP':>4} {'FP':>4} {'FN':>4} {'precision':>10} {'recall':>8} {'f1':>7}"
+    header = (
+        f"{'trigger':<{width}} {'TP':>4} {'FP':>4} {'FN':>4}"
+        f" {'precision':>10} {'recall':>8} {'f1':>7}"
+    )
     lines.append(header)
     lines.append("-" * len(header))
     for trig in SHIPPED_TRIGGERS:
         s = report.per_trigger.get(trig, TriggerStats())
         lines.append(
-            f"{trig:<16} {s.tp:>4} {s.fp:>4} {s.fn:>4}"
+            f"{trig:<{width}} {s.tp:>4} {s.fp:>4} {s.fn:>4}"
             f" {s.precision:>10.3f} {s.recall:>8.3f} {s.f1:>7.3f}"
         )
     # Triggers outside the shipped vocabulary still get honest rows.
@@ -450,7 +463,7 @@ def format_table(report: ScoreReport) -> str:
     for trig in extra:
         s = report.per_trigger[trig]
         lines.append(
-            f"{trig:<16} {s.tp:>4} {s.fp:>4} {s.fn:>4}"
+            f"{trig:<{width}} {s.tp:>4} {s.fp:>4} {s.fn:>4}"
             f" {s.precision:>10.3f} {s.recall:>8.3f} {s.f1:>7.3f}"
         )
     lines.append("-" * len(header))
