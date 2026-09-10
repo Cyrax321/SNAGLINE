@@ -19,6 +19,7 @@ from collections import deque
 from typing import Any
 
 from snagline.config import Config
+from snagline.detectors.base import snapshot_items
 from snagline.detectors.windowing import next_window
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk
@@ -137,8 +138,10 @@ class ErrorCascadeDetector:
         self._fired.pop(episode_id, None)
 
     def dump_state(self) -> dict[str, Any]:
+        # snapshot_items: a concurrent ingest meeting a new episode must not
+        # change the key set mid-comprehension (issue #231).
         return {
-            "windows": {ep: list(w) for ep, w in self._windows.items()},
+            "windows": {ep: list(w) for ep, w in snapshot_items(self._windows)},
             "counts": dict(self._counts),
             "consecutive": dict(self._consecutive),
             "fired": dict(self._fired),

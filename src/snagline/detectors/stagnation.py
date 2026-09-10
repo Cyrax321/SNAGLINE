@@ -46,6 +46,7 @@ from collections import deque
 from typing import Any
 
 from snagline.config import Config
+from snagline.detectors.base import snapshot_items
 from snagline.detectors.windowing import effective_window_size
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk
@@ -164,6 +165,10 @@ class StagnationDetector:
         (raw sets are not JSON-serializable). The auto-scaler position
         (``counts``, issue #92) rides along so a restored episode keeps its
         scaling cadence.
+
+        The outer walk goes through ``snapshot_items``: a concurrent ingest
+        meeting a new episode must not change the key set mid-comprehension
+        (issue #231).
         """
         return {
             "windows": {
@@ -173,7 +178,7 @@ class StagnationDetector:
                     "stale_windows": w.stale_windows,
                     "seen_all_time": sorted(w.seen_all_time),
                 }
-                for ep, w in self._windows.items()
+                for ep, w in snapshot_items(self._windows)
             },
             # Tolerant readers on load: pre-#92 payloads carry no counts.
             "counts": dict(self._counts),
