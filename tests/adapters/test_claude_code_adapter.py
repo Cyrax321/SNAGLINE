@@ -222,3 +222,60 @@ def test_ingest_payload_never_raises() -> None:
         m,
         {"hook_event_name": "PreToolUse", "session_id": None, "tool_input": {}},  # type: ignore[dict-item]
     )
+
+
+def test_two_healthy_logical_calls_do_not_trip_loop() -> None:
+    # Issue #237: PreToolUse and PostToolUse of ONE logical call used to share
+    # an action signature (same tool, same input; only the volatile
+    # tool_use_id differs, which the signature excludes). The loop window
+    # counts events, so 2 healthy identical calls contributed 4 identical
+    # signatures and tripped the default repeat_threshold of 3. The subkind
+    # now separates the Pre and Post signatures. Asserted through the real
+    # Monitor so the shipped repeat_threshold (not the stub window above)
+    # is what decides.
+    risks: list[FailureRisk] = []
+
+    class _Sink:
+        def emit(self, risk: FailureRisk) -> None:
+            risks.append(risk)
+
+    monitor = Monitor.default(config=Config(), sinks=[_Sink()])
+    tracker = HookTracker()
+    for i in range(2):  # exactly TWO logical calls
+        p = _tool_payload("PreToolUse", tool_use_id=f"toolu_{i}")
+        ingest_payload(monitor, p, tracker)
+        ingest_payload(monitor, {**p, "hook_event_name": "PostToolUse"}, tracker)
+    assert not [r for r in risks if r.trigger == "loop"], (
+        "2 identical logical tool calls must not fire loop"
+    )
+
+
+def test_third_logical_call_still_trips_loop() -> None:
+    # The guard must not over-suppress: 3 identical logical attempts (6
+    # events) is a genuine repeat pattern and must keep firing.
+    risks: list[FailureRisk] = []
+
+    class _Sink:
+        def emit(self, risk: FailureRisk) -> None:
+            risks.append(risk)
+
+    monitor = Monitor.default(config=Config(), sinks=[_Sink()])
+    tracker = HookTracker()
+    for i in range(3):  # THREE logical calls
+        p = _tool_payload("PreToolUse", tool_use_id=f"toolu_{i}")
+        ingest_payload(monitor, p, tracker)
+        ingest_payload(monitor, {**p, "hook_event_name": "PostToolUse"}, tracker)
+    assert [r for r in risks if r.trigger == "loop"], (
+        "3 identical logical tool calls must fire loop"
+    )
+
+
+def test_pre_and_post_have_distinct_signatures() -> None:
+    pre = payload_to_event(_tool_payload("PreToolUse"))
+    post = payload_to_event(_tool_payload("PostToolUse"))
+    assert pre is not None and post is not None
+    assert pre.action_signature != post.action_signature
+    # And retries stay pairable with themselves:
+    pre2 = payload_to_event(_tool_payload("PreToolUse", tool_use_id="other"))
+    assert pre2 is not None
+    assert pre2.action_signature == pre.action_signature
