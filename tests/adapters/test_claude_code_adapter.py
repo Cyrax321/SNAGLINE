@@ -279,6 +279,8 @@ def test_pre_and_post_have_distinct_signatures() -> None:
     pre2 = payload_to_event(_tool_payload("PreToolUse", tool_use_id="other"))
     assert pre2 is not None
     assert pre2.action_signature == pre.action_signature
+
+
 # --- thread safety of the shared tracker (issue #245) -------------------------
 
 
