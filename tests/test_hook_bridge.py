@@ -313,6 +313,157 @@ def test_hook_cli_never_fails_the_host() -> None:
     assert r3.returncode == 0  # unmapped events are silently dropped
 
 
+# --- issue #226: the bridge must not drop side_effect / metadata --------------
+
+_PIN_A = "448a0c330ba83452956a4b294c1af26dc0def64cffbec53e8e6c99118655dbd1"
+
+
+def _canonical_compaction(step_id: str) -> dict:
+    """A canonical (already-StepEvent-shaped) compaction payload.
+
+    A host emitting canonical events through the command hook carries the
+    tripwire contract fields (action_type "compaction" plus pinned hashes in
+    ``metadata``). Pre-#226 the bridge dropped ``metadata`` on the way to
+    ``--out``/``--url``, so the written/forwarded event lost its pins and
+    CompactionTripwireDetector was structurally unreachable downstream.
+    """
+    from snagline.events import make_signature
+
+    return {
+        "step_id": step_id,
+        "episode_id": "ep-bridge",
+        "timestamp": 1718300100.0,
+        "action_type": "compaction",
+        "action_signature": make_signature("compaction", None),
+        "tool_name": None,
+        "metadata": {"pinned": [_PIN_A]},
+    }
+
+
+def _canonical_side_effect(step_id: str) -> dict:
+    """A canonical non-idempotent action payload (issue #88's host contract)."""
+    from snagline.events import make_signature
+
+    return {
+        "step_id": step_id,
+        "episode_id": "ep-bridge",
+        "timestamp": 1718300100.0,
+        "action_type": "tool_call",
+        "action_signature": make_signature("tool_call", "charge"),
+        "tool_name": "charge",
+        "side_effect": True,
+    }
+
+
+def test_hook_cli_round_trips_metadata_to_the_out_file(tmp_path) -> None:
+    out = tmp_path / "events.jsonl"
+    r = _run(["hook", "--out", str(out)], json.dumps(_canonical_compaction("c1")))
+    assert r.returncode == 0
+    lines = [json.loads(line) for line in out.read_text().splitlines()]
+    assert lines == [
+        {
+            "step_id": "c1",
+            "episode_id": "ep-bridge",
+            "timestamp": 1718300100.0,
+            "action_type": "compaction",
+            "action_signature": lines[0]["action_signature"],
+            "tool_name": None,
+            "latency_ms": None,
+            "error": False,
+            "error_type": None,
+            "tokens_in": None,
+            "tokens_out": None,
+            "side_effect": False,
+            "metadata": {"pinned": [_PIN_A]},
+        }
+    ]
+
+
+def test_hook_cli_round_trips_side_effect_to_the_out_file(tmp_path) -> None:
+    out = tmp_path / "events.jsonl"
+    r = _run(["hook", "--out", str(out)], json.dumps(_canonical_side_effect("s1")))
+    assert r.returncode == 0
+    [line] = [json.loads(line) for line in out.read_text().splitlines()]
+    assert line["side_effect"] is True
+
+
+def test_hook_out_file_feeds_compaction_tripwire(tmp_path) -> None:
+    """End-to-end proof (issue #226): --out output is tripwire-monitorable.
+
+    A compaction whose pin is never re-confirmed must fire governance_decay
+    when the bridge-written file is replayed with the tripwire enabled. On
+    pre-#226 cli.py the metadata never survived the write, so this replay
+    stayed silent -- the detector was unreachable over the bridge.
+    """
+    out = tmp_path / "events.jsonl"
+    from snagline.events import make_signature
+
+    for i in range(4):  # compaction + 3 quiet steps -> grace window expires
+        if i == 0:
+            payload = _canonical_compaction("c1")
+        else:
+            payload = {
+                "step_id": f"t{i}",
+                "episode_id": "ep-bridge",
+                "timestamp": 1718300100.0 + i,
+                "action_type": "tool_call",
+                "action_signature": make_signature("tool_call", f"tool-{i}"),
+                "tool_name": f"tool-{i}",
+            }
+        r = _run(["hook", "--out", str(out)], json.dumps(payload))
+        assert r.returncode == 0
+    env = {**os.environ, "SNAGLINE_COMPACTION_TRIPWIRE_ENABLED": "1"}
+    r = subprocess.run(
+        [sys.executable, "-m", "snagline.cli", "replay", str(out)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=env,
+    )
+    assert r.returncode == 0
+    assert '"trigger": "governance_decay"' in r.stderr, r.stderr
+
+
+def test_hook_out_file_feeds_side_effect_guard(tmp_path) -> None:
+    """End-to-end proof (issue #226): the guard sees repeated marked actions."""
+    out = tmp_path / "events.jsonl"
+    for step in ("s1", "s2"):  # same signature, side_effect=True, twice
+        r = _run(["hook", "--out", str(out)], json.dumps(_canonical_side_effect(step)))
+        assert r.returncode == 0
+    env = {**os.environ, "SNAGLINE_SIDE_EFFECT_GUARD_ENABLED": "1"}
+    r = subprocess.run(
+        [sys.executable, "-m", "snagline.cli", "replay", str(out)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=env,
+    )
+    assert r.returncode == 0
+    assert '"trigger": "side_effect_duplicate"' in r.stderr, r.stderr
+
+
+def test_hook_cli_forwards_side_effect_and_metadata_to_sidecar() -> None:
+    """--url forwarding keeps both fields (issue #226): the exact JSON the
+    bridge POSTs carries ``side_effect`` and ``metadata`` verbatim."""
+    server = _HookTargetServer(respond_ok=True)
+    server.start()
+    url = f"http://127.0.0.1:{server.port}/events"
+    try:
+        for payload in (_canonical_compaction("c1"), _canonical_side_effect("s1")):
+            r = _run(["hook", "--url", url], json.dumps(payload))
+            assert r.returncode == 0
+        deadline = time.monotonic() + 30.0
+        while len(server.bodies) < 2 and time.monotonic() < deadline:
+            time.sleep(0.05)
+    finally:
+        server.close()
+    assert len(server.bodies) >= 2, server.bodies
+    sent = [json.loads(body.split(b"\r\n\r\n", 1)[1]) for body in server.bodies[:2]]
+    by_step = {obj["step_id"]: obj for obj in sent}
+    assert by_step["c1"]["metadata"] == {"pinned": [_PIN_A]}
+    assert by_step["s1"]["side_effect"] is True
+
+
 def test_watch_file_follow_sees_appended_lines(tmp_path, children) -> None:
     path = tmp_path / "live.jsonl"
     path.write_text(json.dumps(_base_event(0)) + "\n")

@@ -657,6 +657,13 @@ def _cmd_hook(args: argparse.Namespace) -> int:
 
 
 def _event_to_json(event: StepEvent) -> dict:
+    # All 13 StepEvent fields, so the hook bridge round-trips losslessly.
+    # ``side_effect`` and ``metadata`` were previously dropped, which made
+    # SideEffectGuardDetector and CompactionTripwireDetector structurally
+    # unreachable over `snagline hook --out/--url` (issue #226). ``metadata``
+    # is host-provided: whatever the host emits in its payload is what lands
+    # in the --out file or the POST body (documented privacy posture -- the
+    # bridge never adds content, it just stops subtracting).
     return {
         "step_id": event.step_id,
         "episode_id": event.episode_id,
@@ -669,6 +676,8 @@ def _event_to_json(event: StepEvent) -> dict:
         "error_type": event.error_type,
         "tokens_in": event.tokens_in,
         "tokens_out": event.tokens_out,
+        "side_effect": event.side_effect,
+        "metadata": event.metadata,
     }
 
 
