@@ -9,6 +9,15 @@ Global mode (issue #270) patches the *resource classes* --
 walking ``Anthropic.messages``: on modern Anthropic SDKs the client attribute
 is a ``functools.cached_property`` descriptor, so the old class-attribute
 walk resolved a descriptor, not a resource, and silently wrapped nothing.
+
+Latency measurement and event timestamps use :func:`time.perf_counter`, not
+:func:`time.time`, mirroring the explicit adapters (issue #155): the wall
+clock advances in ~15.6 ms ticks on Windows on supported 3.10--3.12
+interpreters, quantizing sub-tick latencies to zero, and is non-monotonic, so
+a clock step mid-call fabricates negative or huge latencies.
+``perf_counter`` has no meaningful epoch, so these timestamps are only
+comparable within one process; detectors consume them solely as in-process
+latency differences.
 """
 
 from __future__ import annotations
@@ -30,15 +39,15 @@ logger = logging.getLogger("snagline")
 
 
 def _emit(monitor, counter, model, tool_name, sig_text, start, error) -> None:
-    latency = (time.time() - start) * 1000.0
+    now = time.perf_counter()
     event = StepEvent(
         step_id=str(next(counter)),
         episode_id="anthropic-auto",
-        timestamp=time.time(),
+        timestamp=now,
         action_type="tool_call",
         action_signature=make_signature("anthropic_call", model, sig_text),
         tool_name=tool_name,
-        latency_ms=latency,
+        latency_ms=(now - start) * 1000.0,
         error=error,
     )
     monitor.ingest(event)
@@ -66,7 +75,7 @@ def _wrap_one(monitor, original, tool_name):
     def _sync(*args, **kwargs):
         sig_text = str(kwargs.get("messages") or args)
         model = kwargs.get("model", "unknown")
-        start = time.time()
+        start = time.perf_counter()
         error = False
         try:
             result = original(*args, **kwargs)
@@ -80,7 +89,7 @@ def _wrap_one(monitor, original, tool_name):
     async def _async(*args, **kwargs):
         sig_text = str(kwargs.get("messages") or args)
         model = kwargs.get("model", "unknown")
-        start = time.time()
+        start = time.perf_counter()
         error = False
         try:
             result = await original(*args, **kwargs)
