@@ -313,3 +313,40 @@ def test_maybe_dedup_wraps_sinks_only_when_cooldown_set() -> None:
     assert len(wrapped) == 1
     assert isinstance(wrapped[0], DedupSink)
     assert wrapped[0]._cooldown == 120.0
+
+
+# --- --min-severity honored for webhook + validated (issue #248) ---------------
+
+
+def test_build_sinks_webhook_receives_min_severity():
+    from snagline.cli import _build_sinks
+    from snagline.sinks.webhook import WebhookSink
+
+    sink = _build_sinks(
+        _args(sink="webhook", webhook_url="http://x", min_severity="critical"),
+        Config(),
+    ).pop()
+    assert isinstance(sink, WebhookSink)
+    assert sink._min == "critical", "webhook branch must consume --min-severity"
+
+
+def test_min_severity_typo_exits_2(capsys):
+    """A typo'd severity must fail loudly like other closed-set config values
+    (#119 log_format, #93 policy), not quietly degrade the filter to warning."""
+    import pytest
+
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "watch",
+                "--sink",
+                "slack",
+                "--slack-url",
+                "u",
+                "--min-severity",
+                "CRITICALL",
+            ]
+        )
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "invalid choice" in err, f"argparse should reject the typo, got: {err}"

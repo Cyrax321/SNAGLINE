@@ -74,3 +74,72 @@ def test_emit_never_raises_on_bad_status() -> None:
         side_effect=urllib.error.HTTPError("url", 500, "boom", hdrs=None, fp=None),  # type: ignore[arg-type]
     ):
         WebhookSink("http://hooks.example/alerts").emit(_risk())
+
+
+# --- min_severity filtering (issue #248) --------------------------------------
+class _Resp:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        return b"{}"
+
+
+def _posting_urlopen(posted: list) -> object:
+    def fake_urlopen(req, timeout=None):
+        posted.append(json.loads(req.data.decode()))
+        return _Resp()
+
+    return fake_urlopen
+
+
+def _risk_with_severity(severity: str) -> FailureRisk:
+    return FailureRisk(
+        episode_id="ep-1",
+        step_id="3",
+        score=0.5,
+        trigger="loop",
+        detail="action repeated 3x in last 4 steps",
+        timestamp=1718300000.0,
+        severity=severity,
+    )
+
+
+def test_min_severity_info_passes_everything() -> None:
+    posted: list = []
+    with mock.patch.object(
+        urllib.request, "urlopen", side_effect=_posting_urlopen(posted)
+    ):
+        sink = WebhookSink("http://x", min_severity="info")
+        sink.emit(_risk_with_severity("info"))
+        sink.emit(_risk_with_severity("warning"))
+        sink.emit(_risk_with_severity("critical"))
+    assert len(posted) == 3
+
+
+def test_min_severity_critical_suppresses_lower() -> None:
+    posted: list = []
+    with mock.patch.object(
+        urllib.request, "urlopen", side_effect=_posting_urlopen(posted)
+    ):
+        sink = WebhookSink("http://x", min_severity="critical")
+        sink.emit(_risk_with_severity("info"))
+        sink.emit(_risk_with_severity("warning"))
+        sink.emit(_risk_with_severity("critical"))
+    assert len(posted) == 1, (
+        "critical-only endpoint must not receive info/warning risks"
+    )
+    assert posted[0]["trigger"] == "loop"
+
+
+def test_min_severity_unset_is_unfiltered() -> None:
+    posted: list = []
+    with mock.patch.object(
+        urllib.request, "urlopen", side_effect=_posting_urlopen(posted)
+    ):
+        sink = WebhookSink("http://x")
+        sink.emit(_risk_with_severity("info"))
+    assert len(posted) == 1

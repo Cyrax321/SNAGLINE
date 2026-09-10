@@ -139,7 +139,7 @@ def _build_sinks(args: argparse.Namespace, cfg: Config) -> list[AlertSink]:
             raise SystemExit(2)
         from snagline.sinks.webhook import WebhookSink
 
-        sinks.append(WebhookSink(args.webhook_url))
+        sinks.append(WebhookSink(args.webhook_url, min_severity=args.min_severity))
     elif args.sink == "slack":
         if not args.slack_url:
             print("--slack-url is required with --sink slack", file=sys.stderr)
@@ -245,6 +245,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_watch.add_argument(
         "--min-severity",
         default=None,
+        choices=("info", "warning", "critical"),
         help="Only escalate risks at or above this severity "
         "(info|warning|critical). Optional.",
     )
@@ -360,6 +361,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_serve.add_argument(
         "--min-severity",
         default=None,
+        choices=("info", "warning", "critical"),
         help="Only escalate risks at or above this severity "
         "(info|warning|critical). Optional.",
     )
