@@ -32,6 +32,7 @@ knobs: k/h stay as configured.
 from __future__ import annotations
 
 import math
+import threading
 from typing import Any
 
 from snagline.baseline import BaselineProfile, ToolBaseline
@@ -178,6 +179,16 @@ class LatencyAnomalyDetector:
         # per-tool stats only; no content is retained or consulted.
         self._baseline = baseline
         self._states: dict[tuple[str, str], _WelfordCUSUM] = {}
+        # ``_states`` is keyed by (episode_id, tool_name), so unlike every
+        # other detector it is not partitioned by episode: the Monitor's
+        # per-episode lock cannot keep reset()/dump_state() from walking the
+        # dict while an ingest for a *different* episode meets a new tool and
+        # inserts into it (issue #229). This lock guards only the operations
+        # that change or walk the key set -- first-sight insert, reset,
+        # dump_state, load_state -- so the per-step ``state.update(...)``,
+        # which mutates an existing _WelfordCUSUM and adds no key, stays
+        # lock-free and O(1) amortized per event.
+        self._states_lock = threading.Lock()
         # Periodic baseline re-fit (issue #92); 0 disables (the default).
         self.refit_every = cfg.cusum_refit_every
 
@@ -208,7 +219,11 @@ class LatencyAnomalyDetector:
                     seeded = candidate
             if seeded is not None:
                 state.seed(seeded.mean_latency, seeded.std_latency)
-            self._states[key] = state
+            # Only the key-set mutation needs the lock (issue #229); building
+            # the state above is pure. A concurrent first-sight of the same key
+            # would otherwise be lost, so keep whichever entry landed first.
+            with self._states_lock:
+                state = self._states.setdefault(key, state)
 
         if not state.frozen:
             state.learn_only(event.latency_ms)
@@ -291,8 +306,9 @@ class LatencyAnomalyDetector:
         return False, 0.0, 0.0
 
     def reset(self, episode_id: str) -> None:
-        for key in [k for k in self._states if k[0] == episode_id]:
-            self._states.pop(key, None)
+        with self._states_lock:
+            for key in [k for k in self._states if k[0] == episode_id]:
+                self._states.pop(key, None)
 
     @staticmethod
     def _state_to_dict(s: _WelfordCUSUM) -> dict[str, Any]:
@@ -340,15 +356,14 @@ class LatencyAnomalyDetector:
     def dump_state(self) -> dict[str, Any]:
         # Keys are (episode_id, tool_name) tuples; JSON dict keys must be
         # strings, so serialize as [key-pair, state] entries.
+        with self._states_lock:
+            items = sorted(self._states.items())
         return {
-            "states": [
-                [[ep, tool], self._state_to_dict(s)]
-                for (ep, tool), s in sorted(self._states.items())
-            ]
+            "states": [[[ep, tool], self._state_to_dict(s)] for (ep, tool), s in items]
         }
 
     def load_state(self, state: dict[str, Any]) -> None:
-        self._states = {}
+        restored: dict[tuple[str, str], _WelfordCUSUM] = {}
         for key_pair, raw in state.get("states", []):
             ep, tool = key_pair[0], key_pair[1]
             s = _WelfordCUSUM(
@@ -358,4 +373,6 @@ class LatencyAnomalyDetector:
             # The live config owns the refit cadence; the snapshot only
             # carries accumulated bookkeeping.
             s.refit_every = self.refit_every
-            self._states[(ep, tool)] = s
+            restored[(ep, tool)] = s
+        with self._states_lock:
+            self._states = restored

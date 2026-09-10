@@ -215,6 +215,16 @@ class Monitor:
         self._warn_fraction = cfg.warn_fraction
         self._idle_warn_seconds = cfg.idle_warn_seconds
         self._clocks: dict[str, _EpisodeClock] = {}
+        # ``_clocks`` spans every episode, so the per-episode lock cannot
+        # protect its key set: an ingest for episode A inserting a clock races
+        # a teardown or a snapshot walking the dict for anything else. This
+        # lock covers the dict-level operations only (get / insert / pop /
+        # iterate); the fields *inside* an _EpisodeClock stay under the
+        # per-episode lock, so the hot path takes this lock once per episode
+        # first-sight and once per teardown, never per step. It is a leaf lock
+        # -- nothing is ever acquired while holding it -- so no ordering
+        # hazard exists against _live_lock or the episode locks.
+        self._clocks_lock = threading.Lock()
         # Per-episode retention cap (issue #184): bounded LRU of live episode
         # ids. Every ingest touches the entry; when the cap is exceeded the
         # least-recently-seen id is evicted silently (no finalize risks) via
@@ -345,7 +355,9 @@ class Monitor:
         with self._state.episode_lock(event.episode_id):
             # Time-axis head (issue #92): computed from StepEvent timestamps at
             # the top of ingest(), under the episode lock so concurrent ingests
-            # serialize exactly like detector state does.
+            # for the same episode serialize exactly like detector state does.
+            # The episode lock says nothing about the cross-episode ``_clocks``
+            # dict, which carries its own lock (issue #228).
             risks.extend(self._advance_clock(event))
             for detector in self._detectors:
                 try:
@@ -390,11 +402,15 @@ class Monitor:
         if self._max_wall_seconds is None and self._idle_warn_seconds is None:
             return out
         try:
-            clock = self._clocks.get(event.episode_id)
+            # Dict-level access only under _clocks_lock; the returned clock's
+            # fields are mutated below under the caller's per-episode lock.
+            with self._clocks_lock:
+                clock = self._clocks.get(event.episode_id)
+                if clock is None:
+                    # First event of the episode establishes the reference
+                    # point; there is no delta yet, so nothing can fire.
+                    self._clocks[event.episode_id] = _EpisodeClock(event.timestamp)
             if clock is None:
-                # First event of the episode establishes the reference point;
-                # there is no delta yet, so nothing can fire.
-                self._clocks[event.episode_id] = _EpisodeClock(event.timestamp)
                 return out
             delta = event.timestamp - clock.last_ts
             clock.last_ts = event.timestamp
@@ -639,7 +655,8 @@ class Monitor:
                 return
         try:
             with self._state.episode_lock(episode_id):
-                self._clocks.pop(episode_id, None)
+                with self._clocks_lock:
+                    self._clocks.pop(episode_id, None)
                 for detector in self._detectors:
                     try:
                         detector.reset(episode_id)
@@ -685,7 +702,8 @@ class Monitor:
         with self._state.episode_lock(episode_id):
             # Time-axis state (issue #92) is per-episode like detector state;
             # drop it here so a reused episode id starts with a clean clock.
-            self._clocks.pop(episode_id, None)
+            with self._clocks_lock:
+                self._clocks.pop(episode_id, None)
             for detector in self._detectors:
                 finalize = getattr(detector, "finalize", None)
                 if callable(finalize):
@@ -750,7 +768,14 @@ class Monitor:
             dump = getattr(sink, "dump_state", None)
             sinks[f"{i}:{type(sink).__name__}"] = dump() if callable(dump) else None
         time_axis: dict[str, Any] = {}
-        for episode_id, clock in self._clocks.items():
+        # Copy the (episode_id, clock) pairs under the lock: iterating _clocks
+        # directly would raise RuntimeError as soon as a concurrent ingest
+        # meets a new episode (issue #228). Building the payload afterwards is
+        # safe -- each clock object is only mutated under its episode lock, and
+        # a snapshot is a point-in-time read either way.
+        with self._clocks_lock:
+            clocks = list(self._clocks.items())
+        for episode_id, clock in clocks:
             time_axis[episode_id] = {
                 "last_ts": clock.last_ts,
                 "elapsed": clock.elapsed,
@@ -886,8 +911,10 @@ class Monitor:
                         self._live_episodes[episode_id] = None
                         if len(self._live_episodes) > self._max_live_episodes:
                             evicted, _ = self._live_episodes.popitem(last=False)
-                            self._clocks.pop(evicted, None)
-                    self._clocks[episode_id] = clock
+                            with self._clocks_lock:
+                                self._clocks.pop(evicted, None)
+                    with self._clocks_lock:
+                        self._clocks[episode_id] = clock
             # If we evicted due to cap, live_snapshot entries not in time_axis
             # are already accounted for; no further action needed.
 
