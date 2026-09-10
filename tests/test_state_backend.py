@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from contextlib import contextmanager
 
 import pytest
@@ -149,3 +150,119 @@ def test_end_episode_propagates_release_error_when_not_fail_open():
     )
     with pytest.raises(RuntimeError):
         monitor.end_episode("ep")
+
+
+# --- release() vs parked waiters (issue #238) -------------------------------
+
+
+def test_parked_waiter_keeps_exclusive_section_after_release():
+    """The exact race from issue #238, made deterministic.
+
+    Thread A (end_episode) holds the episode lock inside finalize(); thread
+    B (ingest) fetches the same entry under _meta and parks on the lock; A
+    runs release() and returns. Pre-fix, release() popped the entry
+    immediately, so when B woke it entered on the orphaned lock while a
+    later thread C found no entry and allocated a fresh one: B and C ran
+    observe() for the same episode concurrently. Post-fix, the entry is
+    marked released and stays until every waiter drains, so B and C
+    serialize on the same lock; C only enters after B leaves.
+    """
+    in_finalize = threading.Event()
+    finalize_go = threading.Event()
+    in_observe = threading.Event()
+    observe_go = threading.Event()
+
+    class _GatedDetector:
+        name = "gated"
+
+        def observe(self, event):
+            in_observe.set()
+            assert observe_go.wait(timeout=10)
+            return None
+
+        def finalize(self, episode_id):
+            in_finalize.set()
+            assert finalize_go.wait(timeout=10)
+            return None
+
+        def reset(self, episode_id):
+            pass
+
+    backend = MemoryStateBackend()
+    monitor = Monitor.default(sinks=[], state_backend=backend)
+    monitor._detectors = [_GatedDetector()]
+    monitor.ingest(_event(episode_id="ep", i=0))  # create the entry
+
+    # A holds the lock inside finalize().
+    a = threading.Thread(target=lambda: monitor.end_episode("ep"))
+    a.start()
+    assert in_finalize.wait(timeout=5), "A must reach finalize"
+
+    # B fetches the entry and parks on the lock (A holds it).
+    b = threading.Thread(target=lambda: monitor.ingest(_event("ep", 1)))
+    b.start()
+    time.sleep(0.1)  # let B park
+
+    # A finishes: release() runs inside end_episode, then A exits the lock.
+    finalize_go.set()
+    a.join(timeout=10)
+
+    # B wakes and enters observe() on the (now released-marked) entry.
+    assert in_observe.wait(timeout=5), "B must reach observe after A leaves"
+
+    # C arrives after the release. Pre-fix it got a FRESH lock and entered
+    # observe() concurrently with B; post-fix it shares B's entry and parks.
+    c = threading.Thread(target=lambda: monitor.ingest(_event("ep", 2)))
+    c.start()
+    time.sleep(0.2)
+    # The decisive check: B and C must be counted on ONE shared entry; a
+    # fresh entry for C would mean two live locks guard the same episode.
+    with backend._meta:
+        entries = dict(backend._locks)
+    assert "ep" in entries, "B's entry must still exist while B holds it"
+    assert entries["ep"].waiters >= 2, (
+        "B and C must be counted on one shared entry; a fresh entry for C "
+        "would mean two live locks guard the same episode (issue #238)"
+    )
+
+    # Let B leave; C then enters on the same entry.
+    observe_go.set()
+    b.join(timeout=10)
+    assert in_observe.wait(timeout=5)
+    observe_go.set()
+    c.join(timeout=10)
+    a.join(timeout=10)
+
+    # Once every waiter drains, the released entry is removed. C's own
+    # observe runs under the entry it fetched; after it drains the table is
+    # empty again (the leak guard from #67 keeps holding).
+    deadline = time.monotonic() + 5
+    while backend._locks and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert "ep" not in backend._locks, "entry must drain after the last waiter"
+
+
+def test_release_during_parked_waiter_blocks_new_entry_until_drain():
+    """Directly at the primitive: release() while a waiter is parked must not
+    hand a *fresh* lock to a later fetcher -- the parked waiter and the later
+    fetcher must serialize on the same entry."""
+    backend = MemoryStateBackend()
+
+    def _run_ctx(ctx):
+        with ctx:
+            pass
+
+    # Hold the lock in this thread, and park a second waiter on it.
+    with backend.episode_lock("ep"):
+        with_park = backend.episode_lock("ep")
+        parked = threading.Thread(target=lambda: _run_ctx(with_park))
+        parked.start()
+        time.sleep(0.1)  # parked.waiters counted, blocked on the lock
+        backend.release("ep")  # entry must be marked, not dropped
+        assert "ep" in backend._locks, "released entry with a parked waiter stays"
+    # Holder exits; the parked waiter runs and drains the entry on exit.
+    parked.join(timeout=10)
+    deadline = time.monotonic() + 5
+    while "ep" in backend._locks and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert "ep" not in backend._locks

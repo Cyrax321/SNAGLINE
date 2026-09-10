@@ -46,22 +46,49 @@ class ReleasableStateBackend(StateBackend, Protocol):
         ...
 
 
+class _LockEntry:
+    """One episode's lock plus the bookkeeping that keeps it safe to drop.
+
+    ``waiters`` counts threads that have fetched this entry -- holding its
+    lock or parked waiting for it. ``released`` marks an episode whose lock
+    the backend has been asked to drop. The entry leaves the table only
+    once every waiter has drained, so a thread parked on the lock when
+    ``release()`` ran can never end up inside the critical section beside
+    a fetcher that arrived afterwards: both serialize on this same entry
+    until the last one exits and the entry is finally removed (issue #238).
+    """
+
+    __slots__ = ("lock", "waiters", "released")
+
+    def __init__(self) -> None:
+        self.lock = threading.RLock()
+        self.waiters: int = 0
+        self.released: bool = False
+
+
 class MemoryStateBackend:
     """Process-local backend: one re-entrant lock per episode id."""
 
     def __init__(self) -> None:
         self._meta = threading.Lock()
-        self._locks: dict[str, threading.RLock] = {}
+        self._locks: dict[str, _LockEntry] = {}
 
     @contextmanager
     def episode_lock(self, episode_id: str) -> Iterator[None]:
         with self._meta:
-            lock = self._locks.get(episode_id)
-            if lock is None:
-                lock = threading.RLock()
-                self._locks[episode_id] = lock
-        with lock:
-            yield
+            entry = self._locks.get(episode_id)
+            if entry is None:
+                entry = _LockEntry()
+                self._locks[episode_id] = entry
+            entry.waiters += 1
+        try:
+            with entry.lock:
+                yield
+        finally:
+            with self._meta:
+                entry.waiters -= 1
+                if entry.released and entry.waiters == 0:
+                    self._locks.pop(episode_id, None)
 
     def release(self, episode_id: str) -> None:
         """Drop the lock allocated for a finished episode.
@@ -70,14 +97,23 @@ class MemoryStateBackend:
         shrinks, so a long-lived Monitor watching many short runs retains a
         lock for every episode it has ever seen.
 
-        ``Monitor.end_episode`` calls this while holding the episode lock, so
-        no other thread can be inside the critical section when the entry is
-        dropped. A thread that ingests for the same id *after* the release
-        simply allocates a fresh lock -- correct, because an episode that has
-        ended has no detector state left to serialize.
+        ``Monitor.end_episode`` calls this while holding the episode lock.
+        Other threads may still be *parked* on that lock -- they fetched it
+        before the release and are waiting for the holder to finish -- so
+        the entry is only removed once every such waiter has drained
+        (issue #238). Until then a parked waiter and any fetcher that
+        arrives later share this same entry, keeping the episode's critical
+        section mutually exclusive; a thread that fetches after the entry
+        is finally removed allocates a fresh one, which is correct because
+        an ended episode has no detector state left to serialize.
         """
         with self._meta:
-            self._locks.pop(episode_id, None)
+            entry = self._locks.get(episode_id)
+            if entry is None:
+                return
+            entry.released = True
+            if entry.waiters == 0:
+                self._locks.pop(episode_id, None)
 
 
 class RedisStateBackend:  # pragma: no cover - optional, requires redis
