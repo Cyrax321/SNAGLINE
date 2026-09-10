@@ -82,3 +82,41 @@ def test_goal_drift_reset_clears_state():
     # After reset, accumulating fresh healthy traffic must not immediately alarm.
     risks = [det.observe(_ev("search", 100.0 + i)) for i in range(4)]
     assert all(r is None for r in risks)
+
+
+def test_goal_drift_rearms_after_recovery():
+    """Issue #247: _fired latched once per episode and never re-armed, so a
+    long-lived episode that recovered from one drift and later hit a second,
+    independent (worse) one stayed silent forever. The latch now clears when
+    the drift score drops back below the threshold, mirroring the re-arm
+    semantics of every other shipped detector."""
+    cfg = Config()
+    cfg.goal_drift_min_samples = 3
+    det = GoalDriftDetector(baseline=_healthy_baseline(), config=cfg)
+
+    # Phase 1: a drift (errors) fires exactly once.
+    phase1 = [det.observe(_ev("search", 100.0, error=True)) for _ in range(6)]
+    assert sum(1 for r in phase1 if r is not None) == 1
+
+    # Phase 2: healthy traffic brings the live profile back in line. Enough
+    # steps to dilute the phase-1 errors below the error tolerance and push
+    # the live mean back toward the baseline.
+    for _ in range(40):
+        det.observe(_ev("search", 100.0))
+    assert det._fired.get("ep") is not True, "recovery must re-arm the latch"
+
+    # Phase 3: a second, independent drift must alert again.
+    phase3 = [det.observe(_ev("search", 20000.0, error=True)) for _ in range(6)]
+    fired3 = [r for r in phase3 if r is not None]
+    assert fired3, "a second independent drift in the same episode must fire"
+    assert fired3[0].trigger == "goal_drift"
+
+
+def test_goal_drift_still_dedupes_while_drift_persists():
+    """Re-arm must not turn into alert spam: while the drift score stays above
+    the threshold without an intervening recovery, exactly one risk fires."""
+    cfg = Config()
+    cfg.goal_drift_min_samples = 3
+    det = GoalDriftDetector(baseline=_healthy_baseline(), config=cfg)
+    risks = [det.observe(_ev("search", 5000.0, error=True)) for _ in range(10)]
+    assert sum(1 for r in risks if r is not None) == 1
