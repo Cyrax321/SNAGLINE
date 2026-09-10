@@ -74,6 +74,33 @@ def test_rate_limit_paces_delivery():
         sink.close()
 
 
+def test_rate_limit_persists_across_batches(monkeypatch):
+    inner = _RecordingSink()
+    now = [100.0]
+    sleeps: list[float] = []
+
+    def monotonic() -> float:
+        return now[0]
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    monkeypatch.setattr("snagline.sinks.batching.time.monotonic", monotonic)
+    monkeypatch.setattr("snagline.sinks.batching.time.sleep", sleep)
+    sink = BatchingSink(
+        inner, max_batch=1000, flush_interval=3600.0, max_per_second=10.0
+    )
+    try:
+        for i in range(3):
+            sink.emit(_risk(i))
+            sink.flush_now()
+        assert len(inner.emitted) == 3
+        assert sleeps == [0.1, 0.1]
+    finally:
+        sink.close()
+
+
 def _wait_for(predicate, timeout: float = 5.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:

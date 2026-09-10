@@ -44,6 +44,11 @@ class BatchingSink:
         self._min_gap = 1.0 / max_per_second if max_per_second else 0.0
         self._queue: collections.deque[FailureRisk] = collections.deque()
         self._lock = threading.Lock()
+        # Delivery pacing is shared across every batch and flush path. Keep it
+        # separate from the queue lock so sleeping or calling the wrapped sink
+        # never blocks ``emit``.
+        self._delivery_lock = threading.Lock()
+        self._last_delivery: float | None = None
         self._stop = threading.Event()
         # Set when the queue reaches ``max_batch`` (or on close) so the flusher
         # can wake early instead of sitting out the rest of the interval.
@@ -85,17 +90,20 @@ class BatchingSink:
         self._deliver(batch)
 
     def _deliver(self, batch: list[FailureRisk]) -> None:
-        last = 0.0
-        for risk in batch:
-            if self._min_gap:
-                now = time.monotonic()
-                wait = self._min_gap - (now - last)
-                if wait > 0:
-                    time.sleep(wait)
-                last = time.monotonic()
-            with contextlib.suppress(Exception):
-                # Fail-open: a delivery failure must not poison the queue.
-                self._sink.emit(risk)
+        with self._delivery_lock:
+            for risk in batch:
+                if self._min_gap:
+                    now = time.monotonic()
+                    if self._last_delivery is not None:
+                        wait = self._min_gap - (now - self._last_delivery)
+                        if wait > 0:
+                            time.sleep(wait)
+                    # Record the actual delivery start, including failed
+                    # attempts, so failures cannot create an unpaced burst.
+                    self._last_delivery = time.monotonic()
+                with contextlib.suppress(Exception):
+                    # Fail-open: a delivery failure must not poison the queue.
+                    self._sink.emit(risk)
 
     def flush_now(self) -> None:
         """Force an immediate flush (used at shutdown and in tests)."""
