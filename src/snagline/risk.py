@@ -61,11 +61,18 @@ class FailureRisk:
     trigger: TriggerType
     detail: str  # short human-readable explanation, no raw content
     timestamp: float
-    severity: str = SEVERITY_WARNING  # auto-derived from score if left default
+    # "" means "unset": derived from score in __post_init__. A literal
+    # severity, including "warning", survives construction exactly as the
+    # caller requested (issue #246). The default cannot use the string
+    # "warning" itself -- it would be indistinguishable from an explicit
+    # "warning" and silently re-derived, re-routing alerts in
+    # min_severity-filtered sinks. "" is not a legal severity value, so it
+    # can only mean "unset".
+    severity: str = ""
 
     def __post_init__(self) -> None:
-        # If the caller did not set an explicit severity, derive one from the
-        # score so every risk carries a useful routing hint. A caller that
-        # passes `severity=` explicitly keeps that value.
-        if self.severity == SEVERITY_WARNING:
+        # Derive a routing hint from the score only when the caller left
+        # severity unset. A caller that passes `severity=` explicitly keeps
+        # that value -- all three legal values, warning included.
+        if not self.severity:
             object.__setattr__(self, "severity", severity_from_score(self.score))
