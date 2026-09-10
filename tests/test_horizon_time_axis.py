@@ -289,3 +289,24 @@ def test_invalid_horizon_config_fails_loudly() -> None:
         Config(max_window=0)
     with pytest.raises(ValueError):
         Config(cusum_refit_every=-1)
+
+
+def test_jump_past_budget_emits_no_stale_warning_afterward() -> None:
+    """Issue #224: the breach fired, but ``clock.warned`` stayed False, so
+    the *next* step emitted the 0.7 pre-breach warning for an episode already
+    reported critical -- severity running backwards, with the self-contradicting
+    text "at 201% of its 100s wall-clock budget". A jump straight past the
+    budget now marks the warning threshold as passed, for good.
+    """
+    sink = CapturingSink()
+    m = _monitor(sink, max_episode_wall_seconds=100.0, warn_fraction=0.8)
+    _feed(
+        m,
+        _event("s1", 0.0),
+        _event("s2", 200.0),  # jumps straight past the budget: breach only
+        _event("s3", 201.0),  # already breached -- no stale warning may fire
+        _event("s4", 202.0),
+    )
+    budget = [r for r in sink.risks if r.trigger == "wall_clock_budget"]
+    assert [(r.step_id, r.score) for r in budget] == [("s2", 1.0)]
+    assert budget[0].severity == "critical"
