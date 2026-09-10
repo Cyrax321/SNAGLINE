@@ -159,3 +159,94 @@ def test_bounded_memory_repro() -> None:
         )
     )
     assert mon.retained_episodes == 10000
+
+
+# --- Restore and the cap (issue #273) ----------------------------------------
+#
+# restore_dict used to apply every snapshot episode's detector state without
+# registering ids in the live LRU (and its time-axis loop, the only part that
+# did register, merely popped _clocks without the detector reset). So
+# restored episodes' state was invisible to the LRU: it survived every future
+# eviction forever while retained_episodes reported the cap.
+
+
+def _event_full(episode_id: str, step: int, sig: str, ts: float) -> StepEvent:
+    return StepEvent(
+        step_id=f"{episode_id}-{step}",
+        episode_id=episode_id,
+        timestamp=ts,
+        action_type="tool_call",
+        action_signature=make_signature("tool_call", "t", sig),
+        tool_name="t",
+        latency_ms=10.0,
+    )
+
+
+def _restore_source_and_target(cap: int, horizon: bool, tmp_path):
+    """Snapshot a 5-episode monitor; restore into one capped at ``cap``."""
+
+    cfg_src = Config(max_live_episodes=100)
+    cfg_dst = Config(max_live_episodes=cap)
+    if horizon:
+        cfg_src = Config(max_live_episodes=100, max_episode_wall_seconds=1000)
+        cfg_dst = Config(max_live_episodes=cap, max_episode_wall_seconds=1000)
+    src = Monitor.default(config=cfg_src, sinks=[])
+    for ep in "ABCDE":
+        for i in range(5):
+            src.ingest(_event_full(ep, i, f"{ep}-sig-{i}", float(i)))
+    path = str(tmp_path / "snap.json")
+    src.snapshot(path)
+    dst = Monitor.default(config=cfg_dst, sinks=[])
+    dst.restore(path)
+    return dst
+
+
+def _loop_windows(mon: Monitor) -> set[str]:
+    for det in mon._detectors:
+        if getattr(det, "name", "") == "loop":
+            return set(det._windows.keys())  # type: ignore[attr-defined]
+    raise AssertionError("loop detector not found")
+
+
+def test_restore_applies_cap_to_restored_state(tmp_path) -> None:
+    """Restored detector state must respect the target monitor's cap, in
+    both horizon configurations: the over-cap ids' windows are gone."""
+    for horizon in (True, False):
+        dst = _restore_source_and_target(cap=2, horizon=horizon, tmp_path=tmp_path)
+        assert dst.metrics()["retained_episodes"] == 2
+        assert _loop_windows(dst) == {"D", "E"}, f"horizon={horizon}"
+
+
+def test_restore_eviction_is_full_teardown_not_clock_pop(tmp_path) -> None:
+    """Over-cap restored ids must run the real eviction path: detector
+    state reset (not just the clock dropped) and the LRU honest. The
+    pre-fix code only popped the clock, leaving detector windows for the
+    evicted ids live."""
+    dst = _restore_source_and_target(cap=2, horizon=True, tmp_path=tmp_path)
+    # Most-recent clock survives; evicted ids' clocks are gone too...
+    assert set(dst._clocks.keys()) == {"D", "E"}
+    # ...and so is their DETECTOR state -- the part the pre-fix time-axis
+    # eviction never touched.
+    assert _loop_windows(dst) == {"D", "E"}
+    # Detector and clock state for the evicted ids is gone, proving the full
+    # teardown path ran rather than only popping clocks.
+
+
+def test_restored_state_survives_no_future_eviction_leak(tmp_path) -> None:
+    """The issue's permanent-leak shape: feeding many new episodes used to
+    evict only the new ids, so restored over-cap state (A/B/C) survived
+    forever. With the fix they were torn down at restore time."""
+    dst = _restore_source_and_target(cap=2, horizon=False, tmp_path=tmp_path)
+    for n in range(10):
+        for i in range(5):
+            dst.ingest(_event_full(f"new{n}", i, f"n{n}-{i}", float(i)))
+    survivors = _loop_windows(dst) & {"A", "B", "C"}
+    assert survivors == set(), "restored over-cap ids must not outlive restore"
+
+
+def test_restore_under_cap_keeps_all_state(tmp_path) -> None:
+    """Sanity: restoring below the cap changes nothing vs pre-fix behavior
+    (the round-trip parity tests pin that separately)."""
+    dst = _restore_source_and_target(cap=10, horizon=False, tmp_path=tmp_path)
+    assert dst.metrics()["retained_episodes"] == 5
+    assert _loop_windows(dst) == {"A", "B", "C", "D", "E"}

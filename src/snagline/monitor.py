@@ -911,6 +911,7 @@ class Monitor:
             if callable(load) and dumped_sinks.get(key) is not None:
                 load(dumped_sinks[key])
         time_axis_data = data.get("time_axis")
+        restored_clocks: list[tuple[str, _EpisodeClock]] = []
         if isinstance(time_axis_data, dict):
             # Restore clocks in order of last_ts ascending so most recent
             # survives if we must evict under cap. Fall back to sorted keys
@@ -948,19 +949,52 @@ class Monitor:
                 clock.idle_fired = idle_fired
                 clock.warned = warned
                 clock.breached = breached
-                with self._live_lock:
-                    if episode_id in self._live_episodes:
-                        self._live_episodes.move_to_end(episode_id)
-                    else:
-                        self._live_episodes[episode_id] = None
-                        if len(self._live_episodes) > self._max_live_episodes:
-                            evicted, _ = self._live_episodes.popitem(last=False)
-                            with self._clocks_lock:
-                                self._clocks.pop(evicted, None)
-                    with self._clocks_lock:
-                        self._clocks[episode_id] = clock
-            # If we evicted due to cap, live_snapshot entries not in time_axis
-            # are already accounted for; no further action needed.
+                restored_clocks.append((episode_id, clock))
+        # Per-episode retention cap across restore (issue #273): every episode
+        # whose state was just loaded (detector windows and/or a restored
+        # clock) must be registered in the live LRU exactly as ``ingest``
+        # would, and over-cap ids must be torn down via the FULL eviction
+        # path (``_evict_episode``: detector reset + clock release), not a
+        # bare ``_clocks.pop``. Previously only time_axis ids were
+        # registered -- and only when the horizon knobs were on -- so
+        # restored detector state was invisible to the LRU: it survived
+        # every future eviction forever while ``retained_episodes``
+        # reported the cap. Clock ids (ordered oldest first) also provide
+        # the recency ordering; detector-only ids fall back to snapshot
+        # dict order, which is deterministic (sorted keys) since snapshots
+        # are written with sort_keys=True.
+        episode_ids: list[str] = [ep for ep, _ in restored_clocks]
+        for detector in self._detectors:
+            state = getattr(detector, "_windows", None)
+            if isinstance(state, dict):
+                for ep in state:
+                    if isinstance(ep, str) and ep not in episode_ids:
+                        episode_ids.append(ep)
+            eps = getattr(detector, "_eps", None)
+            if isinstance(eps, dict):
+                for ep in eps:
+                    if isinstance(ep, str) and ep not in episode_ids:
+                        episode_ids.append(ep)
+        for episode_id, clock in restored_clocks:
+            with self._clocks_lock:
+                self._clocks[episode_id] = clock
+        for episode_id in episode_ids:
+            evicted: str | None = None
+            with self._live_lock:
+                if episode_id in self._live_episodes:
+                    self._live_episodes.move_to_end(episode_id)
+                elif len(self._live_episodes) < self._max_live_episodes:
+                    self._live_episodes[episode_id] = None
+                else:
+                    self._live_episodes[episode_id] = None
+                    evicted, _ = self._live_episodes.popitem(last=False)
+            # Over cap: full teardown of the least-recently id, exactly as
+            # ``ingest`` does. Outside ``_live_lock`` to mirror ingest's
+            # eviction ordering (episode lock is acquired inside).
+            if evicted is not None and evicted != episode_id:
+                self._evict_episode(evicted)
+        # Episode state for ids the cap just dropped was loaded by the
+        # detector ``load_state`` calls above; the eviction pass reset it.
 
     def restore(self, path: str, strict_names: bool = False) -> None:
         """Load a JSON snapshot written by :meth:`snapshot`."""
