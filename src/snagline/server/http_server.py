@@ -553,7 +553,12 @@ def make_handler(
             # /health is deliberately open: a liveness probe (k8s, ELB, docker
             # healthcheck) generally cannot be taught to carry a shared secret,
             # and it reveals nothing but reachability.
-            if self.path == "/health":
+            # Route on the path component only (issue #241): /health is
+            # deliberately open, and a probe that appends a query string
+            # (/health?probe=1) used to miss this branch and land behind
+            # the auth gate -- 401 from an endpoint meant to answer 200
+            # for anything that can reach it.
+            if urlsplit(self.path).path == "/health":
                 self._respond(200, {"status": "ok"})
                 return
             # Everything else is behind the token, including the 404 fallthrough
@@ -635,13 +640,18 @@ def make_handler(
                 self._discard_overcap_body(length)
                 self._respond(413, {"error": "payload too large"})
                 return
-            if self.path == "/events":
+            # Route on the path component only (issue #241): self.path keeps
+            # any query string, so exact comparisons 404'd /events?batch=1
+            # and let /health?probe=1 fall through to the auth gate. The GET
+            # side already strips the query via urlsplit; POST now does too.
+            route = urlsplit(self.path).path
+            if route == "/events":
                 self._post_events()
-            elif self.path == "/hooks/claude-code":
+            elif route == "/hooks/claude-code":
                 self._post_claude_hook()
-            elif self.path == "/episodes/end":
+            elif route == "/episodes/end":
                 self._post_episodes_end()
-            elif self.path == "/risks":
+            elif route == "/risks":
                 self._post_risks()
             else:
                 self._discard_overcap_body(length)
@@ -688,19 +698,26 @@ def make_handler(
                 # Batched ingestion: a JSON array of StepEvent objects. This
                 # lets a host buffer telemetry and flush many steps in one
                 # request (useful for high-throughput or offline replay).
-                count = 0
+                # Two passes (issue #239): validate and construct the whole
+                # batch before ingesting anything. Ingesting inline meant a
+                # bad item at position k answered 400 with items 0..k-1
+                # already inside the Monitor, so a retrying client re-fed
+                # the accepted prefix on every attempt -- duplicated steps
+                # for the loop/cascade/CUSUM detectors and double-counted
+                # metrics.
+                events: list[StepEvent] = []
                 for item in obj:
                     if not isinstance(item, dict):
                         self._respond(400, {"error": "invalid StepEvent in batch"})
                         return
                     try:
-                        event = StepEvent(**item)
+                        events.append(StepEvent(**item))
                     except (ValueError, TypeError):
                         self._respond(400, {"error": "invalid StepEvent in batch"})
                         return
+                for event in events:
                     self._ingest_recorded(event)
-                    count += 1
-                self._respond(202, {"status": "ingested", "count": count})
+                self._respond(202, {"status": "ingested", "count": len(events)})
                 return
             if not isinstance(obj, dict):
                 self._respond(

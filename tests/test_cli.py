@@ -241,7 +241,11 @@ def test_main_serve_starts_server(monkeypatch):
         "auth_token": None,
         "max_body_bytes": 1_000_000,
         "max_risks": 1000,
-        "read_timeout": None,
+        # Issue #240: the layered Config defaults are forwarded, not None.
+        # read_timeout 30.0 / episode_ttl None are the Config defaults, and
+        # metrics_format now flows through too.
+        "metrics_format": "prometheus",
+        "read_timeout": 30.0,
         "episode_ttl_seconds": None,
     }
 
