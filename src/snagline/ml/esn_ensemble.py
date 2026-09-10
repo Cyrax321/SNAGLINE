@@ -263,15 +263,22 @@ class EsnCusumDetector:
 
     def _esn_anomaly(self, st: _EpisodeState, x: np.ndarray) -> float:
         """Next-step prediction anomaly of the ESN, in [0, 1]."""
+        # Score x from the *pre-advance* context (state after x_{t-1}) -- the
+        # exact pairing both fit() and the warm-up learner solved beta for.
+        # The step being judged must not leak into the context judging it:
+        # scoring from the post-advance state made the prediction partially
+        # self-fulfilling, shrinking residuals for exactly the anomalies the
+        # detector should amplify (issue #243).
+        context_prev = st.context_prev
         st.state = self._advance(st.state, x)
         context = np.concatenate((np.ones(1), st.state))
         if st.beta is None:
             # Warm-up: learn this episode's own (assumed healthy) dynamics
             # from previous-step context to current features. Silent phase.
-            if st.context_prev is not None:
-                st.gram += np.outer(st.context_prev, st.context_prev)
-                st.rhs += np.outer(st.context_prev, x)
-                st.warm_ctx.append(st.context_prev)
+            if context_prev is not None:
+                st.gram += np.outer(context_prev, context_prev)
+                st.rhs += np.outer(context_prev, x)
+                st.warm_ctx.append(context_prev)
                 st.warm_tgt.append(x)
                 st.warm_n += 1
                 if st.warm_n >= self._warmup_steps:
@@ -279,7 +286,14 @@ class EsnCusumDetector:
                     self._seed_residual_stats(st)
             st.context_prev = context
             return 0.0
-        predicted = context @ st.beta
+        # Fitted path: remember the pre-advance context for the *next* step's
+        # score, so live scoring keeps the fit-consistent pairing.
+        st.context_prev = context
+        if context_prev is None:
+            # First scored step of the episode has no pre-advance context to
+            # predict from (fit() skips the same step); stay silent once.
+            return 0.0
+        predicted = context_prev @ st.beta
         residual = float(np.linalg.norm(predicted - x)) / math.sqrt(_FEATURE_DIM)
         excess = max(0.0, residual - st.res_mu) / (
             _RESIDUAL_SIGMA_INFLATION
