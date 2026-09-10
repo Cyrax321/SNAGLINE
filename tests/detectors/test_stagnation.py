@@ -391,7 +391,6 @@ def test_scaling_underfilled_window_abstains_without_resetting():
     # now drive novelty to zero with unique-then-repeat signatures
     for j in range(12):
         d2.observe(_event(4 + j, f"rep{j}" if j == 0 else "rep0"))
-    w2 = d2._windows["ep"]
     # 16 events: window capped at 16, novelty = 4/16 warmup + rep0 first =
     # rate ~ 5/16 = 31% -- not stale. The abstain-vs-reset distinction is
     # observable via the spam/blindness tests above; here we pin that a
