@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SNAGLINE - Real-time failure detection for AI agents</title>
 <meta name="description" content="Zero-dependency, O(1) per-step monitoring that catches loops, error cascades, and latency drift in any AI agent.">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='40' fill='%2300b8d9'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -13,7 +14,7 @@
 :root{
   --bg:#09090b;--bg-card:#111113;--bg-elevated:#18181b;
   --border:rgba(255,255,255,0.06);--border-hover:rgba(255,255,255,0.12);
-  --text:#fafafa;--text-secondary:#a1a1aa;--text-muted:#52525b;
+  --text:#fafafa;--text-secondary:#a1a1aa;--text-muted:#52525b;                
   --accent:#00b8d9;--accent-dim:rgba(0,184,217,0.10);--accent-glow:rgba(0,184,217,0.25);
   --green:#16a34a;--green-dim:rgba(22,163,74,0.10);
   --red:#dc2626;--red-dim:rgba(220,38,38,0.10);
@@ -42,19 +43,21 @@
   --toggle-bg:rgba(0,0,0,0.06);--toggle-hover:rgba(0,0,0,0.10);
   --code-fn:#7c3aed;
 }
-html{scroll-behavior:smooth;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
-body{font-family:var(--sans);background:var(--bg);color:var(--text);line-height:1.6;overflow-x:hidden;transition:background .3s,color .3s}
+html{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);line-height:1.6;overflow-x:hidden;transition:background .3s,color .3s;position:relative}
+section, [id]{scroll-margin-top:80px}
 a{color:var(--accent);text-decoration:none;transition:color .2s}
 a:hover{color:var(--text)}
 code,pre,.mono{font-family:var(--mono)}
 
 /* ---- NAV ---- */
-nav{position:fixed;top:0;left:0;right:0;z-index:100;padding:0 clamp(1.5rem,4vw,4rem);height:64px;display:flex;align-items:center;justify-content:space-between;background:var(--nav-bg);backdrop-filter:blur(16px) saturate(1.2);border-bottom:1px solid var(--border);transition:background .3s}
+nav{position:fixed;top:0;left:0;right:0;z-index:100;padding:0 clamp(1.5rem,4vw,4rem);height:64px;display:flex;align-items:center;justify-content:space-between;background:var(--nav-bg);backdrop-filter:blur(16px) saturate(1.2);-webkit-backdrop-filter:blur(16px) saturate(1.2);border-bottom:1px solid var(--border);transition:background .3s;transform:translateZ(0)}
 .nav-logo{font-family:var(--mono);font-weight:700;font-size:1.1rem;letter-spacing:-0.02em;color:var(--text);display:flex;align-items:center;gap:0.5rem}
 .nav-logo .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent-glow)}
 .nav-links{display:flex;gap:2rem;align-items:center}
 .nav-links a{font-size:0.875rem;color:var(--text-secondary);font-weight:500;transition:color .2s}
 .nav-links a:hover{color:var(--text)}
+.nav-actions{display:flex;align-items:center;gap:1rem}
 .nav-cta{font-size:0.8125rem !important;padding:0.5rem 1rem;border-radius:6px;background:var(--text);color:var(--bg) !important;font-weight:600 !important;transition:opacity .2s}
 .nav-cta:hover{opacity:0.85;color:var(--bg) !important}
 .theme-toggle{width:36px;height:36px;border-radius:8px;border:1px solid var(--border);background:var(--toggle-bg);color:var(--text-secondary);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s;font-size:1rem;line-height:1}
@@ -66,7 +69,7 @@ nav{position:fixed;top:0;left:0;right:0;z-index:100;padding:0 clamp(1.5rem,4vw,4
 [data-theme="light"] .hero::before{opacity:0.2}
 .hero::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,transparent 0%,var(--bg) 100%);pointer-events:none;z-index:0}
 @keyframes heroGlow{0%,100%{opacity:0.5;transform:translate(-50%,-50%) scale(1)}50%{opacity:0.7;transform:translate(-50%,-50%) scale(1.1)}}
-.hero>*{position:relative;z-index:1}
+.hero>*{position:relative;z-index:2}
 .hero-grid{position:absolute;inset:0;background-image:linear-gradient(var(--border) 1px,transparent 1px),linear-gradient(90deg,var(--border) 1px,transparent 1px);background-size:64px 64px;opacity:0.3;mask-image:radial-gradient(ellipse 50% 50% at 50% 50%,black 30%,transparent 70%);-webkit-mask-image:radial-gradient(ellipse 50% 50% at 50% 50%,black 30%,transparent 70%);pointer-events:none}
 .hero-badge{display:inline-flex;align-items:center;gap:0.625rem;font-family:var(--mono);font-size:0.8125rem;color:var(--accent);background:var(--accent-dim);padding:0.5rem 1.125rem;border-radius:9999px;border:1px solid rgba(0,212,255,0.15);margin-bottom:2.5rem;width:fit-content;letter-spacing:0.03em;font-weight:500;backdrop-filter:blur(8px)}
 .hero-badge .pulse{width:7px;height:7px;border-radius:50%;background:var(--accent);animation:pulse 2s ease-in-out infinite;box-shadow:0 0 8px var(--accent-glow)}
@@ -90,12 +93,15 @@ nav{position:fixed;top:0;left:0;right:0;z-index:100;padding:0 clamp(1.5rem,4vw,4
 
 /* ---- TERMINAL DEMO ---- */
 .terminal-section{padding:0 clamp(1.5rem,4vw,4rem) clamp(4rem,8vh,8rem);max-width:1200px;margin:0 auto}
-.terminal{background:#111113;border-radius:12px;overflow:hidden;box-shadow:0 0 0 1px rgba(255,255,255,0.06),var(--shadow-lg);max-width:720px;margin:0 auto;color:#e4e4e7}
-.terminal-bar{display:flex;align-items:center;gap:0.5rem;padding:0.75rem 1rem;background:#18181b;border-bottom:1px solid rgba(255,255,255,0.06)}
+.terminal{background:#111113;border-radius:12px;overflow:hidden;box-shadow:0 0 0 1px rgba(255,255,255,0.06),var(--shadow-lg);max-width:720px;margin:0 auto;color:#e4e4e7;contain:layout paint}
+.terminal-bar{display:flex;align-items:center;gap:0.5rem;padding:0.75rem 1rem;background:#18181b;border-bottom:1px solid rgba(255,255,255,0.06);flex-shrink:0}
 .terminal-dot{width:10px;height:10px;border-radius:50%}
 .terminal-dot.r{background:#ff5f57}.terminal-dot.y{background:#febc2e}.terminal-dot.g{background:#28c840}
 .terminal-title{font-family:var(--mono);font-size:0.75rem;color:#71717a;margin-left:0.5rem}
-.terminal-body{padding:1.25rem;font-family:var(--mono);font-size:0.8125rem;line-height:1.8;min-height:260px}
+.terminal-body{padding:1.25rem;font-family:var(--mono);font-size:0.8125rem;line-height:1.8;height:350px;overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,0.15) transparent;box-sizing:border-box}
+.terminal-body::-webkit-scrollbar{width:5px}
+.terminal-body::-webkit-scrollbar-track{background:transparent}
+.terminal-body::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.15);border-radius:4px}
 .terminal-line{opacity:0;transform:translateY(4px);animation:termFadeIn .3s ease forwards}
 .terminal-line .ts{color:#71717a}
 .terminal-line .ok{color:#22c55e}
@@ -213,11 +219,8 @@ footer{border-top:1px solid var(--border);padding:3rem clamp(1.5rem,4vw,4rem);ma
 .footer-links a:hover{color:var(--text)}
 
 /* ---- SCROLL REVEAL ---- */
-.reveal{opacity:0;transform:translateY(24px);transition:opacity .6s ease,transform .6s ease}
-.reveal.visible{opacity:1;transform:translateY(0)}
-.reveal-delay-1{transition-delay:.1s}
-.reveal-delay-2{transition-delay:.2s}
-.reveal-delay-3{transition-delay:.3s}
+.reveal{opacity:1;transform:none}
+.reveal.visible{opacity:1;transform:none}
 
 /* ---- RESPONSIVE ---- */
 @media(max-width:768px){
@@ -231,19 +234,77 @@ footer{border-top:1px solid var(--border);padding:3rem clamp(1.5rem,4vw,4rem);ma
   .proof-grid{grid-template-columns:1fr}
   .nav-links{display:none}
 }
+
+/* ---- CONTENT LAYERING ---- */
+.hero,
+.terminal-section,
+.stats,
+section,
+.cta,
+footer{
+  position:relative;
+  z-index:2;
+}
+
+/* ---- BACKGROUND COMET ---- */
+.comet-container{
+  position:fixed;
+  inset:0;
+  pointer-events:none;
+  overflow:hidden;
+  z-index:0;
+}
+/* Night mode (default): luminous white comet */
+.comet{
+  position:absolute;
+  height:2px;
+  transform-origin:right center;
+  background:linear-gradient(to right,transparent 0%,rgba(255,255,255,0.15) 30%,rgba(255,255,255,0.85) 75%,#ffffff 100%);
+  border-radius:999px;
+  filter:drop-shadow(0 0 5px rgba(255,255,255,0.9));
+  opacity:0;
+  will-change:transform,opacity;
+}
+.comet::after{
+  content:'';
+  position:absolute;
+  right:-1px;
+  top:50%;
+  transform:translateY(-50%);
+  width:3px;
+  height:3px;
+  border-radius:50%;
+  background:#ffffff;
+  box-shadow:0 0 6px 2px #ffffff,0 0 12px 4px rgba(255,255,255,0.85);
+}
+/* Day mode: sleek black comet */
+[data-theme="light"] .comet{
+  background:linear-gradient(to right,transparent 0%,rgba(0,0,0,0.10) 30%,rgba(24,24,27,0.7) 75%,#09090b 100%);
+  filter:drop-shadow(0 0 3px rgba(0,0,0,0.3));
+}
+[data-theme="light"] .comet::after{
+  background:#09090b;
+  box-shadow:0 0 5px 1.5px rgba(0,0,0,0.5),0 0 10px 3px rgba(0,0,0,0.2);
+}
 </style>
 </head>
 <body>
+
+<!-- NIGHT MODE COMET -->
+<div class="comet-container" id="comet-container" aria-hidden="true"></div>
 
 <!-- NAV -->
 <nav>
   <div class="nav-logo"><span class="dot"></span>SNAGLINE</div>
   <div class="nav-links">
+    <a href="#how-it-works">How it works</a>
     <a href="#detectors">Detectors</a>
     <a href="#features">Features</a>
     <a href="#integrations">Integrations</a>
     <a href="#roadmap">Roadmap</a>
-    <a href="https://github.com/Cyrax321/SNAGLINE" class="nav-cta">GitHub</a>
+  </div>
+  <div class="nav-actions">
+    <a href="https://github.com/Cyrax321/SNAGLINE" target="_blank" rel="noopener noreferrer" class="nav-cta">GitHub</a>
     <button class="theme-toggle" id="theme-toggle" aria-label="Toggle theme" title="Toggle light/dark mode"></button>
   </div>
 </nav>
@@ -261,7 +322,7 @@ footer{border-top:1px solid var(--border);padding:3rem clamp(1.5rem,4vw,4rem);ma
     <button class="btn-primary" onclick="document.getElementById('install').scrollIntoView({behavior:'smooth'})">Get started</button>
     <button class="btn-secondary" onclick="document.getElementById('how-it-works').scrollIntoView({behavior:'smooth'})">How it works</button>
   </div>
-  <div class="hero-install" onclick="navigator.clipboard.writeText('pip install .')">
+  <div class="hero-install" onclick="copyCommand(this, 'pip install .')">
     <span class="prompt">$</span>
     <span class="cmd">pip install .</span>
     <span class="copy">click to copy</span>
@@ -285,7 +346,7 @@ footer{border-top:1px solid var(--border);padding:3rem clamp(1.5rem,4vw,4rem);ma
 <div class="stats reveal">
   <div class="stats-grid">
     <div class="stat"><div class="number">1.9<span class="unit"> us</span></div><div class="label">Median per step</div></div>
-    <div class="stat"><div class="number">78<span class="unit"> / 0</span></div><div class="label">Tests passing / failing</div></div>
+    <div class="stat"><div class="number">694<span class="unit"> / 0</span></div><div class="label">Tests passing / failing</div></div>
     <div class="stat"><div class="number">0</div><div class="label">Dependencies required</div></div>
     <div class="stat"><div class="number">3</div><div class="label">Detectors built in</div></div>
   </div>
@@ -489,10 +550,12 @@ monitor <span class="op">=</span> Monitor.<span class="fn">default</span>(config
     <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">Claude Code hooks bridge</div></div>
     <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">Offline replay CLI</div></div>
     <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">Framework bridge docs</div></div>
-    <div class="roadmap-item"><div class="roadmap-status planned"></div><div class="roadmap-text">Deduplication / cooldown for alert spam</div></div>
-    <div class="roadmap-item"><div class="roadmap-status planned"></div><div class="roadmap-text">ML ensemble detector (snagline[ml])</div></div>
-    <div class="roadmap-item"><div class="roadmap-status planned"></div><div class="roadmap-text">Goal-drift detector (snagline[drift])</div></div>
-    <div class="roadmap-item"><div class="roadmap-status planned"></div><div class="roadmap-text">AutoGen / CrewAI adapters</div></div>
+    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">Deduplication / cooldown for alert spam</div></div>
+    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">ML ensemble detector (snagline[ml])</div></div>
+    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">Goal-drift detector (snagline[drift])</div></div>
+    <div class="roadmap-item"><div class="roadmap-status done"></div><div class="roadmap-text done">AutoGen / CrewAI adapters</div></div>
+    <div class="roadmap-item"><div class="roadmap-status planned"></div><div class="roadmap-text">Distributed state backend (Redis)</div></div>
+    <div class="roadmap-item"><div class="roadmap-status planned"></div><div class="roadmap-text">OpenTelemetry traces & OTLP export</div></div>
   </div>
 </section>
 
@@ -530,7 +593,7 @@ monitor <span class="op">=</span> Monitor.<span class="fn">default</span>(config
   <h2 class="reveal">Start monitoring in 30 seconds.</h2>
   <p class="reveal">Zero dependencies. Works with Python 3.10+.</p>
   <div class="cta-actions reveal">
-    <div class="cta-install" onclick="navigator.clipboard.writeText('pip install .')">
+    <div class="cta-install" onclick="copyCommand(this, 'pip install .')">
       <span class="prompt">$</span>
       <span class="cmd">pip install .</span>
       <span class="copy">click to copy</span>
@@ -543,19 +606,17 @@ monitor <span class="op">=</span> Monitor.<span class="fn">default</span>(config
 <footer>
   <div class="footer-left">SNAGLINE</div>
   <div class="footer-links">
-    <a href="https://github.com/Cyrax321/SNAGLINE">GitHub</a>
-    <a href="https://github.com/Cyrax321/SNAGLINE/issues">Issues</a>
-    <a href="docs/ADAPTER_GUIDE.md">Docs</a>
-    <a href="LICENSE">MIT License</a>
+    <a href="https://github.com/Cyrax321/SNAGLINE" target="_blank" rel="noopener noreferrer">GitHub</a>
+    <a href="https://github.com/Cyrax321/SNAGLINE/issues" target="_blank" rel="noopener noreferrer">Issues</a>
+    <a href="https://github.com/Cyrax321/SNAGLINE/blob/main/docs/ADAPTER_GUIDE.md" target="_blank" rel="noopener noreferrer">Docs</a>
+    <a href="https://github.com/Cyrax321/SNAGLINE/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License</a>
   </div>
 </footer>
 
 <script>
 // ---- SCROLL REVEAL ----
-const observer = new IntersectionObserver((entries) => {
-  entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); observer.unobserve(e.target); }});
-}, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
-document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+// Keep elements immediately visible for crisp, zero-latency 60/120fps scrolling
+document.querySelectorAll('.reveal').forEach(el => el.classList.add('visible'));
 
 // ---- TERMINAL ANIMATION ----
 const termLines = [
@@ -613,31 +674,135 @@ const sunIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" str
 const moonIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
 
 function getPreferredTheme() {
-  const saved = localStorage.getItem('snagline-theme');
-  if (saved) return saved;
-  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  try {
+    const saved = localStorage.getItem('snagline-theme');
+    if (saved) return saved;
+  } catch (e) {}
+  return window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
 }
 
 function setTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
-  localStorage.setItem('snagline-theme', theme);
-  toggle.innerHTML = theme === 'dark' ? sunIcon : moonIcon;
-  toggle.setAttribute('aria-label', theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
+  try {
+    localStorage.setItem('snagline-theme', theme);
+  } catch (e) {}
+  if (toggle) {
+    toggle.innerHTML = theme === 'dark' ? sunIcon : moonIcon;
+    toggle.setAttribute('aria-label', theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
+  }
 }
 
-toggle.addEventListener('click', () => {
-  const current = document.documentElement.getAttribute('data-theme') || 'dark';
-  setTheme(current === 'dark' ? 'light' : 'dark');
-});
+if (toggle) {
+  toggle.addEventListener('click', () => {
+    const current = document.documentElement.getAttribute('data-theme') || 'dark';
+    setTheme(current === 'dark' ? 'light' : 'dark');
+  });
+}
 
 setTheme(getPreferredTheme());
 
 // listen for system preference changes
-window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
-  if (!localStorage.getItem('snagline-theme')) {
-    setTheme(e.matches ? 'dark' : 'light');
+if (window.matchMedia) {
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
+    try {
+      if (!localStorage.getItem('snagline-theme')) {
+        setTheme(e.matches ? 'dark' : 'light');
+      }
+    } catch (err) {
+      setTheme(e.matches ? 'dark' : 'light');
+    }
+  });
+}
+
+// ---- CLIPBOARD COPY FEEDBACK ----
+function copyCommand(el, text) {
+  const copyLabel = el.querySelector('.copy');
+  const showFeedback = () => {
+    if (copyLabel) {
+      const orig = copyLabel.textContent;
+      copyLabel.textContent = 'copied!';
+      copyLabel.style.color = 'var(--accent)';
+      setTimeout(() => {
+        copyLabel.textContent = orig;
+        copyLabel.style.color = '';
+      }, 2000);
+    }
+  };
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(showFeedback).catch(() => {
+      fallbackCopy(text);
+      showFeedback();
+    });
+  } else {
+    fallbackCopy(text);
+    showFeedback();
   }
-});
+}
+
+function fallbackCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  try { document.execCommand('copy'); } catch (e) {}
+  document.body.removeChild(ta);
+}
+
+// ---- BACKGROUND COMET (Above to below, random directions, every 10s) ----
+function spawnComet() {
+  const container = document.getElementById('comet-container');
+  if (!container) return;
+
+  const comet = document.createElement('div');
+  comet.className = 'comet';
+
+  // Random angle heading downwards from above (between 50deg down-right and 130deg down-left)
+  const angle = 50 + Math.random() * 80;
+  const length = 70 + Math.random() * 35; // 70px - 105px
+  comet.style.width = length + 'px';
+
+  // Starting position along the top edge based on trajectory
+  const width = window.innerWidth || document.documentElement.clientWidth || 1200;
+  let startX;
+  if (angle < 90) {
+    startX = Math.random() * (width * 0.55);
+  } else {
+    startX = (width * 0.45) + Math.random() * (width * 0.55);
+  }
+  const startY = -15 + Math.random() * 30; // at or slightly above top
+
+  comet.style.left = startX + 'px';
+  comet.style.top = startY + 'px';
+
+  container.appendChild(comet);
+
+  const travelDistance = 700 + Math.random() * 300;
+  const duration = 1200 + Math.random() * 400; // 1.2s - 1.6s
+
+  if (comet.animate) {
+    const anim = comet.animate([
+      { transform: `rotate(${angle}deg) translateX(0)`, opacity: 0 },
+      { opacity: 1, offset: 0.1 },
+      { opacity: 1, offset: 0.8 },
+      { transform: `rotate(${angle}deg) translateX(${travelDistance}px)`, opacity: 0 }
+    ], {
+      duration: duration,
+      easing: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+      fill: 'forwards'
+    });
+    anim.onfinish = () => comet.remove();
+  } else {
+    setTimeout(() => comet.remove(), duration + 100);
+  }
+}
+
+// Launch first comet soon after load, then every 10 seconds
+setTimeout(spawnComet, 1200);
+setInterval(spawnComet, 10000);
 </script>
 </body>
 </html>
