@@ -346,3 +346,28 @@ def test_strict_names_rejection_applies_no_state(tmp_path):
         "rejected snapshot must not leave per-episode state behind "
         "(name-suffix fallback loaded it pre-fix)"
     )
+
+
+def test_strict_restore_rejection_applies_no_detector_state(tmp_path):
+    """Issue #236: a rejected strict restore must leave the target monitor
+    untouched -- no detector load_state may run before the composition
+    check raises."""
+    path = str(tmp_path / "state.json")
+    source = Monitor([LoopDetector(), ErrorCascadeDetector()], [ListSink()])
+    for step in ("0", "1"):
+        source.ingest(
+            StepEvent(
+                step_id=step,
+                episode_id="ep",
+                timestamp=float(step),
+                action_type="tool_call",
+                action_signature="q-a",
+                tool_name="search",
+            )
+        )
+    source.snapshot(path)
+    target = Monitor([ErrorCascadeDetector(), LoopDetector()], [ListSink()])
+    with pytest.raises(ValueError, match="composition mismatch"):
+        target.restore(path, strict_names=True)
+    loop = cast(LoopDetector, target._detectors[1])
+    assert loop._windows == {}
