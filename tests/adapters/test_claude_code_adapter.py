@@ -279,3 +279,79 @@ def test_pre_and_post_have_distinct_signatures() -> None:
     pre2 = payload_to_event(_tool_payload("PreToolUse", tool_use_id="other"))
     assert pre2 is not None
     assert pre2.action_signature == pre.action_signature
+
+
+# --- thread safety of the shared tracker (issue #245) -------------------------
+
+
+def test_tracker_concurrent_note_never_raises_and_keeps_working() -> None:
+    """One HookTracker is shared by every handler thread of the threaded
+    sidecar. Under load, note() iterated and *rebound* ``_starts`` while other
+    threads inserted: eviction raised ``RuntimeError: dictionary changed size
+    during iteration`` (silently swallowed downstream) and the rebind
+    discarded concurrent inserts. Everything is serialized by a lock now."""
+    import threading
+
+    tracker = HookTracker(max_pending=8, ttl_seconds=1.0)
+    errors: list[Exception] = []
+
+    def worker(tag: str) -> None:
+        try:
+            for i in range(2000):
+                tracker.note(_tool_payload("PreToolUse", tool_use_id=f"{tag}-{i}"))
+        except Exception as exc:  # pragma: no cover - only on a broken fix
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(f"w{t}",)) for t in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+        assert not t.is_alive(), "a worker deadlocked inside the tracker"
+    assert not errors, errors
+
+    # The table must still pair afterwards.
+    clock = {"now": 100.0}
+    paired = HookTracker(clock=lambda: clock["now"], ttl_seconds=600.0)
+    paired.note(_tool_payload("PreToolUse", tool_use_id="pair-me"))
+    clock["now"] = 100.5
+    ev = payload_to_event(_tool_payload("PostToolUse", tool_use_id="pair-me"), paired)
+    assert ev is not None
+    assert ev.latency_ms == 500.0
+
+
+def test_tracker_eviction_under_concurrency_keeps_table_bounded() -> None:
+    """Eviction must drain under load instead of failing forever on an
+    over-cap table (issue #245)."""
+    import threading
+
+    tracker = HookTracker(max_pending=16, ttl_seconds=1e9)  # nothing stale
+    stop = threading.Event()
+
+    def worker(tag: str) -> None:
+        i = 0
+        while not stop.is_set() and i < 4000:
+            tracker.note(_tool_payload("PreToolUse", tool_use_id=f"{tag}-{i}"))
+            i += 1
+
+    threads = [threading.Thread(target=worker, args=(f"e{t}",)) for t in range(6)]
+    for t in threads:
+        t.start()
+    stop.set()
+    for t in threads:
+        t.join(timeout=30)
+    tracker.note(_tool_payload("PreToolUse", tool_use_id="post-drain"))
+    assert len(tracker._starts) <= 2 * tracker._max_pending, (
+        f"table stayed at {len(tracker._starts)} entries"
+    )
+
+
+def test_tracker_eviction_preserves_table_identity() -> None:
+    """Eviction drains the same dict in place -- the object identity never
+    changes, so concurrent holders of the reference keep seeing inserts."""
+    tracker = HookTracker(max_pending=4, ttl_seconds=1e9)
+    ref = tracker._starts
+    for i in range(20):
+        tracker.note(_tool_payload("PreToolUse", tool_use_id=f"k-{i}"))
+    assert tracker._starts is ref
+    assert len(tracker._starts) <= 2 * tracker._max_pending
