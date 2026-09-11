@@ -159,3 +159,60 @@ def test_bounded_memory_repro() -> None:
         )
     )
     assert mon.retained_episodes == 10000
+
+
+def test_restore_registers_episodes_and_enforces_cap(tmp_path) -> None:
+    """Issue #273: restore_dict loaded detector state for every episode
+    without registering into the live-episode LRU, and eviction dropped only
+    the clock while detector memory lingered. After restore, retained count
+    must equal the cap and over-cap episodes must be fully evicted."""
+    from snagline.monitor import Monitor as Mon
+
+    cap = 3
+    src = Mon.default(config=Config(max_live_episodes=100), sinks=[])
+    for i in range(5):
+        src.ingest(_event(f"ep-{i}", ts=float(i)))
+    path = str(tmp_path / "state.json")
+    src.snapshot(path)
+
+    dst = Mon.default(config=Config(max_live_episodes=cap), sinks=[])
+    dst.restore(path)
+    assert dst.retained_episodes == cap
+    assert len(dst._live_episodes) == cap
+    # Evicted episodes leave no detector or clock residue behind.
+    live = set(dst._live_episodes.keys())
+    assert live == {"ep-2", "ep-3", "ep-4"}
+    for ep in ("ep-0", "ep-1"):
+        assert ep not in dst._clocks
+        for det in dst._detectors:
+            for attr in ("_windows", "_counts", "_live", "_episodes", "_last"):
+                mapping = getattr(det, attr, None)
+                if isinstance(mapping, dict):
+                    assert ep not in mapping, (det, attr, ep)
+
+
+def test_restore_without_live_episodes_key_stays_backward_compatible(
+    tmp_path,
+) -> None:
+    """Snapshots written before live_episodes was persisted (or with the
+    horizon knobs off) still restore: episodes are recovered from clocks and
+    detector state in deterministic order."""
+    import json
+
+    from snagline.monitor import Monitor as Mon
+
+    src = Mon.default(config=Config(max_live_episodes=100), sinks=[])
+    for i in range(3):
+        src.ingest(_event(f"ep-{i}", ts=float(i)))
+    path = str(tmp_path / "state.json")
+    src.snapshot(path)
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    data.pop("live_episodes", None)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(data, fh)
+
+    dst = Mon.default(config=Config(max_live_episodes=100), sinks=[])
+    dst.restore(path)
+    assert dst.retained_episodes == 3
+    assert set(dst._live_episodes.keys()) == {"ep-0", "ep-1", "ep-2"}
