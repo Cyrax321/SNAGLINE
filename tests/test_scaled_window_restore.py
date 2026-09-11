@@ -32,10 +32,11 @@ def _event(step: int, sig: str, error: bool = False, tool: str = "t") -> StepEve
     )
 
 
-def _scaling_cfg(**overrides) -> Config:
-    kw = dict(window_scale_steps=10, max_window=512)
-    kw.update(overrides)
-    return Config(**kw)
+def _scaling_cfg(scale_steps: int = 10, max_window: int = 512) -> Config:
+    return Config(
+        window_scale_steps=scale_steps,
+        max_window=max_window,
+    )
 
 
 def test_error_cascade_restore_keeps_scaled_window():
