@@ -179,8 +179,12 @@ class MeltdownDetector:
         self._eps = {}
         for ep, keys in state.get("windows", {}).items():
             w = _EpisodeWindow()
+            n = int(state.get("counts", {}).get(ep, len(keys)))
+            target = effective_window_size(
+                self.window_size, n, self._scale_steps, self._max_window
+            )
             for key in keys:
-                w.push(key, self.window_size)
+                w.push(key, target)
             self._eps[ep] = w
         # Tolerant .get(): pre-#92 snapshots carry no scaler positions.
         self._counts = {ep: int(n) for ep, n in state.get("counts", {}).items()}

@@ -20,7 +20,7 @@ from typing import Any
 
 from snagline.config import Config
 from snagline.detectors.base import snapshot_items
-from snagline.detectors.windowing import next_window
+from snagline.detectors.windowing import effective_window_size, next_window
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk
 
@@ -148,8 +148,17 @@ class ErrorCascadeDetector:
         }
 
     def load_state(self, state: dict[str, Any]) -> None:
+        counts = state.get("counts", {})
         self._windows = {
-            ep: deque(flags, maxlen=self.window_size)
+            ep: deque(
+                flags,
+                maxlen=effective_window_size(
+                    self.window_size,
+                    int(counts.get(ep, len(flags))),
+                    self._scale_steps,
+                    self._max_window,
+                ),
+            )
             for ep, flags in state.get("windows", {}).items()
         }
         # Tolerant .get(): pre-#92 snapshots carry no scaler positions.
