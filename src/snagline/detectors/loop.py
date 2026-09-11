@@ -46,7 +46,7 @@ from typing import Any, cast
 
 from snagline.config import Config
 from snagline.detectors.base import snapshot_items
-from snagline.detectors.windowing import next_window
+from snagline.detectors.windowing import effective_window_size, next_window
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk, TriggerType
 
@@ -398,16 +398,34 @@ class LoopDetector:
         }
 
     def load_state(self, state: dict[str, Any]) -> None:
+        counts = state.get("counts", {})
         self._windows = {
-            ep: deque(sigs, maxlen=self.window_size)
+            ep: deque(
+                sigs,
+                maxlen=effective_window_size(
+                    self.window_size,
+                    int(counts.get(ep, len(sigs))),
+                    self._scale_steps,
+                    self._max_window,
+                ),
+            )
             for ep, sigs in state.get("windows", {}).items()
         }
         # Tolerant .get() so pre-#92 snapshots restore cleanly; the counts only
         # position the auto-scaler and default to the window they imply.
         self._counts = {ep: int(n) for ep, n in state.get("counts", {}).items()}
         self._fired = {ep: set(sigs) for ep, sigs in state.get("fired", {}).items()}
+        near_counts = state.get("near_counts", {})
         self._near_windows = {
-            ep: deque(sigs, maxlen=self.window_size)
+            ep: deque(
+                sigs,
+                maxlen=effective_window_size(
+                    self.window_size,
+                    int(near_counts.get(ep, len(sigs))),
+                    self._scale_steps,
+                    self._max_window,
+                ),
+            )
             for ep, sigs in state.get("near_windows", {}).items()
         }
         self._near_fired = {
@@ -416,8 +434,17 @@ class LoopDetector:
         self._near_counts = {
             ep: int(n) for ep, n in state.get("near_counts", {}).items()
         }
+        cycle_counts = state.get("cycle_counts", {})
         self._cycle_windows = {
-            ep: deque(sigs, maxlen=self.loop_cycle_window_size)
+            ep: deque(
+                sigs,
+                maxlen=effective_window_size(
+                    self.loop_cycle_window_size,
+                    int(cycle_counts.get(ep, len(sigs))),
+                    self._scale_steps,
+                    self._max_window,
+                ),
+            )
             for ep, sigs in state.get("cycle_windows", {}).items()
         }
         self._cycle_counts = {
