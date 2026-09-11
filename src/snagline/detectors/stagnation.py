@@ -130,7 +130,16 @@ class StagnationDetector:
         if novel:
             w.novel_in_window += 1
 
-        if len(w.flags) >= target and (w.novel_in_window / target < self.min_novelty):
+        # Two gates, deliberately separate (issue #272): a window that has
+        # not yet grown to the scaling target says nothing about novelty --
+        # treating "not full" as "recovered" reset the stale counter on every
+        # growth boundary, so a single continuous collapse re-fired per growth
+        # step when base > scale_steps, and never fired at all when base <=
+        # scale_steps (the counter was pinned at zero while novelty was
+        # literally 0%). Only a *full* window votes.
+        if len(w.flags) < target:
+            return None
+        if w.novel_in_window / target < self.min_novelty:
             w.stale_windows += 1
             # Escalate exactly when patience is first reached. Continuing past
             # it must not re-fire (one finding per collapse), and any fresh

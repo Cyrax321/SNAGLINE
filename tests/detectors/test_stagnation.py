@@ -299,3 +299,101 @@ def test_valid_config_driven_detector_still_fires():
     seq = [_sig(i) for i in range(4)] + [_sig(0)] * 4
     risks = _feed(d, seq)
     assert risks and risks[0].trigger == "stagnation"
+
+
+# --- issue #272: fill gate vs novelty gate under scaling ----------------------
+
+
+def _scaled_detector(scale_steps: int, base: int = 50, max_window: int = 512):
+    cfg = Config(
+        window_scale_steps=scale_steps,
+        max_window=max_window,
+        stagnation_enabled=True,
+        stagnation_window_size=base,
+        stagnation_min_novelty=0.05,
+        stagnation_patience=2,
+    )
+    return StagnationDetector(config=cfg)
+
+
+def _feed_repeat(d, sig: str, start: int, count: int, episode: str = "ep"):
+    risks = []
+    for j in range(count):
+        r = d.observe(_event(start + j, sig, episode))
+        if r is not None:
+            risks.append(r)
+    return risks
+
+
+def _collapse_feed(d, uniques: int, repeats: int):
+    warm = [_sig(i) for i in range(uniques)]
+    risks = _feed(d, warm)
+    risks += _feed_repeat(d, "stuck", uniques, repeats)
+    return risks
+
+
+def test_scaling_long_collapse_fires_once():
+    """The issue's blindness case: base <= scale_steps, 3000 zero-novelty
+    repeats, max_window far above. Pre-fix: 0 fires, ever."""
+    d = _scaled_detector(50, base=50, max_window=5000)
+    risks = _collapse_feed(d, 50, 3000)
+    assert len(risks) == 1, "long total collapse must fire exactly once"
+    assert risks[0].trigger == "stagnation"
+
+
+def test_scaling_continuous_collapse_never_refires():
+    """The issue's spam case: base > scale_steps so the window fills between
+    growth steps. Pre-fix: 11 fires during one continuous collapse."""
+    d = _scaled_detector(100, base=50, max_window=512)
+    risks = _collapse_feed(d, 50, 2000)
+    assert len(risks) == 1, (
+        "one finding per collapse, growth boundaries must not re-arm"
+    )
+
+
+def test_scaling_underfilled_window_abstains_without_resetting():
+    """While the window grows toward the target, ``stale_windows`` must not
+    be reset -- a later full window reaches patience immediately instead of
+    starting over."""
+    d = _scaled_detector(50, base=4, max_window=16)
+    d.observe(_event(0, _sig(0)))
+    d.observe(_event(1, _sig(1)))
+    d.observe(_event(2, _sig(2)))
+    d.observe(_event(3, _sig(3)))  # window full, 100% novel -> not stale
+    d.observe(_event(4, "stuck"))
+    d.observe(_event(5, "stuck"))
+    d.observe(_event(6, "stuck"))  # n=6, target=8, under-filled
+    w = d._windows["ep"]
+    assert w.stale_windows == 0, "full novel window leaves counter at zero"
+
+    d2 = _scaled_detector(50, base=4, max_window=16)
+    for i in range(4):
+        d2.observe(_event(i, _sig(i)))
+    risks2 = []
+    for j in range(12):
+        r = d2.observe(_event(4 + j, f"rep{j}" if j == 0 else "rep0"))
+        if r is not None:
+            risks2.append(r)
+    # Growth boundaries must not re-arm the latch: at most one finding for
+    # one continuous collapse, however many targets the window grew through.
+    assert len(risks2) <= 1
+
+    d3 = _scaled_detector(4, base=4, max_window=8)
+    for i in range(4):
+        d3.observe(_event(i, _sig(i)))
+    d3.observe(_event(4, "x0"))
+    d3.observe(_event(5, "x0"))  # n=6, still under-filled
+    d3.observe(_event(6, "x0"))  # n=7 under-filled
+    d3.observe(_event(7, "x0"))  # n=8: full. 5 novel/8 = 62.5% -> not stale
+    w3 = d3._windows["ep"]
+    assert w3.stale_windows == 0
+    risks = _feed_repeat(d3, "x0", 8, 8)
+    assert len(risks) == 1
+
+
+def test_scaling_off_behavior_unchanged():
+    """Scaling off (default): the fix must not alter the static-window
+    contract the existing tests pin."""
+    d = _scaled_detector(0, base=50, max_window=512)
+    risks = _collapse_feed(d, 50, 500)
+    assert len(risks) == 1
