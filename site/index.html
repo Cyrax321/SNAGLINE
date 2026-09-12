@@ -152,10 +152,49 @@ nav{position:fixed;top:0;left:0;right:0;z-index:900;height:68px;padding:0 var(--
 nav.solid{background:var(--nav-bg);backdrop-filter:blur(9px);border-bottom-color:var(--line)}
 nav.hide{transform:translateY(-100%)}
 .brand{display:flex;align-items:center;gap:.55rem;font-family:var(--mono);font-weight:700;
-  font-size:1rem;letter-spacing:-0.02em}
+  font-size:1rem;letter-spacing:-0.02em;position:relative;cursor:pointer;
+  transition:color .06s,opacity .06s,text-shadow .06s,filter .06s}
 .brand i{width:7px;height:7px;border-radius:50%;background:var(--accent);
-  box-shadow:0 0 10px var(--accent-glow);animation:beat 2.4s ease-in-out infinite}
-@keyframes beat{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.55;transform:scale(.82)}}
+  box-shadow:0 0 8px var(--accent),0 0 14px var(--accent-glow);
+  transition:background .06s,box-shadow .06s,opacity .06s}
+.brand.tube-on{
+  color:var(--ink);
+  text-shadow:0 0 8px var(--accent-glow),0 0 18px rgba(0,212,255,0.25);
+}
+.brand.tube-on i{
+  opacity:1;
+  background:var(--accent);
+  box-shadow:0 0 8px var(--accent),0 0 16px var(--accent-glow);
+}
+.brand.tube-dim{
+  opacity:0.22;
+  color:var(--ink-3);
+  text-shadow:none;
+  filter:grayscale(0.6);
+}
+.brand.tube-dim i{
+  opacity:0.18;
+  background:var(--ink-3);
+  box-shadow:none;
+}
+.brand.tube-spark{
+  opacity:1;
+  color:#ffffff;
+  text-shadow:0 0 10px #ffffff,0 0 20px var(--accent),0 0 32px var(--accent);
+  filter:brightness(1.25);
+}
+.brand.tube-spark i{
+  opacity:1;
+  background:#ffffff;
+  box-shadow:0 0 12px #ffffff,0 0 24px var(--accent);
+}
+[data-theme="light"] .brand.tube-on{
+  text-shadow:0 0 10px rgba(14,116,144,0.3);
+}
+[data-theme="light"] .brand.tube-spark{
+  color:var(--accent);
+  text-shadow:0 0 12px var(--accent-glow),0 0 20px rgba(14,116,144,0.4);
+}
 .nav-r{display:flex;align-items:center;gap:clamp(1rem,2.2vw,2.1rem)}
 .nav-r a.nl{font-family:var(--mono);font-size:.75rem;letter-spacing:.04em;text-transform:uppercase;
   color:var(--ink-2);position:relative;padding:.2rem 0}
@@ -301,6 +340,98 @@ canvas#sig{width:100%;flex:1;min-height:190px;display:block}
 .st .l{font-family:var(--mono);font-size:.66rem;letter-spacing:.1em;text-transform:uppercase;
   color:var(--ink-3);margin-top:.75rem}
 
+/* ═══════════════ HOW IT WORKS ANIMATION VIDEO/SIMULATION ═══════════════ */
+.flow-anim-wrap{margin-bottom:clamp(3.5rem,7vw,5rem);border:1px solid var(--line);border-radius:16px;
+  background:var(--surface);overflow:hidden;box-shadow:0 30px 80px -25px rgba(0,0,0,.6)}
+.flow-anim-bar{display:flex;align-items:center;justify-content:space-between;padding:.85rem 1.25rem;
+  background:var(--elevated);border-bottom:1px solid var(--line);gap:1rem;flex-wrap:wrap}
+.flow-anim-title{display:flex;align-items:center;gap:.65rem;font-family:var(--mono);font-size:.7rem;
+  letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2)}
+.flow-anim-title .live-dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:beat 1.8s infinite}
+.flow-anim-controls{display:flex;align-items:center;gap:.5rem}
+.flow-btn{background:var(--surface);border:1px solid var(--line);color:var(--ink-2);font-family:var(--mono);
+  font-size:.68rem;padding:.32rem .75rem;border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;
+  gap:.35rem;transition:all .2s var(--ease)}
+.flow-btn:hover{border-color:var(--line-2);color:var(--ink);background:var(--elevated)}
+.flow-btn.active{border-color:var(--accent);color:var(--accent);background:var(--accent-dim)}
+
+.flow-stage{padding:clamp(1.5rem,3.2vw,2.5rem);display:grid;grid-template-columns:1fr 1.35fr 1fr;
+  gap:clamp(1rem,2vw,2rem);align-items:stretch;position:relative;background:radial-gradient(ellipse at 50% 30%, rgba(0,212,255,0.03), transparent 70%)}
+@media(max-width:980px){.flow-stage{grid-template-columns:1fr;gap:2.2rem}}
+
+.flow-col{display:flex;flex-direction:column;gap:.9rem}
+.flow-col-tag{font-family:var(--mono);font-size:.64rem;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);display:flex;align-items:center;gap:.5rem}
+.flow-col-tag.hl{color:var(--accent)}
+
+.flow-card{background:var(--elevated);border:1px solid var(--line);border-radius:12px;padding:1.15rem;display:flex;flex-direction:column;gap:.9rem;flex:1;position:relative;transition:border-color .3s,box-shadow .3s}
+.flow-card.firing{border-color:var(--red);box-shadow:0 0 25px rgba(244,63,94,0.18)}
+
+.agent-box{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:.85rem;display:flex;flex-direction:column;gap:.45rem}
+.agent-step-tag{font-family:var(--mono);font-size:.62rem;letter-spacing:.06em;color:var(--ink-3);text-transform:uppercase}
+.agent-call{font-family:var(--mono);font-size:.85rem;font-weight:700;color:var(--accent);word-break:break-all}
+.agent-call.err{color:var(--red)}
+.agent-meta{display:flex;align-items:center;justify-content:space-between;gap:.5rem;font-family:var(--mono);font-size:.66rem;color:var(--ink-2);margin-top:.3rem;border-top:1px solid var(--line);padding-top:.45rem}
+.agent-pill{padding:.15rem .45rem;border-radius:4px;font-weight:500}
+.agent-pill.ok{background:var(--green-dim);color:var(--green)}
+.agent-pill.warn{background:var(--amber-dim);color:var(--amber)}
+.agent-pill.alarm{background:var(--red-dim);color:var(--red)}
+
+.core-header{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:.65rem}
+.core-title{font-family:var(--mono);font-size:.72rem;font-weight:700;letter-spacing:.06em;color:var(--ink)}
+.core-badge{font-family:var(--mono);font-size:.6rem;padding:.15rem .45rem;border-radius:100px;background:var(--accent-dim);color:var(--accent);letter-spacing:.04em}
+
+.detectors-list{display:flex;flex-direction:column;gap:.55rem}
+.det-item{background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:.55rem .75rem;transition:border-color .25s,background .25s}
+.det-item.fired{border-color:var(--red);background:rgba(244,63,94,0.06)}
+.det-item.warning{border-color:var(--amber);background:rgba(251,191,36,0.05)}
+.det-row{display:flex;align-items:center;justify-content:space-between;font-family:var(--mono);font-size:.66rem;margin-bottom:.35rem}
+.det-name{color:var(--ink-2)}
+.det-val{font-weight:500;color:var(--ink)}
+.det-item.fired .det-val{color:var(--red)}
+.det-item.warning .det-val{color:var(--amber)}
+.det-bar{height:3px;background:var(--line);border-radius:99px;overflow:hidden}
+.det-fill{height:100%;width:0;background:var(--accent);border-radius:99px;transition:width .35s var(--ease),background .35s}
+.det-item.fired .det-fill{background:var(--red)}
+.det-item.warning .det-fill{background:var(--amber)}
+
+.risk-box{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:.75rem;display:flex;align-items:center;justify-content:space-between;gap:1rem}
+.risk-left{display:flex;flex-direction:column;gap:.2rem}
+.risk-lbl{font-family:var(--mono);font-size:.6rem;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3)}
+.risk-sub{font-family:var(--mono);font-size:.64rem;color:var(--green);transition:color .3s}
+.risk-sub.fired{color:var(--red)}
+.risk-sub.warn{color:var(--amber)}
+.risk-score{font-family:var(--mono);font-size:1.35rem;font-weight:700;color:var(--green);transition:color .3s}
+.risk-score.fired{color:var(--red)}
+.risk-score.warn{color:var(--amber)}
+
+.outcome-box{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:.85rem;display:flex;flex-direction:column;gap:.45rem}
+.outcome-lbl{font-family:var(--mono);font-size:.6rem;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3)}
+.directive-val{font-family:var(--mono);font-size:.95rem;font-weight:700;letter-spacing:.04em;color:var(--green);transition:color .3s}
+.directive-val.halt{color:var(--red);animation:pulseHalt 1s infinite}
+@keyframes pulseHalt{0%,100%{opacity:1}50%{opacity:.65}}
+.directive-sub{font-size:.76rem;color:var(--ink-2);line-height:1.4}
+
+.sinks-list{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.3rem}
+.sink-pill{font-family:var(--mono);font-size:.63rem;padding:.25rem .6rem;border-radius:4px;border:1px solid var(--line);color:var(--ink-3);background:var(--surface);transition:all .3s}
+.sink-pill.fired{border-color:var(--accent);color:var(--accent);background:var(--accent-dim)}
+.sink-pill.fired-red{border-color:var(--red);color:var(--red);background:var(--red-dim)}
+
+.flow-timeline{padding:.9rem 1.25rem;border-top:1px solid var(--line);background:var(--elevated);display:flex;flex-direction:column;gap:.6rem}
+.timeline-head{display:flex;align-items:center;justify-content:space-between;font-family:var(--mono);font-size:.64rem;color:var(--ink-3);letter-spacing:.08em}
+.timeline-bar{display:grid;grid-template-columns:repeat(5,1fr);gap:.5rem}
+@media(max-width:760px){.timeline-bar{grid-template-columns:1fr;gap:.35rem}}
+.time-step-btn{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:.5rem .6rem;cursor:pointer;display:flex;flex-direction:column;gap:.2rem;text-align:left;transition:all .2s}
+.time-step-btn:hover{border-color:var(--line-2)}
+.time-step-btn.active{border-color:var(--accent);background:rgba(0,212,255,0.06)}
+.time-step-btn.active-err{border-color:var(--red);background:rgba(244,63,94,0.08)}
+.time-step-idx{font-family:var(--mono);font-size:.58rem;color:var(--ink-3);letter-spacing:.06em}
+.time-step-name{font-family:var(--mono);font-size:.68rem;font-weight:500;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.time-step-btn.active .time-step-name{color:var(--accent)}
+.time-step-btn.active-err .time-step-name{color:var(--red)}
+
+.flow-ticker{padding:.65rem 1.25rem;background:var(--surface);border-top:1px solid var(--line);font-family:var(--mono);font-size:.68rem;color:var(--ink-2);display:flex;align-items:center;gap:.6rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.flow-ticker .tag{color:var(--accent);font-weight:700}
+
 /* ═══════════════ STEPS (how it works) ═══════════════ */
 .steps{border-top:1px solid var(--line)}
 .step{display:grid;grid-template-columns:clamp(3rem,7vw,7rem) minmax(0,1fr) minmax(0,1.25fr);
@@ -321,16 +452,24 @@ canvas#sig{width:100%;flex:1;min-height:190px;display:block}
 .kw{color:var(--accent)}.str{color:var(--green)}.cmt{color:var(--ink-3)}
 .num{color:var(--amber)}.fn{color:var(--violet)}.op{color:var(--ink-3)}
 
-/* ═══════════════ DETECTOR TRACK (pinned horizontal) ═══════════════ */
-.track-wrap{position:relative}
-.track-sticky{position:sticky;top:0;height:100svh;overflow:hidden;display:flex;flex-direction:column;
-  justify-content:center}
-.track-head{padding:0 var(--pad);max-width:1500px;margin:0 auto 2rem;width:100%}
-.track-rail{display:flex;gap:clamp(1rem,2.2vw,2.25rem);padding:0 var(--pad);will-change:transform}
-.dcard{flex:0 0 min(80vw,470px);background:var(--surface);border:1px solid var(--line);
+/* ═══════════════ DETECTOR TRACK (horizontal swipe) ═══════════════ */
+.track-wrap{position:relative;padding:clamp(3.5rem,8vh,6rem) 0;max-width:100%;margin:0 auto}
+.track-sticky{position:static;height:auto;overflow:visible;display:flex;flex-direction:column}
+.track-head{padding:0 var(--pad);max-width:1500px;margin:0 auto 2rem;width:100%;display:flex;align-items:flex-end;justify-content:space-between;gap:1.5rem}
+.track-arrows{display:flex;gap:.6rem;align-items:center}
+.track-btn{width:40px;height:40px;border-radius:50%;border:1px solid var(--line);background:var(--surface);color:var(--ink);font-family:var(--mono);font-size:1.1rem;line-height:1;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:border-color .3s,background .3s,transform .2s var(--ease),color .3s}
+.track-btn:hover{border-color:var(--line-2);background:var(--elevated);color:var(--accent);transform:translateY(-2px)}
+.track-btn:active{transform:translateY(0)}
+.track-rail{display:flex;gap:clamp(1.2rem,2.2vw,2.25rem);padding:.5rem var(--pad) 1.5rem;overflow-x:auto;overflow-y:hidden;scroll-behavior:smooth;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;cursor:grab;scrollbar-width:thin;scrollbar-color:var(--line-2) transparent}
+.track-rail.is-dragging{cursor:grabbing;scroll-snap-type:none;scroll-behavior:auto;user-select:none}
+.track-rail::-webkit-scrollbar{height:6px}
+.track-rail::-webkit-scrollbar-track{background:transparent}
+.track-rail::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:999px}
+.track-rail::-webkit-scrollbar-thumb:hover{background:var(--ink-3)}
+.dcard{flex:0 0 clamp(320px,42vw,470px);scroll-snap-align:start;background:var(--surface);border:1px solid var(--line);
   border-radius:14px;padding:clamp(1.4rem,2.6vw,2.1rem);display:flex;flex-direction:column;
-  gap:1rem;min-height:min(56vh,430px);transition:border-color .4s,transform .5s var(--ease)}
-.dcard:hover{border-color:var(--line-2);transform:translateY(-6px)}
+  gap:1rem;min-height:min(52vh,410px);transition:border-color .4s,transform .4s var(--ease)}
+.dcard:hover{border-color:var(--line-2);transform:translateY(-4px)}
 .dcard .top{display:flex;align-items:center;justify-content:space-between;gap:1rem}
 .dcard .no{font-family:var(--mono);font-size:.68rem;letter-spacing:.1em;color:var(--ink-3)}
 .tag{font-family:var(--mono);font-size:.63rem;letter-spacing:.07em;padding:.28rem .6rem;
@@ -344,7 +483,7 @@ canvas#sig{width:100%;flex:1;min-height:190px;display:block}
 .dcard p{font-size:.9rem;color:var(--ink-2);line-height:1.7}
 .dcard .algo{margin-top:auto;padding-top:1.1rem;border-top:1px solid var(--line);
   font-family:var(--mono);font-size:.68rem;letter-spacing:.02em;color:var(--ink-3);line-height:1.6}
-.track-note{padding:1.5rem var(--pad) 0;max-width:1500px;margin:0 auto;width:100%;
+.track-note{padding:1.2rem var(--pad) 0;max-width:1500px;margin:0 auto;width:100%;
   font-family:var(--mono);font-size:.65rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);
   display:flex;align-items:center;gap:.7rem}
 .track-note b{flex:1;height:1px;background:var(--line);max-width:180px}
@@ -461,9 +600,10 @@ footer{border-top:1px solid var(--line);padding:2.75rem var(--pad);max-width:150
 @media(max-width:760px){
   .stats{grid-template-columns:repeat(2,1fr)}
   .track-sticky{position:static;height:auto;padding:0}
-  .track-rail{flex-direction:column;gap:1rem;transform:none !important;padding:0 var(--pad)}
-  .dcard{flex:1 1 auto;min-height:0}
-  .track-note{display:none}
+  .track-rail{padding:0 var(--pad) 1.2rem;gap:1rem}
+  .dcard{flex:0 0 85vw;min-height:360px}
+  .track-arrows{display:none}
+  .track-note{padding-top:.8rem}
   .hero-foot{flex-direction:column;align-items:stretch}
   h1.kinetic .ln.pad{padding-left:0}
 }
@@ -600,6 +740,137 @@ footer{border-top:1px solid var(--line);padding:2.75rem var(--pad);max-width:150
       nothing reads your content, nothing blocks.</p>
   </div>
 
+  <!-- ░░ INTERACTIVE PIPELINE ANIMATION ░░ -->
+  <div class="flow-anim-wrap rv">
+    <div class="flow-anim-bar">
+      <div class="flow-anim-title">
+        <span class="live-dot"></span>
+        <span>SNAGLINE Execution Pipeline &middot; Live Flow Simulation</span>
+      </div>
+      <div class="flow-anim-controls">
+        <button class="flow-btn" id="flowPlayBtn" title="Play / Pause Animation">⏸ Pause</button>
+        <button class="flow-btn" id="flowReplayBtn" title="Replay from Step 1">↺ Replay</button>
+        <button class="flow-btn" id="flowSpeedBtn" title="Change Animation Speed">Speed: 1x</button>
+      </div>
+    </div>
+
+    <div class="flow-stage">
+      <!-- 01 · SOURCE AGENT -->
+      <div class="flow-col">
+        <div class="flow-col-tag">01 &middot; Agent Stream</div>
+        <div class="flow-card" id="flowAgentCard">
+          <div class="agent-box">
+            <div class="agent-step-tag" id="flowStepTag">STEP 1 &middot; RUNNING</div>
+            <div class="agent-call" id="flowAgentCall">tool_call:search("docs")</div>
+            <div class="agent-meta">
+              <span class="agent-pill ok" id="flowStatusPill">STATUS: OK</span>
+              <span id="flowLatencyVal">118ms</span>
+            </div>
+          </div>
+          <p style="font-size:0.75rem;color:var(--ink-2);line-height:1.5">
+            Agent executes actions. A zero-overhead hook maps timestamps, tool names, and exit codes without modifying the agent.
+          </p>
+        </div>
+      </div>
+
+      <!-- 02 · SNAGLINE CORE MONITOR -->
+      <div class="flow-col">
+        <div class="flow-col-tag hl">02 &middot; Snagline Core (~2µs)</div>
+        <div class="flow-card" id="flowCoreCard">
+          <div class="core-header">
+            <span class="core-title">PARALLEL DETECTORS</span>
+            <span class="core-badge">O(1) &middot; ZERO LLM</span>
+          </div>
+          <div class="detectors-list">
+            <div class="det-item" id="flowDetLoop">
+              <div class="det-row">
+                <span class="det-name">Loop Detector (Hash window)</span>
+                <span class="det-val" id="flowDetLoopVal">0 / 3</span>
+              </div>
+              <div class="det-bar"><div class="det-fill" id="flowDetLoopFill" style="width:0%"></div></div>
+            </div>
+            <div class="det-item" id="flowDetCascade">
+              <div class="det-row">
+                <span class="det-name">Error Cascade (Consecutive)</span>
+                <span class="det-val" id="flowDetCascadeVal">0 / 3</span>
+              </div>
+              <div class="det-bar"><div class="det-fill" id="flowDetCascadeFill" style="width:0%"></div></div>
+            </div>
+            <div class="det-item" id="flowDetLatency">
+              <div class="det-row">
+                <span class="det-name">Latency CUSUM (Page test)</span>
+                <span class="det-val" id="flowDetLatencyVal">S = 0.00</span>
+              </div>
+              <div class="det-bar"><div class="det-fill" id="flowDetLatencyFill" style="width:5%"></div></div>
+            </div>
+          </div>
+          <div class="risk-box" id="flowRiskBox">
+            <div class="risk-left">
+              <span class="risk-lbl">Failure Risk (Noisy-OR)</span>
+              <span class="risk-sub" id="flowRiskSub">Nominal &middot; Safe</span>
+            </div>
+            <div class="risk-score" id="flowRiskScore">0.00</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 03 · OUTCOME & INTERVENTION -->
+      <div class="flow-col">
+        <div class="flow-col-tag">03 &middot; Enforcement & Sinks</div>
+        <div class="flow-card" id="flowOutcomeCard">
+          <div class="outcome-box">
+            <span class="outcome-lbl">Control Directive</span>
+            <div class="directive-val" id="flowDirectiveVal">CONTINUE</div>
+            <div class="directive-sub" id="flowDirectiveSub">Step allowed. Zero latency overhead added to agent.</div>
+          </div>
+          <div class="outcome-box">
+            <span class="outcome-lbl">Active Sinks</span>
+            <div class="sinks-list">
+              <span class="sink-pill fired" id="flowSinkConsole">Console</span>
+              <span class="sink-pill" id="flowSinkWebhook">Webhook</span>
+              <span class="sink-pill" id="flowSinkHalt">Halt Hook</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TIMELINE SCRUBBER -->
+    <div class="flow-timeline">
+      <div class="timeline-head">
+        <span>EXECUTION STEPS (CLICK ANY STEP TO JUMP)</span>
+        <span id="flowStepCounter">STEP 1 OF 5</span>
+      </div>
+      <div class="timeline-bar">
+        <button class="time-step-btn active" data-flow-step="0">
+          <span class="time-step-idx">STEP 01</span>
+          <span class="time-step-name">search() &middot; ok</span>
+        </button>
+        <button class="time-step-btn" data-flow-step="1">
+          <span class="time-step-idx">STEP 02</span>
+          <span class="time-step-name">fetch() &middot; ok</span>
+        </button>
+        <button class="time-step-btn" data-flow-step="2">
+          <span class="time-step-idx">STEP 03</span>
+          <span class="time-step-name">scrape() &middot; err 429</span>
+        </button>
+        <button class="time-step-btn" data-flow-step="3">
+          <span class="time-step-idx">STEP 04</span>
+          <span class="time-step-name">scrape() &middot; retry 1</span>
+        </button>
+        <button class="time-step-btn" data-flow-step="4">
+          <span class="time-step-idx">STEP 05</span>
+          <span class="time-step-name">scrape() &middot; TRIP & HALT</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="flow-ticker">
+      <span class="tag">EVENT:</span>
+      <span id="flowTickerText">Observed tool_call:search (118ms) &mdash; All detectors nominal &mdash; Action: continue</span>
+    </div>
+  </div>
+
   <div class="steps">
     <div class="step rv">
       <div class="idx">STEP 01</div>
@@ -644,12 +915,18 @@ footer{border-top:1px solid var(--line);padding:2.75rem var(--pad);max-width:150
   </div>
 </section>
 
-<!-- ░░ 02 · DETECTORS (pinned horizontal) ░░ -->
-<div class="track-wrap" id="trackWrap">
+<!-- ░░ 02 · DETECTORS (horizontal swipe) ░░ -->
+<section class="track-wrap" id="trackWrap">
   <div class="track-sticky">
     <div class="track-head">
-      <div class="slabel rv">02 &mdash; Detectors</div>
-      <h2 class="stitle" data-split>Five failure modes</h2>
+      <div>
+        <div class="slabel rv">02 &mdash; Detectors</div>
+        <h2 class="stitle" data-split>Five failure modes</h2>
+      </div>
+      <div class="track-arrows">
+        <button class="track-btn" id="railPrev" aria-label="Previous detector" title="Previous detector">&#8592;</button>
+        <button class="track-btn" id="railNext" aria-label="Next detector" title="Next detector">&#8594;</button>
+      </div>
     </div>
     <div class="track-rail" id="rail">
       <div class="dcard" id="detectors">
@@ -691,9 +968,9 @@ footer{border-top:1px solid var(--line);padding:2.75rem var(--pad);max-width:150
         <div class="algo">noisy-OR: 1 &minus; &prod;(1 &minus; s&#7522;)<br>pluggable model hook</div>
       </div>
     </div>
-    <div class="track-note" aria-hidden="true"><b></b>Scroll to traverse &rarr;</div>
+    <div class="track-note" aria-hidden="true"><b></b>&larr; Swipe horizontally to browse &rarr;</div>
   </div>
-</div>
+</section>
 
 <!-- ░░ 03 · FEATURES ░░ -->
 <section id="features">
@@ -1059,6 +1336,8 @@ var SS = (function(){
   if(on){
     addEventListener('wheel', function(e){
       if(e.ctrlKey) return;
+      var hScroll = e.target && e.target.closest && e.target.closest('#rail, pre, .snip');
+      if(hScroll && Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
       e.preventDefault();
       var d = e.deltaY;
       if(e.deltaMode === 1) d *= 16; else if(e.deltaMode === 2) d *= innerHeight;
@@ -1136,15 +1415,7 @@ $$('a[href^="#"]').forEach(function(a){
 /* ═══════════════ SCROLL-LINKED ═══════════════ */
 (function(){
   var prog = $('#prog'), nav = $('#nav'), heroIn = $('#heroIn');
-  var wrap = $('#trackWrap'), rail = $('#rail');
-  var dist = 0, lastY = scrollY, acc = 0, hidden = false, solid = false, queued = false;
-
-  function measure(){
-    if(!wrap || !rail) return;
-    if(innerWidth <= 760){ wrap.style.height = 'auto'; dist = 0; rail.style.transform = ''; return; }
-    dist = Math.max(0, rail.scrollWidth - innerWidth);
-    wrap.style.height = (innerHeight + dist) + 'px';
-  }
+  var lastY = scrollY, acc = 0, hidden = false, solid = false, queued = false;
 
   function frame(){
     queued = false;
@@ -1154,10 +1425,6 @@ $$('a[href^="#"]').forEach(function(a){
 
     if(y > 40 !== solid){ solid = y > 40; nav.classList.toggle('solid', solid); }
 
-    /* Direction is accumulated, not read per frame. An inertia glide decelerates
-       (40px -> 2px per frame), so any per-frame delta threshold flips state as the
-       glide converges — that reads as flicker. Require sustained travel instead,
-       with asymmetric thresholds so revealing is easier than hiding. */
     var dy = y - lastY;
     lastY = y;
     if(Math.abs(dy) > 0.5){
@@ -1175,21 +1442,12 @@ $$('a[href^="#"]').forEach(function(a){
 
     if(heroIn && y < innerHeight * 1.2){
       var p = clamp(y / innerHeight, 0, 1);
-      /* No blur() here: filtering a viewport-sized 9rem headline forces a full
-         re-raster every frame and tanks the scroll. Transform + opacity only. */
       heroIn.style.transform = 'translate3d(0,' + (p * -11) + 'vh,0) scale(' + (1 - p*0.11) + ')';
       heroIn.style.opacity   = String(1 - p*0.95);
-    }
-
-    if(dist > 0){
-      var top = wrap.offsetTop, span = wrap.offsetHeight - innerHeight;
-      var tp = clamp((y - top) / (span || 1), 0, 1);
-      rail.style.transform = 'translate3d(' + (-tp * dist) + 'px,0,0)';
     }
   }
   function onScroll(){ if(!queued){ queued = true; requestAnimationFrame(frame); } }
 
-  /* Reaching for the nav must always surface it, whatever the scroll state. */
   function reveal(){ if(hidden){ hidden = false; acc = 0; nav.classList.remove('hide'); } }
   nav.addEventListener('mouseenter', reveal);
   addEventListener('mousemove', function(e){ if(e.clientY < 70) reveal(); }, { passive:true });
@@ -1199,9 +1457,72 @@ $$('a[href^="#"]').forEach(function(a){
   }, { passive:true });
 
   addEventListener('scroll', onScroll, { passive:true });
-  addEventListener('resize', function(){ measure(); onScroll(); });
-  addEventListener('load', function(){ measure(); onScroll(); });
-  measure(); frame();
+  frame();
+})();
+
+/* ═══════════════ DETECTORS HORIZONTAL SWIPE ═══════════════ */
+(function(){
+  var rail = $('#rail');
+  var prevBtn = $('#railPrev');
+  var nextBtn = $('#railNext');
+  if(!rail) return;
+
+  function getStep(){
+    var card = rail.querySelector('.dcard');
+    return card ? card.offsetWidth + 24 : 420;
+  }
+
+  if(prevBtn){
+    prevBtn.addEventListener('click', function(){
+      rail.scrollBy({ left: -getStep(), behavior: 'smooth' });
+    });
+  }
+
+  if(nextBtn){
+    nextBtn.addEventListener('click', function(){
+      rail.scrollBy({ left: getStep(), behavior: 'smooth' });
+    });
+  }
+
+  /* Mouse Drag-to-Scroll for desktop pointer */
+  var isDown = false, startX = 0, scrollLeftStart = 0, hasMoved = false;
+
+  rail.addEventListener('pointerdown', function(e){
+    if(e.button !== 0) return;
+    isDown = true;
+    hasMoved = false;
+    startX = e.clientX;
+    scrollLeftStart = rail.scrollLeft;
+    rail.classList.add('is-dragging');
+    try { rail.setPointerCapture(e.pointerId); } catch(_) {}
+  });
+
+  rail.addEventListener('pointermove', function(e){
+    if(!isDown) return;
+    var dx = e.clientX - startX;
+    if(Math.abs(dx) > 4){
+      hasMoved = true;
+      rail.scrollLeft = scrollLeftStart - dx;
+    }
+  });
+
+  function endDrag(e){
+    if(!isDown) return;
+    isDown = false;
+    rail.classList.remove('is-dragging');
+    try { rail.releasePointerCapture(e.pointerId); } catch(_) {}
+  }
+
+  rail.addEventListener('pointerup', endDrag);
+  rail.addEventListener('pointercancel', endDrag);
+
+  rail.addEventListener('click', function(e){
+    if(hasMoved){
+      e.preventDefault();
+      e.stopPropagation();
+      hasMoved = false;
+    }
+  }, true);
 })();
 
 /* ═══════════════ COUNTERS ═══════════════ */
@@ -1451,6 +1772,361 @@ $$('[data-copy]').forEach(function(el){
     if(e.target.closest('a, button, input, .copyable, .dcard, .panel, .cell, .code, .row, .step, .evc, .st, pre, code, canvas, nav, footer, .pre, .track-sticky')) return;
     spawnComet(e.clientX - 40, e.clientY - 20, 45 + Math.random() * 30);
   }, { passive:true });
+})();
+
+/* ═══════════════ TUBE LIGHT LOGO FLICKER ═══════════════ */
+(function(){
+  var brand = $('.brand');
+  if(!brand) return;
+  brand.classList.add('tube-on');
+  if(REDUCED) return;
+
+  var isFlickering = false;
+  var timer = null;
+
+  var PATTERNS = [
+    // Pattern 0: Quick double micro-flicker
+    [ { c: 'tube-dim', d: 40 }, { c: 'tube-spark', d: 55 }, { c: 'tube-dim', d: 35 }, { c: 'tube-spark', d: 60 } ],
+    // Pattern 1: Deep drop re-strike
+    [ { c: 'tube-dim', d: 95 }, { c: 'tube-spark', d: 45 }, { c: 'tube-dim', d: 40 }, { c: 'tube-spark', d: 70 } ],
+    // Pattern 2: Single micro-twitch
+    [ { c: 'tube-dim', d: 30 }, { c: 'tube-spark', d: 40 } ],
+    // Pattern 3: Triple flutter
+    [ { c: 'tube-dim', d: 35 }, { c: 'tube-spark', d: 45 }, { c: 'tube-dim', d: 30 }, { c: 'tube-spark', d: 50 }, { c: 'tube-dim', d: 25 }, { c: 'tube-spark', d: 65 } ],
+    // Pattern 4: Buzz & strike
+    [ { c: 'tube-spark', d: 30 }, { c: 'tube-dim', d: 85 }, { c: 'tube-spark', d: 50 } ]
+  ];
+
+  function setStage(cls){
+    brand.classList.remove('tube-on', 'tube-dim', 'tube-spark');
+    brand.classList.add(cls);
+  }
+
+  function runFlicker(patternIndex, onComplete){
+    if(isFlickering) return;
+    isFlickering = true;
+    var pattern = PATTERNS[patternIndex !== undefined ? patternIndex : Math.floor(Math.random() * PATTERNS.length)];
+    var step = 0;
+
+    function next(){
+      if(step >= pattern.length){
+        setStage('tube-on');
+        isFlickering = false;
+        if(onComplete) onComplete();
+        return;
+      }
+      var cur = pattern[step++];
+      setStage(cur.c);
+      setTimeout(next, cur.d);
+    }
+    next();
+  }
+
+  function scheduleNextFlicker(){
+    if(timer) clearTimeout(timer);
+    var delay = 2200 + Math.random() * 5300;
+    timer = setTimeout(function(){
+      if(document.visibilityState === 'hidden'){
+        scheduleNextFlicker();
+        return;
+      }
+      runFlicker(undefined, function(){
+        scheduleNextFlicker();
+      });
+    }, delay);
+  }
+
+  brand.addEventListener('mouseenter', function(){
+    if(!isFlickering){
+      if(timer) clearTimeout(timer);
+      runFlicker(0, function(){
+        scheduleNextFlicker();
+      });
+    }
+  });
+
+  timer = setTimeout(function(){
+    runFlicker(1, function(){
+      scheduleNextFlicker();
+    });
+  }, 1800);
+
+  document.addEventListener('visibilitychange', function(){
+    if(document.visibilityState === 'visible'){
+      scheduleNextFlicker();
+    } else if(timer){
+      clearTimeout(timer);
+    }
+  });
+})();
+
+/* ═══════════════ PIPELINE FLOW ANIMATION ═══════════════ */
+(function(){
+  var playBtn = $('#flowPlayBtn');
+  var replayBtn = $('#flowReplayBtn');
+  var speedBtn = $('#flowSpeedBtn');
+  var stepButtons = $$('[data-flow-step]');
+
+  if(!playBtn || !stepButtons.length) return;
+
+  var STEPS = [
+    {
+      stepNum: 'STEP 1 · RUNNING',
+      counter: 'STEP 1 OF 5',
+      call: 'tool_call:search("docs")',
+      isErr: false,
+      status: 'STATUS: OK',
+      statusClass: 'ok',
+      latency: '118ms',
+      loopVal: '0 / 3',
+      loopPct: 0,
+      cascadeVal: '0 / 3',
+      cascadePct: 0,
+      latencyVal: 'S = 0.00',
+      latencyPct: 5,
+      riskScore: '0.00',
+      riskSub: 'Nominal · Safe',
+      riskClass: 'ok',
+      directive: 'CONTINUE',
+      directiveClass: 'continue',
+      directiveDesc: 'Step allowed. Zero latency overhead added to agent.',
+      sinks: ['Console'],
+      ticker: 'Observed tool_call:search (118ms) — All detectors nominal — Directive: CONTINUE'
+    },
+    {
+      stepNum: 'STEP 2 · RUNNING',
+      counter: 'STEP 2 OF 5',
+      call: 'tool_call:fetch("chunk_4")',
+      isErr: false,
+      status: 'STATUS: OK',
+      statusClass: 'ok',
+      latency: '132ms',
+      loopVal: '0 / 3',
+      loopPct: 0,
+      cascadeVal: '0 / 3',
+      cascadePct: 0,
+      latencyVal: 'S = 0.08',
+      latencyPct: 12,
+      riskScore: '0.00',
+      riskSub: 'Nominal · Safe',
+      riskClass: 'ok',
+      directive: 'CONTINUE',
+      directiveClass: 'continue',
+      directiveDesc: 'Step allowed. Zero latency overhead added to agent.',
+      sinks: ['Console'],
+      ticker: 'Observed tool_call:fetch (132ms) — All detectors nominal — Directive: CONTINUE'
+    },
+    {
+      stepNum: 'STEP 3 · WARNING',
+      counter: 'STEP 3 OF 5',
+      call: 'tool_call:scrape("api.docs")',
+      isErr: true,
+      status: 'FAIL: 429 RATE LIMIT',
+      statusClass: 'warn',
+      latency: '88ms',
+      loopVal: '1 / 3 (observed)',
+      loopPct: 33,
+      cascadeVal: '1 / 3 (1 error)',
+      cascadePct: 33,
+      latencyVal: 'S = 0.14',
+      latencyPct: 18,
+      riskScore: '0.28',
+      riskSub: 'Evaluating · Fail-Open Active',
+      riskClass: 'warn',
+      directive: 'CONTINUE',
+      directiveClass: 'continue',
+      directiveDesc: 'Fail-open: single error logged, agent not interrupted.',
+      sinks: ['Console'],
+      ticker: 'Single error on scrape() (429 Rate Limit) — Logged in cascade counter (1/3) — Directive: CONTINUE'
+    },
+    {
+      stepNum: 'STEP 4 · ELEVATED RISK',
+      counter: 'STEP 4 OF 5',
+      call: 'tool_call:scrape("api.docs")',
+      isErr: true,
+      status: 'FAIL: 429 (RETRY 1)',
+      statusClass: 'warn',
+      latency: '91ms',
+      loopVal: '2 / 3 (duplicate sig)',
+      loopPct: 66,
+      cascadeVal: '2 / 3 (consecutive)',
+      cascadePct: 66,
+      latencyVal: 'S = 0.22',
+      latencyPct: 25,
+      riskScore: '0.64',
+      riskSub: 'Elevated Risk · Warning',
+      riskClass: 'warn',
+      directive: 'CONTINUE',
+      directiveClass: 'continue',
+      directiveDesc: 'Elevated risk warning: 2 consecutive failures with identical signature.',
+      sinks: ['Console'],
+      ticker: 'Warning: 2nd consecutive failure on scrape() — Loop window tracking duplicate signature — Directive: CONTINUE'
+    },
+    {
+      stepNum: 'STEP 5 · ALARM & INTERVENE',
+      counter: 'STEP 5 OF 5',
+      call: 'tool_call:scrape("api.docs")',
+      isErr: true,
+      status: 'TRIPPED: 3x LOOP DETECTED',
+      statusClass: 'alarm',
+      latency: '89ms',
+      loopVal: '3 / 3 FIRED!',
+      loopPct: 100,
+      cascadeVal: '3 / 3 FIRED!',
+      cascadePct: 100,
+      latencyVal: 'S = 0.29',
+      latencyPct: 35,
+      riskScore: '0.96',
+      riskSub: 'ALARM · FAILURE RISK DETECTED',
+      riskClass: 'alarm',
+      directive: 'PAUSE / HALT',
+      directiveClass: 'halt',
+      directiveDesc: 'AGENT HALTED: Infinite retry cascade stopped before wasting LLM budget.',
+      sinks: ['Console', 'Webhook', 'Halt Hook'],
+      ticker: '🚨 CRITICAL: Loop (3/3) & Error Cascade (3/3) tripped! Risk 0.96 -> Policy: HALT dispatched!'
+    }
+  ];
+
+  var curStep = 0;
+  var isPlaying = true;
+  var speedMultiplier = 1;
+  var speedOptions = [1, 1.5, 2];
+  var speedIdx = 0;
+  var timer = null;
+
+  var elStepTag = $('#flowStepTag');
+  var elAgentCall = $('#flowAgentCall');
+  var elStatusPill = $('#flowStatusPill');
+  var elLatencyVal = $('#flowLatencyVal');
+  var elDetLoopVal = $('#flowDetLoopVal');
+  var elDetLoopFill = $('#flowDetLoopFill');
+  var elDetLoop = $('#flowDetLoop');
+  var elDetCascadeVal = $('#flowDetCascadeVal');
+  var elDetCascadeFill = $('#flowDetCascadeFill');
+  var elDetCascade = $('#flowDetCascade');
+  var elDetLatencyVal = $('#flowDetLatencyVal');
+  var elDetLatencyFill = $('#flowDetLatencyFill');
+  var elRiskScore = $('#flowRiskScore');
+  var elRiskSub = $('#flowRiskSub');
+  var elDirectiveVal = $('#flowDirectiveVal');
+  var elDirectiveSub = $('#flowDirectiveSub');
+  var elSinkConsole = $('#flowSinkConsole');
+  var elSinkWebhook = $('#flowSinkWebhook');
+  var elSinkHalt = $('#flowSinkHalt');
+  var elStepCounter = $('#flowStepCounter');
+  var elTickerText = $('#flowTickerText');
+  var elCoreCard = $('#flowCoreCard');
+
+  function renderStep(idx){
+    curStep = idx;
+    var data = STEPS[idx];
+
+    elStepTag.textContent = data.stepNum;
+    elAgentCall.textContent = data.call;
+    elAgentCall.className = 'agent-call' + (data.isErr ? ' err' : '');
+    elStatusPill.textContent = data.status;
+    elStatusPill.className = 'agent-pill ' + data.statusClass;
+    elLatencyVal.textContent = data.latency;
+
+    elDetLoopVal.textContent = data.loopVal;
+    elDetLoopFill.style.width = data.loopPct + '%';
+    elDetLoop.className = 'det-item' + (data.loopPct >= 100 ? ' fired' : (data.loopPct > 0 ? ' warning' : ''));
+
+    elDetCascadeVal.textContent = data.cascadeVal;
+    elDetCascadeFill.style.width = data.cascadePct + '%';
+    elDetCascade.className = 'det-item' + (data.cascadePct >= 100 ? ' fired' : (data.cascadePct > 0 ? ' warning' : ''));
+
+    elDetLatencyVal.textContent = data.latencyVal;
+    elDetLatencyFill.style.width = data.latencyPct + '%';
+
+    elRiskScore.textContent = data.riskScore;
+    elRiskSub.textContent = data.riskSub;
+    elRiskScore.className = 'risk-score ' + (data.riskClass === 'alarm' ? 'fired' : (data.riskClass === 'warn' ? 'warn' : ''));
+    elRiskSub.className = 'risk-sub ' + (data.riskClass === 'alarm' ? 'fired' : (data.riskClass === 'warn' ? 'warn' : ''));
+
+    elCoreCard.className = 'flow-card' + (data.riskClass === 'alarm' ? ' firing' : '');
+
+    elDirectiveVal.textContent = data.directive;
+    elDirectiveVal.className = 'directive-val ' + data.directiveClass;
+    elDirectiveSub.textContent = data.directiveDesc;
+
+    elSinkConsole.className = 'sink-pill ' + (data.sinks.indexOf('Console') !== -1 ? (data.riskClass === 'alarm' ? 'fired-red' : 'fired') : '');
+    elSinkWebhook.className = 'sink-pill ' + (data.sinks.indexOf('Webhook') !== -1 ? 'fired-red' : '');
+    elSinkHalt.className = 'sink-pill ' + (data.sinks.indexOf('Halt Hook') !== -1 ? 'fired-red' : '');
+
+    stepButtons.forEach(function(btn, i){
+      btn.className = 'time-step-btn' + (i === idx ? (i === 4 ? ' active-err' : ' active') : '');
+    });
+    elStepCounter.textContent = data.counter;
+    elTickerText.textContent = data.ticker;
+  }
+
+  function nextStep(){
+    var next = (curStep + 1) % STEPS.length;
+    renderStep(next);
+  }
+
+  function getStepDuration(){
+    var base = curStep === 4 ? 3200 : 2000;
+    return base / speedMultiplier;
+  }
+
+  function scheduleNext(){
+    if(timer) clearTimeout(timer);
+    if(!isPlaying) return;
+    timer = setTimeout(function(){
+      if(!isPlaying) return;
+      nextStep();
+      scheduleNext();
+    }, getStepDuration());
+  }
+
+  function setPlaying(play){
+    isPlaying = play;
+    playBtn.textContent = isPlaying ? '⏸ Pause' : '▶ Play';
+    if(isPlaying){
+      scheduleNext();
+    } else if(timer){
+      clearTimeout(timer);
+    }
+  }
+
+  playBtn.addEventListener('click', function(){
+    setPlaying(!isPlaying);
+  });
+
+  replayBtn.addEventListener('click', function(){
+    renderStep(0);
+    setPlaying(true);
+  });
+
+  speedBtn.addEventListener('click', function(){
+    speedIdx = (speedIdx + 1) % speedOptions.length;
+    speedMultiplier = speedOptions[speedIdx];
+    speedBtn.textContent = 'Speed: ' + speedMultiplier + 'x';
+    if(isPlaying){
+      scheduleNext();
+    }
+  });
+
+  stepButtons.forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var s = parseInt(btn.dataset.flowStep, 10);
+      renderStep(s);
+      if(isPlaying) scheduleNext();
+    });
+  });
+
+  document.addEventListener('visibilitychange', function(){
+    if(document.visibilityState === 'visible'){
+      if(isPlaying) scheduleNext();
+    } else if(timer){
+      clearTimeout(timer);
+    }
+  });
+
+  renderStep(0);
+  scheduleNext();
 })();
 })();
 </script>
