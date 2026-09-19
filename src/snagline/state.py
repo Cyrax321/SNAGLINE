@@ -148,7 +148,17 @@ def default_state_backend() -> StateBackend:
     kind = os.environ.get("SNAGLINE_STATE_BACKEND", "memory").lower()
     if kind == "redis":
         url = os.environ.get("SNAGLINE_STATE_REDIS_URL")
-        if url:
+        if not url:
+            # The redis backend exists to coordinate episodes across
+            # *processes*; in-memory state is per-process, so a missing URL
+            # silently gives a scaled deployment N workers each holding their
+            # own lock. Announce the fallback for the same reason the
+            # ImportError arm below does (issue #308).
+            logger.warning(
+                "snagline: redis backend requested but SNAGLINE_STATE_REDIS_URL "
+                "is unset; falling back to in-memory state"
+            )
+        else:
             try:
                 return RedisStateBackend(url)
             except ImportError:

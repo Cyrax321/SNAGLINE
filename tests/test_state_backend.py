@@ -56,6 +56,38 @@ def test_default_state_backend_redis_when_configured(monkeypatch):
     assert isinstance(backend, (RedisStateBackend, MemoryStateBackend))
 
 
+def test_default_state_backend_warns_when_redis_url_missing(monkeypatch, caplog):
+    """Regression (#308): a missing redis URL must not degrade silently.
+
+    The redis backend coordinates episodes across processes; in-memory state is
+    per-process, so a misconfigured deployment would otherwise get N workers
+    each holding their own lock -- no coordination, and nothing in the logs.
+    """
+    monkeypatch.setenv("SNAGLINE_STATE_BACKEND", "redis")
+    monkeypatch.delenv("SNAGLINE_STATE_REDIS_URL", raising=False)
+    with caplog.at_level("WARNING", logger="snagline"):
+        backend = default_state_backend()
+    assert isinstance(backend, MemoryStateBackend)
+    assert any(
+        "SNAGLINE_STATE_REDIS_URL is unset" in record.message
+        for record in caplog.records
+    ), [record.message for record in caplog.records]
+
+
+def test_default_state_backend_quiet_when_redis_not_requested(monkeypatch, caplog):
+    """The new warning must stay scoped to an explicit redis request (#308).
+
+    Default and in-memory selections are the documented happy path, so a
+    warning there would be noise on every plain ``Monitor.default()``.
+    """
+    monkeypatch.setenv("SNAGLINE_STATE_BACKEND", "memory")
+    with caplog.at_level("WARNING", logger="snagline"):
+        default_state_backend()
+    assert not [record for record in caplog.records if "state" in record.message], [
+        record.message for record in caplog.records
+    ]
+
+
 def test_concurrent_ingest_of_distinct_episodes_no_deadlock():
     monitor = Monitor.default()
     errors: list[Exception] = []
