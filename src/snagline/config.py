@@ -226,7 +226,7 @@ def _validated_stagnation(cfg: Config) -> None:
 
 
 def _validated_cusum(cfg: Config) -> None:
-    """Validate the CUSUM alarm bars (issue #331); raise when invalid.
+    """Validate the CUSUM alarm bars and sigma floors (issues #331, #351); raise.
 
     ``cusum_h`` and ``token_cusum_h`` are the *denominators* of their
     detector's risk score, so neither has a meaningful zero or negative value.
@@ -238,6 +238,15 @@ def _validated_cusum(cfg: Config) -> None:
     traffic pages constantly. Unlike the integer count knobs there is no
     "disable this detector" reading to preserve: ``h`` has no disabled state,
     and the detectors are opt-in through their own ``*_enabled`` flags.
+
+    The sigma floors are the same class of hazard (#351) and are checked
+    alongside ``h`` because they share the failure: the frozen ``sigma0`` is
+    ``max(std, abs_floor, rel_floor * |mean|)`` and is itself a denominator in
+    the hot path. A negative floor is meaningless (``max`` discards it), and
+    with both floors at 0 a perfectly stable baseline gives ``sigma0 = 0``,
+    which raises ZeroDivisionError on the first post-warm-up step and, via the
+    same fail-open path, deadens the detector for the run. At least one floor
+    must be strictly positive; both default positive, so stock configs pass.
     """
     for name in ("cusum_h", "token_cusum_h"):
         value = getattr(cfg, name)
@@ -248,6 +257,24 @@ def _validated_cusum(cfg: Config) -> None:
                 "at ingest time and a negative value makes the alarm trivially "
                 "true on every step"
             )
+    # Issue #351: a negative floor is meaningless and both-at-zero makes the
+    # derived sigma0 a zero denominator on a stable baseline.
+    for name in ("cusum_sigma_floor_abs", "cusum_sigma_floor_rel"):
+        value = getattr(cfg, name)
+        if value < 0:
+            raise ValueError(
+                f"{name} must be >= 0; got {value!r}. A negative sigma floor is "
+                "discarded by the max() that derives sigma0 and cannot do anything "
+                "a 0 does not already"
+            )
+    if cfg.cusum_sigma_floor_abs == 0 and cfg.cusum_sigma_floor_rel == 0:
+        raise ValueError(
+            "cusum_sigma_floor_abs and cusum_sigma_floor_rel are both 0. The "
+            "derived sigma0 is the denominator of the CUSUM update, so a "
+            "perfectly stable baseline (std 0) gives sigma0 = 0 and raises "
+            "ZeroDivisionError at ingest time; at least one floor must be "
+            "positive -- see the config docstring for why they exist"
+        )
 
 
 def _validated_counts_and_windows(cfg: Config) -> None:
