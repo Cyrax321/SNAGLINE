@@ -23,6 +23,7 @@ from snagline.config import Config
 from snagline.events import StepEvent, make_signature
 from snagline.monitor import Monitor
 from snagline.risk import FailureRisk
+from snagline.sinks.base import AlertSink
 
 
 def _event(episode_id: str, step: int) -> StepEvent:
@@ -41,7 +42,7 @@ class _CountingSink:
 
     name = "counting"
 
-    def __init__(self, monitor: Monitor | None = None, other: object | None = None):
+    def __init__(self, monitor: Monitor | None = None, other: AlertSink | None = None):
         self.count = 0
         self._monitor = monitor
         self._other = other
