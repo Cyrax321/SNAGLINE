@@ -15,7 +15,7 @@
   <a href="https://pypi.org/project/snagline/"><img src="https://img.shields.io/pypi/v/snagline?style=flat-square&label=PyPI" alt="PyPI" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License" /></a>
   <a href="https://github.com/Cyrax321/SNAGLINE/issues"><img src="https://img.shields.io/github/issues/Cyrax321/SNAGLINE?style=flat-square" alt="Issues" /></a>
-  <a href="https://github.com/Cyrax321/SNAGLINE/actions"><img src="https://img.shields.io/badge/tests-715%20passed-brightgreen?style=flat-square" alt="Tests" /></a>
+  <a href="https://github.com/Cyrax321/SNAGLINE/actions/workflows/ci.yml"><img src="https://github.com/Cyrax321/SNAGLINE/actions/workflows/ci.yml/badge.svg?style=flat-square" alt="Tests" /></a>
 </p>
 
 ---
@@ -45,7 +45,7 @@ The answer is yes. SNAGLINE's tier-1 detectors are deterministic, O(1) amortized
 Zero third-party dependencies. Install from PyPI:
 
 ```bash
-pip install snagline==0.1.0  # 715 tests, zero required deps
+pip install snagline==0.1.0  # zero required deps (see the test-suite section for how to run the tests)
 ```
 
 Or from source:
@@ -328,11 +328,11 @@ SNAGLINE is verified not just with unit tests, but against real LLM agents, live
 ### Automated Test Suite and Benchmarks
 
 ```
-tests : 715 passed, 2 skipped  (pytest, CPython 3.13.5, commit 22faeae;
-        skip = langchain/continuum integrations without optional extras.
-        With the optional numpy extra installed the ml-ensemble tests run
-        too; the CI core leg installs no extras, so its counts differ.
-        CI matrix is Python 3.10--3.13 on ubuntu/macos/windows.)
+tests : run `python -m pytest tests/ -q` and trust your own output.
+        Counts vary by environment (optional extras, OpenSSL, platform),
+        so no fixed number is quoted here. The CI matrix is Python
+        3.10--3.13 on ubuntu/windows; see the ci.yml workflow runs for
+        each leg's totals.
 bench : median 2.43 us/step, p99 27.71 us/step over 200,000 synthetic steps
         (measured 2026-08-26 on Apple M1, arm64, CPython 3.14.5;
          earlier 1.91 / 33.90 on same hardware 2026-08-15;
@@ -764,7 +764,7 @@ SNAGLINE sits at the overlap of real-time monitoring, anomaly detection, and rel
 
 ## Status and Limitations
 
-- **Tested**: 715 tests passing, 2 skipped, 87.50% line coverage (see [Empirical Verification](#automated-test-suite-and-benchmarks) for the exact command and environment).
+- **Tested**: pytest suite with a per-OS 80% line-coverage gate enforced in CI (see [Empirical Verification](#automated-test-suite-and-benchmarks) for the exact command and environment).
 - **On PyPI as `snagline` 0.1.0** (`pip install snagline`; clone still works via `pip install .` see Quick Start). The `snagline[langchain]`-style names used elsewhere in this README are the extras this package declares.
 - **Overhead is measured, not asserted.** Run `snagline bench` to reproduce on your hardware.
 - **Framework adapters are optional extras; sinks ship in core.** The LangChain, LangGraph, Autogen, and CrewAI adapters are optional installs (`pip install snagline[langchain]`, etc.). The console, webhook, Slack, PagerDuty, and dedup sinks are zero-dependency stdlib and always available.
@@ -792,7 +792,7 @@ The core has no runtime dependencies; dev tooling is in the `dev` extra:
 
 ```bash
 pip install -e ".[dev]"
-python -m pytest tests/ -q        # 715 passed, 2 skipped
+python -m pytest tests/ -q
 ruff check src tests && ruff format --check src tests
 mypy src
 ```
