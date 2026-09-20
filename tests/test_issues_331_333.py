@@ -111,11 +111,32 @@ def test_count_and_window_knobs_reject_below_one(name, bad):
         Config.resolve(environ=_env(name, bad))
 
 
-@pytest.mark.parametrize("name", COUNT_AND_WINDOW_KNOBS)
+@pytest.mark.parametrize(
+    "name", [n for n in COUNT_AND_WINDOW_KNOBS if n != "meltdown_window_size"]
+)
 @pytest.mark.parametrize("good", [1, 5, 50])
 def test_count_and_window_knobs_accept_one_and_above(name, good):
     assert getattr(Config(**{name: good}), name) == good
     assert getattr(Config.from_env(environ=_env(name, good)), name) == good
+
+
+@pytest.mark.parametrize("bad", [1, 2, 0, -1])
+def test_meltdown_window_size_rejects_below_three(bad):
+    """Issue #346: the >= 1 check from #333 is not enough. A one-item window
+    scores 0.0 bits by construction and a two-item window only 0.0 or 1.0, so
+    both page on an ordinary one-tool episode. The floor is the smallest window
+    that can hold a distribution."""
+    with pytest.raises(ValueError, match="meltdown_window_size"):
+        Config(meltdown_enabled=True, meltdown_window_size=bad)
+    with pytest.raises(ValueError, match="meltdown_window_size"):
+        Config.from_env(environ=_env("meltdown_window_size", bad))
+    with pytest.raises(ValueError, match="meltdown_window_size"):
+        Config.resolve(environ=_env("meltdown_window_size", bad))
+
+
+@pytest.mark.parametrize("good", [3, 4, 20])
+def test_meltdown_window_size_accepts_three_and_above(good):
+    assert Config(meltdown_window_size=good).meltdown_window_size == good
 
 
 def test_zero_is_the_only_rejected_boundary_for_counts_and_windows():
@@ -130,13 +151,36 @@ def test_zero_is_the_only_rejected_boundary_for_counts_and_windows():
 def test_meltdown_window_size_zero_cannot_fabricate_a_step_zero_alert():
     """The concrete fabricated-alert symptom: deque(maxlen=0) is always empty
     but ``len(window) < target`` is ``0 < 0`` == False, so the detector scored
-    an empty window and emitted a score-0.7 risk on the first step."""
+    an empty window and emitted a score-0.7 risk on the first step. The
+    detector's own guard (issue #346) also closes the direct-constructor path
+    in the issue's repro, which bypasses Config."""
     from snagline.detectors.meltdown import MeltdownDetector
 
     with pytest.raises(ValueError, match="meltdown_window_size"):
         MeltdownDetector(config=Config(meltdown_enabled=True, meltdown_window_size=0))
+    for bad in (1, 2):
+        with pytest.raises(ValueError, match="window_size"):
+            MeltdownDetector(window_size=bad)
     det = MeltdownDetector(config=Config(meltdown_enabled=True))
     assert det.observe(_ev(50.0)) is None, "a single step must not page"
+
+
+def test_meltdown_still_fires_on_a_genuine_one_tool_collapse():
+    """The floor must not deaden the detector (#346): an episode that collapses
+    onto a single tool still pages once the window fills -- the alert is just
+    no longer reachable from an unrepresentative one- or two-step window."""
+    from snagline.detectors.meltdown import MeltdownDetector
+
+    det = MeltdownDetector(config=Config(meltdown_enabled=True, meltdown_window_size=3))
+    # Alternating tools: any 3-step window is a 2:1 split at ~0.92 bits, above
+    # the low bar, so this is the quiet zone the floor exists to protect.
+    healthy = [
+        det.observe(_ev(50.0, "search" if i % 2 == 0 else "fetch")) for i in range(6)
+    ]
+    assert all(r is None for r in healthy), "a mixed episode must stay quiet"
+    # Collapse onto one tool only.
+    collapse = [det.observe(_ev(50.0, "search")) for _ in range(6)]
+    assert any(r is not None for r in collapse), "a real collapse must page"
 
 
 # --- issue #332: baseline retention ----------------------------------------
