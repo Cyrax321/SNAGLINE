@@ -38,7 +38,7 @@ Existing monitoring approaches have gaps:
 
 SNAGLINE asks a narrower question: can a zero-dependency, O(1) per-step monitor catch the most common failure modes (loops, error cascades, latency drift) in any agent, running on any framework, at microsecond-scale overhead?
 
-The answer is yes. SNAGLINE's tier-1 detectors are deterministic, O(1) amortized per step, run with no network calls and no LLM calls, and cost a few microseconds per `ingest()` call (measured median 1.5--2.4 us/step on Apple silicon, depending on hardware; see [Empirical Verification](#empirical-verification) and run `snagline bench` for your own hardware). They run cheaply enough to instrument every step of a production agent.
+The answer is yes. SNAGLINE's tier-1 detectors are deterministic, O(1) amortized per step, run with no network calls and no LLM calls, and cost a few microseconds per `ingest()` call (measured median 1.53 us/step on Apple M1 and 1.70 us/step on M4, ~2.4 us/step with window auto-scaling enabled; see [Empirical Verification](#empirical-verification) and run `snagline bench` for your own hardware). They run cheaply enough to instrument every step of a production agent.
 
 ## Quick Start
 
