@@ -891,7 +891,6 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
             capture_from_jsonl,
         )
 
-        store = BaselineStore(args.store_dir, max_versions=args.max_versions or 10)
         limit = _resolved_max_versions(args)
         if limit is None:
             return 2

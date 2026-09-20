@@ -106,8 +106,20 @@ class _WelfordCUSUM:
     def _floored_sigma(self, mean: float, std: float) -> float:
         """Reference spread: observed std floored per the configured floors."""
         if mean != 0.0:
-            return max(std, self.sigma_floor_abs, self.sigma_floor_rel * abs(mean))
-        return max(std, self.sigma_floor_abs)
+            spread = max(std, self.sigma_floor_abs, self.sigma_floor_rel * abs(mean))
+        else:
+            # A zero mean scales the relative floor to 0 too, so only the
+            # absolute floor can keep the spread positive here.
+            spread = max(std, self.sigma_floor_abs)
+        if spread <= 0.0:
+            # Degenerate but reachable: a constant baseline whose floors are
+            # both disabled or scaled to 0 by a zero mean. Config rejects the
+            # both-zero case (#351); this guard is defense in depth for a
+            # detector built directly, and keeps sigma0 a usable denominator
+            # instead of letting update() divide by zero and deaden the
+            # detector for the run via the fail-open path.
+            return 1e-9
+        return spread
 
     def update(self, x: float) -> bool:
         """Advance the CUSUM against the frozen baseline. Returns True if it alarms."""

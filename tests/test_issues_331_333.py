@@ -65,6 +65,65 @@ def test_cusum_alarm_bar_accepts_positive(name, good):
     assert getattr(Config.from_env(environ=_env(name, good)), name) == good
 
 
+# --- issue #351: the sigma floors are also denominators ---------------------
+
+
+@pytest.mark.parametrize("name", ["cusum_sigma_floor_abs", "cusum_sigma_floor_rel"])
+@pytest.mark.parametrize("bad", [-1.0, -0.001])
+def test_sigma_floor_rejects_negative(name, bad):
+    with pytest.raises(ValueError, match=name):
+        Config(**{name: bad})
+    with pytest.raises(ValueError, match=name):
+        Config.from_env(environ=_env(name, bad))
+    with pytest.raises(ValueError, match=name):
+        Config.resolve(environ=_env(name, bad))
+
+
+@pytest.mark.parametrize(
+    "abs_floor,rel_floor", [(0.0, 0.0), (0, 0), (-0.0, -0.0), (0.0, -0.0)]
+)
+def test_sigma_floors_reject_both_zero(abs_floor, rel_floor):
+    """The derived sigma0 is a denominator, so both floors at 0 make a stable
+    baseline divide by zero at ingest time (issue #351). At least one floor
+    must be positive; the shipped defaults are both positive."""
+    with pytest.raises(ValueError, match="cusum_sigma_floor_abs"):
+        Config(cusum_sigma_floor_abs=abs_floor, cusum_sigma_floor_rel=rel_floor)
+    with pytest.raises(ValueError, match="cusum_sigma_floor_abs"):
+        Config.resolve(
+            environ={
+                "SNAGLINE_CUSUM_SIGMA_FLOOR_ABS": str(abs_floor),
+                "SNAGLINE_CUSUM_SIGMA_FLOOR_REL": str(rel_floor),
+            }
+        )
+
+
+@pytest.mark.parametrize("abs_floor,rel_floor", [(1.0, 0.05), (0.0, 0.1), (2.0, 0.0)])
+def test_sigma_floors_accept_any_single_positive(abs_floor, rel_floor):
+    """A single positive floor is enough: sigma0 is max(std, abs, rel*|mean|)."""
+    cfg = Config(cusum_sigma_floor_abs=abs_floor, cusum_sigma_floor_rel=rel_floor)
+    assert cfg.cusum_sigma_floor_abs == abs_floor
+    assert cfg.cusum_sigma_floor_rel == rel_floor
+
+
+def test_sigma_floor_zero_no_longer_deadens_the_latency_detector():
+    """The reported end-to-end symptom: with both floors at 0 a constant
+    baseline raised ZeroDivisionError on every post-warm-up step, fail-open
+    swallowed it, and a clear sustained anomaly never paged."""
+    from snagline.detectors.latency_anomaly import LatencyAnomalyDetector
+
+    with pytest.raises(ValueError, match="cusum_sigma_floor_abs"):
+        Config(cusum_sigma_floor_abs=0.0, cusum_sigma_floor_rel=0.0)
+
+    # The detector's own guard (defense in depth, issue #351) also closes the
+    # direct-constructor path, which bypasses Config.
+    det = LatencyAnomalyDetector(
+        min_samples=3, sigma_floor_abs=0.0, sigma_floor_rel=0.0
+    )
+    for _ in range(4):
+        assert det.observe(_ev(100.0)) is None, "a constant warm-up must not raise"
+    assert det.observe(_ev(5000.0)) is not None, "a 50x spike must still page"
+
+
 def test_cusum_h_zero_no_longer_deadens_the_latency_detector(capsys):
     """The reported end-to-end symptom: with h=0 the latency detector raised
     ZeroDivisionError on every anomalous step, fail-open swallowed it, and a
@@ -92,12 +151,16 @@ def test_cusum_h_zero_no_longer_deadens_the_latency_detector(capsys):
 COUNT_AND_WINDOW_KNOBS = (
     "cusum_min_samples",
     "token_min_samples",
-    "loop_window_size",
-    "cascade_window_size",
     "loop_cycle_window_size",
     "meltdown_window_size",
     "meltdown_rearm_steps",
 )
+
+# loop_window_size / cascade_window_size accept 0: upstream's window-scaling
+# work (test_zero_window_size_does_not_raise_under_scaling) holds that a zero
+# base window must stay fail-safe rather than be rejected, so only negatives
+# are invalid for the pair.
+ZERO_SAFE_WINDOW_KNOBS = ("loop_window_size", "cascade_window_size")
 
 
 @pytest.mark.parametrize("name", COUNT_AND_WINDOW_KNOBS)
@@ -109,6 +172,26 @@ def test_count_and_window_knobs_reject_below_one(name, bad):
         Config.from_env(environ=_env(name, bad))
     with pytest.raises(ValueError, match=name):
         Config.resolve(environ=_env(name, bad))
+
+
+@pytest.mark.parametrize("name", ZERO_SAFE_WINDOW_KNOBS)
+@pytest.mark.parametrize("bad", [-1, -100])
+def test_zero_safe_window_knobs_reject_below_zero(name, bad):
+    with pytest.raises(ValueError, match=name):
+        Config(**{name: bad})
+    with pytest.raises(ValueError, match=name):
+        Config.from_env(environ=_env(name, bad))
+    with pytest.raises(ValueError, match=name):
+        Config.resolve(environ=_env(name, bad))
+
+
+@pytest.mark.parametrize("name", ZERO_SAFE_WINDOW_KNOBS)
+@pytest.mark.parametrize("zero", [0])
+def test_zero_safe_window_knobs_accept_zero(name, zero):
+    """A zero window is a fail-safe disable, not a config error (upstream
+    contract guarded by test_zero_window_size_does_not_raise_under_scaling)."""
+    assert getattr(Config(**{name: zero}), name) == zero
+    assert getattr(Config.from_env(environ=_env(name, zero)), name) == zero
 
 
 @pytest.mark.parametrize(

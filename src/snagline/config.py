@@ -250,8 +250,11 @@ def _validated_divisor_thresholds(cfg: Config) -> None:
                 "fire condition trivially true and the score computation divides "
                 "by it, which raises ZeroDivisionError on the first step and "
                 "silently disables the detector for the rest of the run"
+            )
+
+
 def _validated_cusum(cfg: Config) -> None:
-    """Validate the CUSUM alarm bars (issue #331); raise when invalid.
+    """Validate the CUSUM alarm bars and sigma floors (issues #331, #351); raise.
 
     ``cusum_h`` and ``token_cusum_h`` are the *denominators* of their
     detector's risk score, so neither has a meaningful zero or negative value.
@@ -263,6 +266,15 @@ def _validated_cusum(cfg: Config) -> None:
     traffic pages constantly. Unlike the integer count knobs there is no
     "disable this detector" reading to preserve: ``h`` has no disabled state,
     and the detectors are opt-in through their own ``*_enabled`` flags.
+
+    The sigma floors are the same class of hazard (#351) and are checked
+    alongside ``h`` because they share the failure: the frozen ``sigma0`` is
+    ``max(std, abs_floor, rel_floor * |mean|)`` and is itself a denominator in
+    the hot path. A negative floor is meaningless (``max`` discards it), and
+    with both floors at 0 a perfectly stable baseline gives ``sigma0 = 0``,
+    which raises ZeroDivisionError on the first post-warm-up step and, via the
+    same fail-open path, deadens the detector for the run. At least one floor
+    must be strictly positive; both default positive, so stock configs pass.
     """
     for name in ("cusum_h", "token_cusum_h"):
         value = getattr(cfg, name)
@@ -273,6 +285,24 @@ def _validated_cusum(cfg: Config) -> None:
                 "at ingest time and a negative value makes the alarm trivially "
                 "true on every step"
             )
+    # Issue #351: a negative floor is meaningless and both-at-zero makes the
+    # derived sigma0 a zero denominator on a stable baseline.
+    for name in ("cusum_sigma_floor_abs", "cusum_sigma_floor_rel"):
+        value = getattr(cfg, name)
+        if value < 0:
+            raise ValueError(
+                f"{name} must be >= 0; got {value!r}. A negative sigma floor is "
+                "discarded by the max() that derives sigma0 and cannot do anything "
+                "a 0 does not already"
+            )
+    if cfg.cusum_sigma_floor_abs == 0 and cfg.cusum_sigma_floor_rel == 0:
+        raise ValueError(
+            "cusum_sigma_floor_abs and cusum_sigma_floor_rel are both 0. The "
+            "derived sigma0 is the denominator of the CUSUM update, so a "
+            "perfectly stable baseline (std 0) gives sigma0 = 0 and raises "
+            "ZeroDivisionError at ingest time; at least one floor must be "
+            "positive -- see the config docstring for why they exist"
+        )
 
 
 def _validated_counts_and_windows(cfg: Config) -> None:
@@ -290,12 +320,17 @@ def _validated_counts_and_windows(cfg: Config) -> None:
     one unrepresentative step define "healthy" for the rest of the episode.
     ``stagnation_window_size`` and ``max_window`` are covered by
     ``_validated_stagnation`` / ``_validated_horizon``.
+
+    ``loop_window_size`` / ``cascade_window_size`` are deliberately exempt: a
+    zero base window is a *fail-safe* disable for those two detectors (the
+    scaled window stays 0, the deque discards everything, no risk can ever
+    fire) and upstream's window-scaling work locks that contract in with
+    ``test_zero_window_size_does_not_raise_under_scaling``. Rejecting it here
+    would break that guard, so only negative values are invalid for the pair.
     """
     for name in (
         "cusum_min_samples",
         "token_min_samples",
-        "loop_window_size",
-        "cascade_window_size",
         "loop_cycle_window_size",
         "meltdown_window_size",
         "meltdown_rearm_steps",
@@ -306,6 +341,17 @@ def _validated_counts_and_windows(cfg: Config) -> None:
                 f"{name} must be >= 1; got {value!r}. A window or sample count of 0 "
                 "either makes the detector's condition unreachable (a silent "
                 "disable) or lets it score an empty window (fabricated alerts)"
+            )
+    # loop_window_size / cascade_window_size: 0 is a legitimate fail-safe
+    # disable (see the docstring), but a negative window is never meaningful --
+    # deque(maxlen=<0) is empty, so the detector silently never fires.
+    for name in ("loop_window_size", "cascade_window_size"):
+        value = getattr(cfg, name)
+        if value < 0:
+            raise ValueError(
+                f"{name} must be >= 0; got {value!r}. 0 is a valid fail-safe "
+                "disable for this detector, but a negative window is an empty "
+                "deque, which silently disables the detector"
             )
     # Issue #346: below 3 the entropy statistic cannot mean anything, so the
     # same fabricated collapse alert slips past the >= 1 check above. A
