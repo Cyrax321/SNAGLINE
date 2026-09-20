@@ -54,3 +54,64 @@ def test_console_sink_is_fire_and_forget_on_broken_stream() -> None:
     sink = ConsoleSink(stream=BrokenStream())  # type: ignore[arg-type]
     # Must not raise.
     sink.emit(_risk())
+
+
+def test_console_sink_is_fire_and_forget_on_closed_stream() -> None:
+    # Issue #327: a closed stream raises ValueError ("I/O operation on closed
+    # file"), not OSError -- the except OSError alone let it escape emit().
+    import io
+
+    stream = io.StringIO()
+    stream.close()
+    sink = ConsoleSink(stream=stream)
+    # Must not raise, even across repeated emits on the same dead stream.
+    sink.emit(_risk())
+    sink.emit(_risk())
+
+
+def test_console_sink_logs_stream_fault_only_once(caplog) -> None:
+    # Issue #327: a permanently dead stream must warn once, not per alert
+    # (the HeartbeatSink _fault_logged latch).
+    class AlwaysClosed:
+        def write(self, s: str) -> int:
+            raise ValueError("I/O operation on closed file")
+
+        def flush(self) -> None:
+            raise ValueError("I/O operation on closed file")
+
+    sink = ConsoleSink(stream=AlwaysClosed())  # type: ignore[arg-type]
+    with caplog.at_level(logging.WARNING, logger="snagline"):
+        for _ in range(5):
+            sink.emit(_risk())
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "fire-and-forget" in warnings[0].getMessage()
+
+
+def test_console_sink_fault_latch_resets_on_recovery() -> None:
+    # A stream that fails then recovers re-arms the latch, so a later failure
+    # warns again instead of suffering in silence.
+    class FlakyStream:
+        def __init__(self) -> None:
+            self.closed = True
+            self.buf: list[str] = []
+
+        def write(self, s: str) -> int:
+            if self.closed:
+                raise ValueError("I/O operation on closed file")
+            self.buf.append(s)
+            return len(s)
+
+        def flush(self) -> None:
+            if self.closed:
+                raise ValueError("I/O operation on closed file")
+
+    stream = FlakyStream()
+    sink = ConsoleSink(stream=stream)  # type: ignore[arg-type]
+    sink.emit(_risk())  # fails, arms the latch
+    stream.closed = False
+    sink.emit(_risk())  # succeeds, resets the latch
+    assert stream.buf  # the recovered alert really landed
+    stream.closed = True
+    sink.emit(_risk())  # fails again
+    assert sink._fault_logged

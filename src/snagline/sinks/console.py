@@ -43,6 +43,9 @@ class ConsoleSink:
         self._stream = stream if stream is not None else sys.stderr
         self._logger = logger
         self._level = level
+        # Latch: a permanently dead stream warns once, not once per alert
+        # (mirrors HeartbeatSink; issue #327).
+        self._fault_logged = False
 
     def emit(self, risk: FailureRisk) -> None:
         payload: dict[str, Any] = {
@@ -63,11 +66,16 @@ class ConsoleSink:
         # The raw-stream path is fire-and-forget too: a closed pipe or invalid
         # file descriptor must not raise out of emit() and into the host's
         # ingest path, so we swallow write/flush errors and log once (issue #19).
+        # A *closed* stream raises ValueError ("I/O operation on closed file"),
+        # not OSError, so both shapes are caught (issue #327).
         try:
             self._stream.write(line + "\n")
             self._stream.flush()
-        except OSError:
-            logger.warning(
-                "snagline ConsoleSink: write to stream failed; dropping alert "
-                "(fire-and-forget)"
-            )
+            self._fault_logged = False
+        except (OSError, ValueError):
+            if not self._fault_logged:
+                self._fault_logged = True
+                logger.warning(
+                    "snagline ConsoleSink: write to stream failed; dropping "
+                    "alert (fire-and-forget)"
+                )
