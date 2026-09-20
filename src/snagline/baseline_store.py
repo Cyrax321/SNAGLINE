@@ -48,6 +48,13 @@ class BaselineStore:
 
     def __init__(self, root_dir: str, max_versions: int = 10) -> None:
         self._root = Path(root_dir)
+        # Issue #332: a limit <= 0 makes _prune delete every version file,
+        # including the one this same save() call just wrote, so the store ends
+        # up with no history and no pointer while save() still reported success.
+        # Retention has no meaningful zero (``latest.json`` is the pointer, so
+        # "keep only the latest" is max_versions=1), so reject it at the door.
+        if max_versions < 1:
+            raise ValueError(f"max_versions must be >= 1; got {max_versions!r}")
         self._max_versions = max_versions
 
     # --- paths ---------------------------------------------------------------
@@ -74,8 +81,22 @@ class BaselineStore:
         always sees one complete profile, never a partial write. Old versions
         beyond ``max_versions`` (this call, else the store default) are pruned
         oldest-first.
+
+        Raises ``ValueError`` when the effective retention is < 1 (issue #332).
+        A per-call override is checked here rather than only at construction,
+        because ``save(max_versions=0)`` on a well-configured store would
+        otherwise delete the version this call just wrote and hand back a
+        version id that no longer resolves.
         """
         version = version or f"{time.time():.6f}"
+        limit = max_versions if max_versions is not None else self._max_versions
+        # Checked before any file is touched (issue #332): a limit < 1 would
+        # make _prune delete the version this call writes, so a failed save
+        # must not leave a half-applied store behind either.
+        if limit < 1:
+            raise ValueError(
+                f"max_versions must be >= 1; got {limit!r} (passed to save())"
+            )
         scope = self._scope_dir(tenant, deployment)
         versions_dir = scope / "versions"
         versions_dir.mkdir(parents=True, exist_ok=True)
@@ -89,7 +110,6 @@ class BaselineStore:
         # Atomic pointer flip to the new version.
         _atomic_write_json(scope / "latest.json", profile.to_dict())
 
-        limit = max_versions if max_versions is not None else self._max_versions
         self._prune(tenant, deployment, limit)
         return version
 

@@ -225,6 +225,65 @@ def _validated_stagnation(cfg: Config) -> None:
         )
 
 
+def _validated_cusum(cfg: Config) -> None:
+    """Validate the CUSUM alarm bars (issue #331); raise when invalid.
+
+    ``cusum_h`` and ``token_cusum_h`` are the *denominators* of their
+    detector's risk score, so neither has a meaningful zero or negative value.
+    ``h = 0`` makes ``alarm_cusum / h`` raise ZeroDivisionError at ingest time,
+    which ``Monitor.ingest``'s fail-open handler swallows after logging once --
+    the detector then stays installed and reports nothing for the whole run.
+    Any negative ``h`` makes ``cusum > h`` trivially true on every step (the
+    CUSUM statistic is clamped to >= 0 by construction), so perfectly healthy
+    traffic pages constantly. Unlike the integer count knobs there is no
+    "disable this detector" reading to preserve: ``h`` has no disabled state,
+    and the detectors are opt-in through their own ``*_enabled`` flags.
+    """
+    for name in ("cusum_h", "token_cusum_h"):
+        value = getattr(cfg, name)
+        if not value > 0:
+            raise ValueError(
+                f"{name} must be positive; got {value!r}. The CUSUM alarm bar is "
+                "the denominator of the risk score, so 0 raises ZeroDivisionError "
+                "at ingest time and a negative value makes the alarm trivially "
+                "true on every step"
+            )
+
+
+def _validated_counts_and_windows(cfg: Config) -> None:
+    """Validate the sample-count / window-size knobs (issue #333); raise when invalid.
+
+    A window or warm-up count of 0 is never meaningful, and it breaks each
+    affected detector in one of two silent ways. Either the fire condition
+    becomes unreachable -- ``deque(maxlen=0)`` discards every sample, so a
+    repeat count is always 0 and the plain loop detector can never page on a
+    pure-repeat episode -- or the detector proceeds to score an empty window
+    and fabricates an alert: ``MeltdownDetector``'s entropy of an empty window
+    is 0.0, which is below ``meltdown_low_entropy``, so a score-0.7 risk naming
+    "0 distinct in last 0 steps" fires on step 0 of every episode. A warm-up
+    count <= 1 additionally freezes the baseline on the first sample, letting
+    one unrepresentative step define "healthy" for the rest of the episode.
+    ``stagnation_window_size`` and ``max_window`` are covered by
+    ``_validated_stagnation`` / ``_validated_horizon``.
+    """
+    for name in (
+        "cusum_min_samples",
+        "token_min_samples",
+        "loop_window_size",
+        "cascade_window_size",
+        "loop_cycle_window_size",
+        "meltdown_window_size",
+        "meltdown_rearm_steps",
+    ):
+        value = getattr(cfg, name)
+        if value < 1:
+            raise ValueError(
+                f"{name} must be >= 1; got {value!r}. A window or sample count of 0 "
+                "either makes the detector's condition unreachable (a silent "
+                "disable) or lets it score an empty window (fabricated alerts)"
+            )
+
+
 @dataclass
 class Config:
     # Loop detector
@@ -516,6 +575,11 @@ class Config:
         # are valid too, so only a configured value can trip these checks.
         _validated_token_runaway(self)
         _validated_max_live_episodes(self)
+        # Issues #331 / #333: the CUSUM alarm bars and the window/sample-count
+        # knobs. The defaults are always valid, so stock configurations never
+        # hit these checks.
+        _validated_cusum(self)
+        _validated_counts_and_windows(self)
 
     # --- 12-factor configuration (project.md §5.4, ATTACH_ANY_SYSTEM P0) -----
     @classmethod
@@ -627,4 +691,9 @@ class Config:
         # error, not page at critical severity on the first ingested step.
         _validated_token_runaway(cfg)
         _validated_max_live_episodes(cfg)
+        # Issues #331 / #333: SNAGLINE_CUSUM_H=0 and SNAGLINE_LOOP_WINDOW_SIZE=0
+        # must abort startup with a clear error, not deaden a detector for the
+        # whole run (0 divides) or fabricate alerts from an empty window.
+        _validated_cusum(cfg)
+        _validated_counts_and_windows(cfg)
         return cfg
