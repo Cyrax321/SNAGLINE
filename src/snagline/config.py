@@ -251,7 +251,7 @@ def _validated_cusum(cfg: Config) -> None:
 
 
 def _validated_counts_and_windows(cfg: Config) -> None:
-    """Validate the sample-count / window-size knobs (issue #333); raise when invalid.
+    """Validate the sample-count / window-size knobs (issues #333, #346); raise.
 
     A window or warm-up count of 0 is never meaningful, and it breaks each
     affected detector in one of two silent ways. Either the fire condition
@@ -282,6 +282,24 @@ def _validated_counts_and_windows(cfg: Config) -> None:
                 "either makes the detector's condition unreachable (a silent "
                 "disable) or lets it score an empty window (fabricated alerts)"
             )
+    # Issue #346: below 3 the entropy statistic cannot mean anything, so the
+    # same fabricated collapse alert slips past the >= 1 check above. A
+    # one-item window has entropy exactly 0.0 by construction -- it is always
+    # below meltdown_low_entropy and pages on the first step of every episode.
+    # A two-item window can only take the values {0.0, 1.0} bits, so the low
+    # threshold is crossed by nothing but the degenerate all-identical case and
+    # the detector fires on the first repeat of an agent that simply called one
+    # tool twice. Three is the smallest window able to express "collapse onto
+    # one tool among several": it admits a 2:1 split (~0.92 bits) that stays
+    # quiet, leaving the alarm for a genuine collapse.
+    if cfg.meltdown_window_size < 3:
+        raise ValueError(
+            f"meltdown_window_size must be >= 3; got {cfg.meltdown_window_size!r}. "
+            "Below 3 the entropy statistic is vacuous: a one-item window scores "
+            "0.0 bits by construction and a two-item window can only be 0.0 or "
+            "1.0 bits, so the low threshold pages on a single tool call rather "
+            "than a collapse"
+        )
 
 
 @dataclass

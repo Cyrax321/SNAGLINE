@@ -99,6 +99,18 @@ class MeltdownDetector:
         )
         if not (self.low_entropy < self.high_entropy):
             raise ValueError("meltdown_low_entropy must be < meltdown_high_entropy")
+        # Issue #346: below 3 the entropy statistic is vacuous -- a one-item
+        # window scores 0.0 bits by construction and a two-item window can only
+        # be 0.0 or 1.0 -- so the low threshold pages on an ordinary one-tool
+        # episode instead of a collapse. Config rejects this via
+        # _validated_counts_and_windows; this guard is defense in depth for a
+        # detector constructed directly.
+        if self.window_size < 3:
+            raise ValueError(
+                f"window_size must be >= 3; got {self.window_size!r}. Below 3 the "
+                "window cannot hold a distribution, so its entropy is always 0.0 "
+                "and the collapse alarm is trivially true"
+            )
         self._eps: dict[str, _EpisodeWindow] = {}
         self._fired: dict[str, bool] = {}
         self._clear_streak: dict[str, int] = {}
