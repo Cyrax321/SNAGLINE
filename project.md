@@ -914,8 +914,8 @@ reported either way.
 ## 15. Status (as of 2026-08-26)
 
 Implementation status against the spec above. All merged to `master` with
-green CI (ruff + mypy + pytest, py3.10-3.13; 385 tests passing, 1 skipped
-when the optional langchain extra is absent).
+green CI (ruff + mypy + pytest, py3.10-3.13; see the ci.yml workflow runs
+for per-leg totals, which vary with the optional extras installed).
 
 ### Shipped
 
