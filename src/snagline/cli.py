@@ -725,6 +725,28 @@ def _active_baseline_age(store, tenant: str, deployment: str) -> float | None:
     return None
 
 
+def _resolved_max_versions(args: argparse.Namespace) -> int | None:
+    """Return the validated ``--max-versions`` limit, or None on a usage error.
+
+    ``args.max_versions or 10`` treated an explicit ``0`` as "unset" and
+    silently substituted 10, while any negative value passed straight through to
+    the store, where ``_prune`` deleted every version file including the one
+    that same save had just written (issue #332). An explicit knob is now
+    range-checked: a bad value is a usage error (exit 2) rather than silent
+    data loss, and an unset one still means the store default of 10.
+    """
+    if args.max_versions is None:
+        return 10
+    if args.max_versions < 1:
+        print(
+            "snagline baseline: --max-versions must be >= 1; got "
+            f"{args.max_versions!r}",
+            file=sys.stderr,
+        )
+        return None
+    return args.max_versions
+
+
 def _cmd_baseline_retrain(args: argparse.Namespace) -> int:
     """Refit from the newest JSONL window and atomically bump the store.
 
@@ -749,7 +771,10 @@ def _cmd_baseline_retrain(args: argparse.Namespace) -> int:
 
     from snagline.baseline_store import BaselineStore, retrain_from_jsonl
 
-    store = BaselineStore(args.store_dir, max_versions=args.max_versions or 10)
+    limit = _resolved_max_versions(args)
+    if limit is None:
+        return 2
+    store = BaselineStore(args.store_dir, max_versions=limit)
 
     # Staleness guard on the previously active baseline, before it is
     # replaced: this is the signal that the host-side cadence slipped.
@@ -816,7 +841,10 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
             capture_from_jsonl,
         )
 
-        store = BaselineStore(args.store_dir, max_versions=args.max_versions or 10)
+        limit = _resolved_max_versions(args)
+        if limit is None:
+            return 2
+        store = BaselineStore(args.store_dir, max_versions=limit)
         if args.list_versions:
             versions = store.list_versions(args.tenant, args.deployment)
             if not versions:
