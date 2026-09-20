@@ -359,9 +359,15 @@ class Monitor:
         """
         # Per-episode retention cap (issue #184): touch LRU and evict if over
         # cap. Done outside the episode lock so eviction of a different id
-        # does not deadlock. LRU by last-seen is safe: an active episode is
-        # by definition recently seen and cannot be evicted out from under
-        # itself. Eviction is silent (no finalize) and fail-open.
+        # does not deadlock. Note that "LRU by last-seen is safe" is only true
+        # for the episode being ingested: with N+1 concurrently-live episodes
+        # under a cap of N, the least-recently-seen id is by construction still
+        # active -- its thread is simply between events -- so eviction over cap
+        # can destroy in-flight detection state for a running episode (issue
+        # #398). The monitor cannot distinguish "between events" from "gone
+        # forever", so eviction stays fail-open, but it is no longer silent:
+        # _evict_episode logs the fault so a cap that is too small surfaces as
+        # a warning instead of as unexplained missed detections.
         evicted: str | None = None
         with self._live_lock:
             if event.episode_id in self._live_episodes:
@@ -525,7 +531,12 @@ class Monitor:
         return out
 
     def _dispatch(self, risk: FailureRisk) -> None:
-        for sink in self._sinks:
+        # Snapshot: remove_sink's list.remove shifts the tail left underneath
+        # a live iterator, so the sink after a removed one is skipped (a lost
+        # alert) or revisited after a re-add (a duplicate). Iterating a copy
+        # makes dispatch safe against a concurrent add *and* remove (issue
+        # #399); a sink registered mid-dispatch simply waits for the next risk.
+        for sink in list(self._sinks):
             try:
                 sink.emit(risk)
             except Exception:
@@ -653,8 +664,11 @@ class Monitor:
         The sink joins dispatch under the same rules as construction: every
         registered sink sees every dispatched risk, in registration order,
         and its exceptions are swallowed exactly like any other sink's
-        (fail-open). Safe to call while ingests run from other threads;
-        dispatch tolerates a concurrent append.
+        (fail-open). Safe to call while ingests run from other threads:
+        ``_dispatch`` iterates a snapshot of the sink list, so a concurrent
+        ``add_sink`` or ``remove_sink`` cannot drop or duplicate a risk (issue
+        #399). A sink registered mid-dispatch receives the *next* dispatched
+        risk, not the one in flight.
         """
         self._sinks.append(sink)
 
@@ -689,13 +703,21 @@ class Monitor:
         self.ingest(event)
 
     def _evict_episode(self, episode_id: str) -> None:
-        """Silent LRU eviction for the retention cap (issue #184).
+        """LRU eviction for the retention cap (issue #184).
 
         Same teardown as ``end_episode`` but without ``finalize`` risks: an
         episode that vanished because the host never called ``end_episode``
         should not suddenly emit a ``silent_abort`` risk long after the fact.
         Fail-open throughout, never propagates even with ``fail_open=False``
         for eviction (the cap is a safety net, not a judgment point).
+
+        Not silent (issue #398): with N+1 concurrently-live episodes under a
+        cap of N the least-recently-seen id is by definition still active --
+        its thread is between events -- so this resets in-flight detection
+        state for an episode that may well keep running. The monitor cannot
+        distinguish that from a genuinely finished episode, so eviction stays
+        fail-open, but the fault is logged once so a cap that is too small
+        surfaces as a warning instead of as unexplained missed detections.
         """
         # Race: pop selected this id as LRU, but another thread may have
         # re-added it before we acquire its episode lock. If it is back in
@@ -703,6 +725,14 @@ class Monitor:
         with self._live_lock:
             if episode_id in self._live_episodes:
                 return
+        # Deduped by message: a too-small cap evicts on nearly every ingest,
+        # and one warning naming the cap is enough for an operator to act on.
+        self._log_fault_once(
+            f"live-episode cap of {self._max_live_episodes} reached; evicting "
+            "the least-recently-seen episode resets its detection state, so a "
+            "still-running episode can lose in-flight detection (raise "
+            "max_live_episodes if episodes are concurrent)"
+        )
         try:
             with self._state.episode_lock(episode_id):
                 with self._clocks_lock:
@@ -880,10 +910,19 @@ class Monitor:
         # name-suffix fallbacks would already have loaded windows into
         # detectors that the check then rejects the snapshot for.
         if strict_names:
-            expected = [
-                k.split(":", 1)[1]
-                for k in sorted(dumped_detectors, key=_detector_slot_order)
-            ]
+            # A detector key must be "<slot>:<name>" (issue #400): a key
+            # without a colon makes str.split return a single element, and
+            # indexing [1] raised IndexError -- which escapes a caller that
+            # did exactly what this method documents and caught ValueError.
+            expected = []
+            for k in sorted(dumped_detectors, key=_detector_slot_order):
+                parts = k.split(":", 1)
+                if len(parts) != 2 or not parts[1]:
+                    raise ValueError(
+                        f"snapshot detector key {k!r} must be "
+                        f"'<slot>:<name>' in strict mode"
+                    )
+                expected.append(parts[1])
             current = [getattr(d, "name", type(d).__name__) for d in self._detectors]
             if expected != current:
                 raise ValueError(

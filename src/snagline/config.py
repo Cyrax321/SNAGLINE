@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import types
 from collections.abc import Mapping
@@ -193,6 +194,29 @@ def _validated_max_live_episodes(cfg: Config) -> None:
     if cfg.max_live_episodes < 1:
         raise ValueError(
             f"max_live_episodes must be >= 1; got {cfg.max_live_episodes!r}"
+        )
+
+
+def _validated_semantic_drift_tolerance(cfg: Config) -> None:
+    """Validate the goal-drift noise threshold (issue #397); raise when invalid.
+
+    ``semantic_drift_tolerance`` is the cosine-deviation noise floor for the
+    semantic goal-drift detector, and the expression ``(2.0 - tol)`` is the
+    denominator of the drift signal (drift/goal_drift.py). ``dev`` is bounded
+    to ``[0, 2]``, so the knob's valid domain is ``[0, 2)``: at or above 2.0
+    the comparison ``dev <= tol`` is always true, the signal is pinned at 0.0
+    and the detector is permanently inert with no log line -- the same
+    fail-quiet shape as the other unvalidated detector knobs. A non-finite
+    tolerance is worse: ``min(1.0, NaN)`` returns ``1.0`` in CPython, so every
+    step scores a full-strength alarm.
+    """
+    tol = cfg.semantic_drift_tolerance
+    if not math.isfinite(tol) or not 0.0 <= tol < 2.0:
+        raise ValueError(
+            "semantic_drift_tolerance must be finite and within [0, 2); got "
+            f"{tol!r}. The cosine deviation is bounded to [0, 2], so a value "
+            "at or above 2.0 silently disables the goal-drift detector and a "
+            "non-finite value alarms on every step."
         )
 
 
@@ -516,6 +540,9 @@ class Config:
         # are valid too, so only a configured value can trip these checks.
         _validated_token_runaway(self)
         _validated_max_live_episodes(self)
+        # Issue #397: a tolerance at/above 2.0 silently deadens the goal-drift
+        # detector and a NaN one storms alarms; valid only within [0, 2).
+        _validated_semantic_drift_tolerance(self)
 
     # --- 12-factor configuration (project.md §5.4, ATTACH_ANY_SYSTEM P0) -----
     @classmethod
@@ -627,4 +654,8 @@ class Config:
         # error, not page at critical severity on the first ingested step.
         _validated_token_runaway(cfg)
         _validated_max_live_episodes(cfg)
+        # Same re-validation for the goal-drift noise threshold (issue #397):
+        # SNAGLINE_SEMANTIC_DRIFT_TOLERANCE=2 must abort startup with a clear
+        # error, not run a permanently inert detector.
+        _validated_semantic_drift_tolerance(cfg)
         return cfg
