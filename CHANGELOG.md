@@ -41,6 +41,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bounded_post` in `sinks/base.py`, which raises `TimeoutError` when the
   deadline passes and abandons the in-flight request on a daemon thread; the
   sinks log it fail-open as before (#395).
+- The network sinks no longer follow a 301/302/303 as a bodyless `GET`.
+  `urllib`'s redirect handler rebuilds any POST that meets one of those codes
+  with `method="GET"` and no body -- it does the same for 307/308, which the
+  RFCs say must preserve the method -- and drops the content headers with the
+  body. The redirect target answered the `GET` with 200, `emit` never raised,
+  and the alert was never delivered: an endpoint that moved, or one that wanted
+  the trailing slash the operator left off, silently stopped paging with no
+  error anywhere. The shared `bounded_post` opener now re-issues the redirect as
+  a `POST` carrying the original body, with `Content-Type` preserved and
+  `Content-Length` recomputed. One restriction is deliberate: the redirect is
+  only followed when it stays on the same scheme, host and port. These sinks
+  POST a credential -- PagerDuty's `routing_key` is the body, a webhook URL can
+  be one in the userinfo, a Slack URL is one in the path -- so a redirect
+  elsewhere raises instead, naming the redacted destination, and the sink logs
+  it fail-open. That is strictly better than the alert vanishing, which is what
+  it does today, along with the body (#389).
 
 ## [0.1.0] - 2026-08-27
 

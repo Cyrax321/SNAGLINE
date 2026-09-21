@@ -25,7 +25,7 @@ def _risk(severity: str = SEVERITY_INFO, **kw) -> FailureRisk:
 
 def test_slack_posts_formatted_text():
     sink = SlackSink("https://hooks.slack.com/xyz")
-    with mock.patch("urllib.request.urlopen") as urlopen:
+    with mock.patch("snagline.sinks.base._opener.open") as urlopen:
         sink.emit(_risk(SEVERITY_CRITICAL))
     assert urlopen.called
     req = urlopen.call_args[0][0]
@@ -37,14 +37,14 @@ def test_slack_posts_formatted_text():
 
 def test_slack_min_severity_filters_lower():
     sink = SlackSink("https://hooks.slack.com/xyz", min_severity=SEVERITY_CRITICAL)
-    with mock.patch("urllib.request.urlopen") as urlopen:
+    with mock.patch("snagline.sinks.base._opener.open") as urlopen:
         sink.emit(_risk(SEVERITY_INFO))  # below threshold -> dropped
     assert not urlopen.called
 
 
 def test_slack_swallows_post_errors():
     sink = SlackSink("https://hooks.slack.com/xyz")
-    with mock.patch("urllib.request.urlopen", side_effect=OSError("down")):
+    with mock.patch("snagline.sinks.base._opener.open", side_effect=OSError("down")):
         # Must not raise; fail-open.
         sink.emit(_risk(SEVERITY_CRITICAL))
 
@@ -59,7 +59,9 @@ _WEBHOOK_URL = "https://hooks.slack.com/services/T000/B000/SECRET_TOKEN_DO_NOT_L
 def test_slack_failure_log_omits_the_secret(caplog):
     sink = SlackSink(_WEBHOOK_URL)
     with caplog.at_level(logging.ERROR, logger="snagline"):
-        with mock.patch("urllib.request.urlopen", side_effect=OSError("down")):
+        with mock.patch(
+            "snagline.sinks.base._opener.open", side_effect=OSError("down")
+        ):
             sink.emit(_risk(SEVERITY_CRITICAL))
     assert caplog.records, "the failed POST must be logged"
     for record in caplog.records:

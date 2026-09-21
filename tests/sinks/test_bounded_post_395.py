@@ -21,12 +21,12 @@ from __future__ import annotations
 
 import socket
 import time
-import urllib.request
 from unittest import mock
 
 import pytest
 
 from snagline.risk import FailureRisk
+from snagline.sinks import base as sinks_base
 from snagline.sinks.pagerduty import PagerDutySink
 from snagline.sinks.slack import SlackSink
 from snagline.sinks.webhook import WebhookSink
@@ -78,8 +78,8 @@ class _TrickleResponse:
 
 def _trickling_urlopen(chunk_sleep: float, chunks: int):
     return mock.patch.object(
-        urllib.request,
-        "urlopen",
+        sinks_base._opener,
+        "open",
         side_effect=lambda req, timeout=None: _TrickleResponse(chunk_sleep, chunks),
     )
 
@@ -167,7 +167,7 @@ def test_a_fast_post_is_delivered_and_silent(caplog) -> None:
 
     with (
         caplog.at_level("ERROR", logger="snagline"),
-        mock.patch.object(urllib.request, "urlopen", side_effect=fake_urlopen),
+        mock.patch.object(sinks_base._opener, "open", side_effect=fake_urlopen),
     ):
         WebhookSink("https://hooks.example/alerts", timeout=2.0).emit(_risk())
     assert captured["timeout"] == 2.0
@@ -181,7 +181,9 @@ def test_an_endpoint_failure_is_still_relayed(caplog) -> None:
     with (
         caplog.at_level("ERROR", logger="snagline"),
         mock.patch.object(
-            urllib.request, "urlopen", side_effect=OSError("connection refused")
+            sinks_base._opener,
+            "open",
+            side_effect=OSError("connection refused"),
         ),
     ):
         WebhookSink("https://hooks.example/alerts").emit(_risk())

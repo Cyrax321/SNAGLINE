@@ -8,6 +8,7 @@ CONTINUUM ``REQUIRES_REVIEW`` event). They must never receive raw content: the
 from __future__ import annotations
 
 import threading
+import urllib.error
 import urllib.request
 from typing import Any, Protocol
 from urllib.parse import urlsplit
@@ -47,8 +48,83 @@ def redacted_destination(url: str) -> str:
     return f"{parts.scheme}://{netloc}/"
 
 
+class _SameHostRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Follow a 301/302/303 keeping the POST method and its body (issue #389).
+
+    ``urllib``'s default handler rewrites *any* POST that meets one of those
+    codes into a bodyless ``GET`` -- it even builds the replacement
+    ``Request`` with ``method="GET"`` for 307/308, which the RFCs say must
+    preserve the method -- and drops the content headers with the body. For a
+    sink that is indistinguishable from success: the redirect target answers
+    the ``GET`` with 200, ``emit`` never raises, and the alert was never
+    delivered. An endpoint that moved, or one that expects the trailing slash
+    the operator left off, silently stops paging.
+
+    So the redirect is re-issued as a ``POST`` carrying the original body.
+    Content-Type travels with it and Content-Length is recomputed, which is
+    what makes a JSON body still arrive as JSON.
+
+    One restriction, deliberately not lifted: the redirect is only followed
+    when it points at the same scheme, host and port. These sinks POST a
+    credential -- PagerDuty's ``routing_key`` is the body, a webhook URL can
+    be the credential in the userinfo, and a Slack URL is one in the path --
+    and a redirect to a different host hands that to whoever answers there.
+    That is an exfiltration path, not a delivery path, so an off-host
+    redirect raises instead. The sink logs it fail-open and the operator sees
+    a nameable thing to fix, which is strictly better than the alert quietly
+    vanishing -- which is what it does today, along with the body.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if req.get_method() != "POST":
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+        newurl = newurl.replace(" ", "%20")
+        target = urlsplit(newurl)
+        origin = urlsplit(req.full_url)
+        if (origin.scheme, origin.hostname, origin.port) != (
+            target.scheme,
+            target.hostname,
+            target.port,
+        ):
+            # ``HTTPError`` because the caller chain treats it as the request's
+            # outcome; the reason is written for the operator, since it is the
+            # only text that reaches their log line.
+            raise urllib.error.HTTPError(
+                req.full_url,
+                code,
+                "refusing to follow a redirect to a different host "
+                f"({redacted_destination(newurl)}); the POST body of these "
+                "sinks is a credential, so it is not forwarded off the "
+                "endpoint it was configured for",
+                headers,
+                fp,
+            )
+        # Content-Length is wrong the moment the body or encoding changes, and
+        # urllib recomputes it from ``data``; everything else travels as-is so
+        # a JSON body is still announced as JSON.
+        kept = {k: v for k, v in req.headers.items() if k.lower() != "content-length"}
+        return urllib.request.Request(
+            newurl,
+            data=req.data,
+            headers=kept,
+            origin_req_host=req.origin_req_host,
+            unverifiable=True,
+            method="POST",
+        )
+
+
+# One opener for every network sink: the handler chain is stateless, and
+# building it per alert would allocate a fresh ``OpenerDirector`` per POST.
+_opener = urllib.request.build_opener(_SameHostRedirectHandler)
+
+
 def bounded_post(request: urllib.request.Request, timeout: float) -> None:
     """POST ``request`` and drain the reply, bounded by a wall-clock deadline.
+
+    The POST also goes through a redirect handler that keeps the method and
+    body across a 301/302/303 on the same host (issue #389) -- urllib's
+    default would re-issue it as a bodyless GET, and the target's 200 answer
+    would look like a delivered alert.
 
     ``urllib.request.urlopen``'s ``timeout=`` is applied per socket operation,
     and only *after* ``socket.create_connection`` has finished name
@@ -76,7 +152,7 @@ def bounded_post(request: urllib.request.Request, timeout: float) -> None:
 
     def _post() -> None:
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as resp:
+            with _opener.open(request, timeout=timeout) as resp:
                 resp.read()
         except Exception as exc:  # reported to the caller below
             outcome["error"] = exc
