@@ -2,7 +2,9 @@
 
 Zero dependency (stdlib ``urllib.request``), mirroring the webhook sink.
 Fire-and-forget with a short timeout: ``emit`` never raises and never blocks
-``ingest()`` for long. An optional ``min_severity`` filter lets a host route
+``ingest()`` for long -- the ``timeout`` is a wall-clock deadline on the whole
+POST (see ``bounded_post``), not just a per-socket-operation hint. An optional
+``min_severity`` filter lets a host route
 only warnings/criticals to Slack while still sending everything elsewhere.
 
 Privacy: only ``FailureRisk`` fields are transmitted, never raw content
@@ -22,7 +24,7 @@ from snagline.risk import (
     SEVERITY_WARNING,
     FailureRisk,
 )
-from snagline.sinks.base import redacted_destination
+from snagline.sinks.base import bounded_post, redacted_destination
 
 logger = logging.getLogger("snagline")
 
@@ -74,8 +76,7 @@ class SlackSink:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
-                resp.read()
+            bounded_post(req, self._timeout)
         except Exception:
             # The URL is the credential -- a Slack incoming webhook embeds its
             # secret as the final path segment -- and a failed POST is the

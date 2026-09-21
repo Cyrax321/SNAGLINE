@@ -2,9 +2,12 @@
 
 Uses only stdlib ``urllib.request`` (project.md §8). Fire-and-forget with a
 short timeout: ``emit`` never raises and never blocks ``ingest()`` for long --
-the Monitor's fail-open wrapper would swallow a raise anyway, but this sink
-keeps its own failure handling so a dead endpoint stays silent even when the
-Monitor runs with ``fail_open=False``.
+the ``timeout`` is a wall-clock deadline on the whole POST, not just a
+per-socket-operation hint (see ``bounded_post``), so a slow resolver or a
+trickling server cannot stall the episode's ingest. The Monitor's fail-open
+wrapper would swallow a raise anyway, but this sink keeps its own failure
+handling so a dead endpoint stays silent even when the Monitor runs with
+``fail_open=False``.
 
 Privacy: only ``FailureRisk`` fields are transmitted (score, trigger, ids,
 detail, timestamp) -- never ``StepEvent.metadata`` (project.md §11).
@@ -23,7 +26,7 @@ from snagline.risk import (
     SEVERITY_WARNING,
     FailureRisk,
 )
-from snagline.sinks.base import redacted_destination
+from snagline.sinks.base import bounded_post, redacted_destination
 
 logger = logging.getLogger("snagline")
 
@@ -77,8 +80,7 @@ class WebhookSink:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
-                resp.read()
+            bounded_post(req, self._timeout)
         except Exception:
             # The URL is the credential -- it can carry basic auth
             # (``user:pass@host``) and, for some providers, a secret path

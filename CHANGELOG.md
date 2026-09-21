@@ -30,6 +30,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   score-0.8 warning; values above `1.0` made the pre-breach warning
   unreachable. An out-of-range value is now a configuration error naming the
   knob (#317).
+- The network sinks (`WebhookSink`, `SlackSink`, `PagerDutySink`) now bound the
+  whole POST by a wall-clock deadline instead of passing `timeout=` through to
+  `urlopen`. That argument is applied per socket operation, and only after name
+  resolution has already completed, so a stuck resolver held the call for as
+  long as it liked and a server trickling its body one byte at a time just
+  under the interval never tripped a read timeout at all. Issue #395 measured a
+  configured 2.0 s budget taking 36.2 s on exactly that trickle, on a request
+  the sink reported as successful. All three sinks now go through a shared
+  `bounded_post` in `sinks/base.py`, which raises `TimeoutError` when the
+  deadline passes and abandons the in-flight request on a daemon thread; the
+  sinks log it fail-open as before (#395).
 
 ## [0.1.0] - 2026-08-27
 
