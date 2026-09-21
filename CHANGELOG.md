@@ -11,6 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nothing yet.
 
 ### Fixed
+- `WebhookSink` and `SlackSink` no longer log the destination URL when a POST
+  fails. The URL is the credential in both cases: a Slack incoming webhook
+  embeds its secret as the final path segment
+  (`https://hooks.slack.com/services/T.../B.../<secret>`), and an arbitrary
+  webhook URL routinely carries basic auth (`https://user:pass@host/`). A sink
+  that cannot reach its destination is exactly the moment an operator reads the
+  log, so the raw URL was being handed to whoever was already looking at a
+  failed integration. Both sinks now log only scheme + host + port via a shared
+  `redacted_destination` helper in `sinks/base.py`, matching `PagerDutySink`,
+  which never logged its routing key. Their `__repr__` is redacted too, since
+  the default attribute dump would leak the same URL into any diagnostic
+  capture (#390).
 - `episode_token_budget` and `token_budget_warn_fraction` are now range-checked
   at construction and after env/file layering, like the horizon and stagnation
   knobs. A zero or negative budget used to fire a score-1.0 `budget_breach` on
