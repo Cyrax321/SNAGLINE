@@ -40,6 +40,41 @@ class ConsoleSink:
         logger: logging.Logger | None = None,
         level: int = logging.WARNING,
     ) -> None:
+        if stream is not None:
+            # Fail loudly at construction rather than dropping alerts one at a
+            # time for the whole run. A binary stream -- ``open(p, "wb")``,
+            # ``sys.stdout.buffer`` -- is an easy misconfiguration to reach for
+            # while routing alerts to a file, and the failure is the worst kind
+            # once it lands: the monitor runs cleanly and every alert is
+            # discarded behind the fail-open contract, with the write raising
+            # ``TypeError`` (not an ``OSError`` subclass) so the guard in
+            # ``emit`` does not catch it either (issue #391).
+            #
+            # Probed with an empty write, which writes nothing: the only thing
+            # under test is whether the stream accepts a ``str`` at all.
+            #
+            # Only the type mismatch is a rejection. ``OSError`` and the
+            # ``ValueError`` a *closed* stream raises are runtime breakage
+            # (closed pipe, bad descriptor, stream closed mid-run), not a
+            # misconfiguration, and issue #327's contract -- now upstream --
+            # is that such a sink still constructs and stays fire-and-forget
+            # in ``emit``, dropping the alert and logging once. Rejecting it
+            # here would break that contract for no benefit, since ``emit``
+            # already handles it.
+            try:
+                stream.write("")
+            except TypeError as exc:
+                raise TypeError(
+                    "ConsoleSink stream must be a writable text stream "
+                    f"(got {type(stream).__name__}: {exc}); pass "
+                    "`open(path, 'w')` for a file, or the logging module "
+                    "via logger="
+                ) from exc
+            except (OSError, ValueError):
+                # Falls through to the fire-and-forget path in ``emit``
+                # (issues #19 and #327); the probe is only looking for a
+                # type mismatch.
+                pass
         self._stream = stream if stream is not None else sys.stderr
         self._logger = logger
         self._level = level
@@ -65,12 +100,15 @@ class ConsoleSink:
         # file descriptor must not raise out of emit() and into the host's
         # ingest path, so we swallow write/flush errors and log once (issue #19).
         # A *closed* stream raises ValueError, not OSError -- "I/O operation on
-        # closed file" -- so both shapes are caught (issue #327).
+        # closed file" -- so both shapes are caught (issue #327). A stream
+        # whose *type* changed underneath us (binary, after construction)
+        # raises TypeError, which is not an OSError subclass, so it is caught
+        # too (issue #391).
         try:
             self._stream.write(line + "\n")
             self._stream.flush()
             self._fault_logged = False
-        except (OSError, ValueError):
+        except (OSError, ValueError, TypeError):
             if not self._fault_logged:
                 self._fault_logged = True
                 logger.warning(

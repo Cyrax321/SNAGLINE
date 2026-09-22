@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   score-0.8 warning; values above `1.0` made the pre-breach warning
   unreachable. An out-of-range value is now a configuration error naming the
   knob (#317). 57305ac (fix(cli): make --list-versions read-only on fit and retrain paths)
+- `ConsoleSink(stream=...)` now rejects a binary or already-closed stream at
+  construction with a `TypeError` naming the stream and advising
+  `open(path, 'w')` or the logging module. `open(p, "wb")` and
+  `sys.stdout.buffer` are the natural ways to route alerts to a file, and a
+  `str` write to either raises `TypeError` -- not an `OSError` subclass, so
+  the fire-and-forget guard in `emit()` never caught it and every alert was
+  silently discarded for the whole run behind the fail-open contract (#391).
 
 ## [0.1.0] - 2026-08-27
 
