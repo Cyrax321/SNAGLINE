@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+import threading
 from contextlib import suppress
 from typing import IO, Any
 
@@ -44,6 +45,12 @@ class ConsoleSink:
         self._logger = logger
         self._level = level
         self._fault_logged = False
+        # Sink dispatch runs *outside* Monitor's per-episode lock
+        # (monitor._dispatch, and DedupSink calls the wrapped sink outside its
+        # own lock), so emits on this shared sink can race: the latch below
+        # guards the check-and-set the same way Monitor._log_fault_once guards
+        # its set with _fault_lock.
+        self._fault_lock = threading.Lock()
 
     def emit(self, risk: FailureRisk) -> None:
         payload: dict[str, Any] = {
@@ -69,11 +76,21 @@ class ConsoleSink:
         try:
             self._stream.write(line + "\n")
             self._stream.flush()
-            self._fault_logged = False
         except (OSError, ValueError):
-            if not self._fault_logged:
+            # Atomic check-and-set: without it, every thread that reaches a
+            # dead stream sees "not yet logged" and warns, and a thread
+            # re-arming on recovery can be clobbered by a concurrent failure.
+            with self._fault_lock:
+                if self._fault_logged:
+                    return
                 self._fault_logged = True
-                logger.warning(
-                    "snagline ConsoleSink: write to stream failed; dropping "
-                    "alert (fire-and-forget); further failures are silent"
-                )
+            logger.warning(
+                "snagline ConsoleSink: write to stream failed; dropping alert "
+                "(fire-and-forget); further failures are silent"
+            )
+            return
+        # A clean write + flush means the stream is alive again: re-arm the
+        # latch so the next failure is still reported. Guarded too, so a
+        # concurrent failure cannot arm and be silently reset.
+        with self._fault_lock:
+            self._fault_logged = False
