@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Nothing yet.
+- `snagline hook --out` / `--url` now serializes all thirteen `StepEvent`
+  fields. `_event_to_json` wrote eleven, so a host marking a step
+  non-idempotent (#88) or emitting compaction pins (#90) through the
+  command-hook bridge fed detectors that could never fire — the
+  `side_effect` and `metadata` it keys off were dropped in transit.
+- Interactive landing-page animation for the project site (comets,
+  horizontal-swipe pipeline, tube-light logo effect) (#291).
 
 ### Fixed
 - `snagline baseline --list-versions` is now honored on both the fit and
@@ -23,6 +30,156 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   score-0.8 warning; values above `1.0` made the pre-breach warning
   unreachable. An out-of-range value is now a configuration error naming the
   knob (#317). 57305ac (fix(cli): make --list-versions read-only on fit and retrain paths)
+- `Monitor.snapshot` now sorts detector keys by slot index, and runs the
+  `strict_names` composition check *before* applying any state. `sorted()`
+  on the raw `"<index>:<name>"` keys is lexicographic, so with 11+ detectors
+  slot `10` sorted between `1` and `2`; two differently-ordered name lists
+  were compared, rejecting a matching composition and accepting a
+  mismatched one. A rejected restore now also applies no detector state at
+  all (#217).
+- `MemoryStateBackend.release(episode_id)` no longer orphans parked
+  waiters. `episode_lock` fetched the lock under `_meta` then released
+  `_meta` before parking, so `release()` could pop the entry while a waiter
+  was already parked on the old `RLock`; when the holder released, the
+  waiter entered the critical section on the orphaned lock while a later
+  fetcher allocated a fresh one — two threads inside one episode's state.
+- `MLOrchestrator` now isolates base-detector faults. Enabling
+  `ml_ensemble` collapses the base detectors into one Monitor slot, so the
+  Monitor's per-slot fail-open guard had nothing to isolate; the first
+  detector to raise aborted the delegation loop and every remaining base
+  detector was skipped for the rest of the run (#227).
+- The snapshot and teardown walks of the cross-episode dicts
+  (`Monitor._clocks`, `LatencyAnomalyDetector._states`) are now locked.
+  Both are keyed across episodes rather than partitioned by one, so the
+  per-episode lock never covered a concurrent insert for a *different*
+  episode (#228, #229).
+- `dump_state` now copies per-episode state before serializing it. The
+  values are partitioned by `episode_id` and safe under the per-episode
+  lock, but the key set is shared, and that lock cannot serialize a walk
+  against an insert for a different episode (#231).
+- `FailureRisk` now keeps an explicitly requested severity of `warning`.
+  `__post_init__` treated *any* `severity == "warning"` as "unset" and
+  overwrote it with the score-derived value, so a `warning` requested on a
+  0.95-score risk silently became `critical` and still paged on-call.
+- Boolean environment values are now validated. Anything not in
+  `1/true/yes/on/t` or `0/false/no/off/f` is a configuration error naming
+  the value, instead of silently meaning `False` — a typo in
+  `SNAGLINE_DETECTORS_ENABLED=ture` turned every detector off with no
+  signal.
+#### Detectors
+- `StagnationDetector.load_state` now restores the *effective* window for
+  the restored scaler position, and the fill gate is now separate from the
+  novelty gate under window scaling. The base-sized slice dropped exactly
+  the flags the conditional `maxlen` one line below exists to keep (#218),
+  and a window that had not yet filled its *scaled* target reported a
+  novelty rate over the target size, firing a spurious stagnation risk
+  (#272).
+- `MeltdownDetector`, `ErrorCascadeDetector`, and `LoopDetector`
+  `load_state` now rebuild windows at the effective size for the restored
+  scaler position rather than the base `window_size`, which silently
+  truncated the oldest history mid-episode when auto-scaling had grown the
+  window live (#268).
+- `GoalDriftDetector` now re-arms when the drift score recovers, instead of
+  latching the first crossing until `end_episode`. Per #184, hosts that
+  never call `end_episode` are a supported deployment, so a long-lived
+  episode that recovered from one drift stayed flagged forever.
+- A `LatencyAnomalyDetector` alarm coinciding with a periodic baseline
+  adoption is now scored from the alarm-time snapshot. The alarm was
+  computed before the re-fit advanced but scored after it, so adoption
+  on the same step had already reset the accumulator and the risk shipped
+  with a flat 0.6 score and a detail string describing the post-reset
+  state.
+- The ESN live scoring path now advances the reservoir after the readout,
+  matching the pairing `fit()` and the warm-up learner solved for. The
+  live path advanced first and then asked the readout to predict the
+  current step from the post-advance state — the step being judged leaked
+  into its own input.
+- Claude Code `PreToolUse` / `PostToolUse` events now get distinct
+  signatures. Both fire for one logical call with the same `tool_name` and
+  `tool_input`, differing only in the volatile `tool_use_id` the signature
+  deliberately excludes, so one logical attempt hashed twice and the loop
+  detector counted it as two.
+#### Monitor and time axis
+- `Monitor.restore` now enforces the per-episode retention cap before
+  loading detector state, not after. A snapshot holding more episodes than
+  `max_live_episodes` used to be fully restored and only then trimmed,
+  transiently exceeding the cap (#273).
+- The restored time axis is now anchored instead of trusting a dead epoch.
+  `_EpisodeClock.last_ts` is a raw `StepEvent.timestamp` and the
+  auto-instrumentation stamps events with `perf_counter`, which has no
+  meaningful epoch across processes — a snapshot/restore exists for
+  restarts, so the restored `last_ts` was meaningless in the new process
+  and the first post-restart event measured its delta from it. That failed
+  both ways: a young process read a huge bogus elapsed span, and an old one
+  could see the breach as already passed (#314, #315).
+- The episode clock's `last_ts` now only moves forward. `_advance_clock`
+  excluded a negative delta from elapsed but still rewound `last_ts` to
+  the event timestamp, so the next event measured its delta from the
+  rewound reference and accumulated a span already counted once. Sources
+  with out-of-order or backwards-skewed timestamps (merged adapter
+  streams, clock skew between hook processes) double-counted wall-clock
+  time into elapsed, and `wall_clock_budget` — a hard score-1.0 trigger
+  with halt-policy routing — could breach early on an episode that had
+  consumed less than it reported (#249).
+- The wall-clock pre-breach warning is now suppressed once the budget has
+  actually been breached. A single delta jumping straight past the budget
+  fired the score-1.0 breach but left `warned` false, so the next step
+  fell through to the `elif` and emitted the stale 0.7 warning — severity
+  running backwards, with self-contradicting text for an episode already
+  reported as exceeded (#224).
+#### Adapters and auto-instrumentation
+- Global-mode `instrument_openai` / `instrument_anthropic` now patch the
+  SDK resource classes directly. Since OpenAI SDK 1.0 and current Anthropic
+  SDKs, `OpenAI.chat` / `Anthropic.messages` are
+  `functools.cached_property` descriptors: the attribute walk resolved a
+  descriptor, wrapped nothing, and still returned `True`, so the
+  documented one-liner produced a completely unmonitored process that
+  reported instrumentation success (#270).
+- The `snagline.auto` wrappers now measure call latency on
+  `perf_counter`, not the wall clock, matching the PR #161 audit of
+  `snagline.adapters`. On Windows the wall clock advances in ~15.6 ms
+  ticks on py3.10–3.12, so a call shorter than one tick recorded
+  `latency_ms == 0.0` and starved the CUSUM detector of usable samples,
+  and a non-monotonic wall clock can fabricate negative or huge latencies
+  (#280).
+- Streamed `create()` calls in the `openai` / `anthropic` wrappers now
+  emit one event at exhaustion, close, or iteration failure. With
+  `stream=True` the call returns immediately, so emitting at return time
+  recorded a ~0 ms success before the first chunk and mid-iteration
+  failures went unobserved (#242).
+- `HookTracker` state shared across the sidecar's handler threads is now
+  serialized. `note()` mutated `_starts` unlocked, so eviction raised
+  `RuntimeError` mid-walk (swallowed downstream, dropping latency
+  samples) and rebound the dict, discarding concurrent inserts (#245).
+#### Server, CLI, and sinks
+- Batched `POST /events` is now fully validated and constructed before
+  anything is ingested. Validation and ingest ran in the same loop, so a
+  bad item at position `k` answered 400 with items `0..k-1` already inside
+  the Monitor; a retrying client re-fed the accepted prefix on every
+  attempt, duplicating steps into the loop/cascade/CUSUM detectors and
+  double-counting metrics. Also fixed path-component routing and
+  `serve --config` layering for the read-timeout and episode-TTL knobs
+  (#239, #240, #241).
+- `snagline watch` now finalizes the episode ids actually present in the
+  ingested events, not the id derived from the filename. Finalize-based
+  detectors were dead in `watch`: `SilentAbortDetector` was asked about an
+  episode that never existed while the real one was never finalized.
+- `--min-severity` is now honored for `--sink webhook` and validated, and
+  the value is range-checked. The webhook branch built a bare
+  `WebhookSink(url)`, so `--sink webhook --min-severity critical` still
+  POSTed info-level risks (#248).
+- `BatchingSink` now preserves its rate limit across flushes. The gap was
+  enforced per batch with no memory of the last delivery time, so
+  consecutive flushes could fire back-to-back and defeat the cooldown.
+- `SNAGLINE_STATE_BACKEND=redis` with no `SNAGLINE_STATE_REDIS_URL` now
+  warns before falling back to in-memory state. The redis backend exists
+  to coordinate episodes across processes; in-memory state is
+  per-process, so a misconfigured deployment silently got N workers each
+  holding their own lock — no coordination and nothing in the logs
+  (#308).
+- `benchmarks/detection_accuracy.py` table no longer misaligns when a
+  trigger name exceeds the hardcoded 16-character column width
+  (`side_effect_duplicate` is 21).
 
 ## [0.1.0] - 2026-08-27
 
