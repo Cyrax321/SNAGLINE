@@ -10,6 +10,7 @@ signature trips the loop detector, printed as a JSON line to stderr.
 
 from __future__ import annotations
 
+import argparse
 import sys
 
 from snagline import Monitor
@@ -17,8 +18,15 @@ from snagline.adapters.langchain_adapter import SnaglineCallbackHandler
 
 
 def main() -> None:
+    # Parse before the optional import below so --help works even without
+    # langchain-core installed; the demo itself still needs the extra.
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.parse_args()
+
     try:
-        from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+        from langchain_core.language_models.fake_chat_models import (
+            FakeMessagesListChatModel,
+        )
         from langchain_core.messages import AIMessage, HumanMessage
     except ImportError:
         print(
