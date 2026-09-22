@@ -21,6 +21,11 @@ Implementation notes:
   triggers would corrupt downstream alert policy.
 * Only the action-type string and the error boolean are consulted; no content
   is read (project.md §1.4).
+* ``output_action_types`` is configuration, not state: ``dump_state`` records
+  it for diagnostics, but ``load_state`` ignores it, so restoring a snapshot
+  written on a differently-configured host keeps this host's notion of an
+  output step (issue #347). MeltdownDetector treats ``window_size`` the same
+  way.
 """
 
 from __future__ import annotations
@@ -90,9 +95,12 @@ class SilentAbortDetector:
         }
 
     def load_state(self, state: dict[str, Any]) -> None:
-        types = state.get("output_action_types")
-        if types:
-            self.output_action_types = frozenset(types)
+        # ``output_action_types`` is operator configuration, not per-episode
+        # state: a snapshot written by a differently-configured host must not
+        # silently change which final steps count as "output" on this one.
+        # ``dump_state`` still writes it (mirroring MeltdownDetector's
+        # window_size) so an older snapshot remains readable and the field is
+        # present for diagnostics; it is simply ignored on restore.
         self._last = {
             ep: StepEvent(
                 step_id=raw["step_id"],

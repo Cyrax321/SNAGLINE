@@ -23,6 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   score-0.8 warning; values above `1.0` made the pre-breach warning
   unreachable. An out-of-range value is now a configuration error naming the
   knob (#317). 57305ac (fix(cli): make --list-versions read-only on fit and retrain paths)
+- `SilentAbortDetector.load_state` no longer overwrites its own
+  `output_action_types` from the restored snapshot. That field is operator
+  configuration, not per-episode state, so a snapshot written on a
+  differently-configured host silently changed which final steps counted as
+  "output" on this one -- a real silent abort could be missed, or a clean
+  ending flagged. `dump_state` still records the field for diagnostics, as
+  `MeltdownDetector` does for `window_size`; only the restore path now
+  ignores it (#347).
 
 ## [0.1.0] - 2026-08-27
 

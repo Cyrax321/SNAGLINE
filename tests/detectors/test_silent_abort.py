@@ -101,3 +101,62 @@ def test_state_round_trip():
     r1, r2 = d1.finalize("ep"), d2.finalize("ep")
     assert r1 is not None and r2 is not None
     assert (r1.trigger, r1.step_id, r1.detail) == (r2.trigger, r2.step_id, r2.detail)
+
+
+def test_load_state_does_not_overwrite_output_action_types():
+    """Issue #347: ``output_action_types`` is operator configuration, not
+    per-episode state. A snapshot written by a stock-configured host carried
+    the shipped default, and restoring it silently replaced a host's custom
+    types -- so a real silent abort could be missed (the snapshot's types
+    don't include this host's output action) or a clean ending flagged."""
+    d = SilentAbortDetector(output_action_types={"assistant_message"})
+    d.load_state({"output_action_types": ["message", "plan_step"], "last": {}})
+    assert d.output_action_types == frozenset({"assistant_message"}), (
+        "restoring a snapshot must not change which steps count as output"
+    )
+
+    # The live config then decides the restored episode's outcome.
+    d.observe(_event(9))
+    risk = d.finalize("ep")
+    assert risk is not None and risk.trigger == "silent_abort"
+
+
+def test_restored_last_event_is_scored_under_the_live_config():
+    """Issue #347: the counterpart failure. A snapshot whose writer considered
+    ``tool_call`` an output type must not suppress a silent abort on a host
+    that does not -- the snapshot's judgment follows the snapshot, and the
+    live detector's configuration follows the operator."""
+    d = SilentAbortDetector(output_action_types={"message"})
+    d.load_state(
+        {
+            "output_action_types": ["tool_call"],
+            "last": {
+                "ep": {
+                    "step_id": "9",
+                    "timestamp": 1.0,
+                    "action_type": "tool_call",
+                    "error": False,
+                }
+            },
+        }
+    )
+    assert d.finalize("ep") is not None, "live types govern, not the snapshot's"
+
+
+def test_dump_state_still_records_the_types_for_diagnostics():
+    """Issue #347 regression guard: the fix lives in ``load_state`` only. The
+    field stays in the snapshot (mirroring MeltdownDetector's ``window_size``)
+    so existing readers keep working and the config is inspectable."""
+    d = SilentAbortDetector(output_action_types={"assistant_message"})
+    dumped = d.dump_state()
+    assert dumped["output_action_types"] == ["assistant_message"]
+    # A round trip through a stock-configured detector must not pick it up.
+    stock = SilentAbortDetector()
+    stock.load_state(dumped)
+    assert stock.output_action_types == frozenset({"message", "plan_step"}), (
+        "stock config must survive reading a custom-types snapshot"
+    )
+    stock.observe(_event(0, action_type="assistant_message"))
+    assert stock.finalize("ep") is not None, (
+        "stock config treats assistant_message as just another tool call"
+    )
