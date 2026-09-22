@@ -23,6 +23,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   score-0.8 warning; values above `1.0` made the pre-breach warning
   unreachable. An out-of-range value is now a configuration error naming the
   knob (#317). 57305ac (fix(cli): make --list-versions read-only on fit and retrain paths)
+- `snagline.auto.langchain` global mode now patches the classes the declared
+  dependency actually ships. It imported `langchain.chains.base.Chain` and
+  `langchain_core.language_models.BaseLanguageModel` in one `try`, but
+  `langchain.chains` was removed in the langchain 1.0 restructure and lived in
+  the top-level `langchain` package, which `snagline[langchain]` never declared
+  (it depends on `langchain-core` only). On every modern install the import
+  failed, the bare `except Exception` reported it as "LangChain not installed",
+  and no LangChain call was ever observed -- silently, with no error. Global
+  mode now probes the package for presence first, patches `BaseChatModel` and
+  `BaseLanguageModel` from `langchain_core` (with `langchain.chains.base.Chain`
+  as a langchain < 1.0 fallback), keeps the batch `generate` entrypoints out of
+  global mode since `BaseChatModel.invoke` delegates to `self.generate`, and
+  reports a present-but-reshaped SDK as a monitoring failure rather than an
+  absent dependency (#339).
 
 ## [0.1.0] - 2026-08-27
 

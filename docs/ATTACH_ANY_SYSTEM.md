@@ -90,8 +90,9 @@ enterprise-grade alerting. Concretely:
    instead of editing every call. This is the real "attach to any system"
    lever.
    - **Done:** `snagline.auto.openai` (#33), `snagline.auto.anthropic` (#34),
-     `snagline.auto.langchain` (#35). All import-safe (no-op when SDK absent)
-     and handle sync + async.
+     `snagline.auto.langchain` (#35). All import-safe (no-op when the SDK is
+     absent, and a present-but-reshaped SDK is reported as a monitoring failure
+     rather than an absent dependency, #339) and handle sync + async.
 3. **Publish to PyPI** with versioning and per-framework extras; load config
    from env/yml with secret handling (12-factor).
    - **Done (code side):** PyPI-ready metadata + verified `python -m build`
