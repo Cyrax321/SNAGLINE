@@ -304,6 +304,34 @@ def test_main_serve_flag_beats_the_environment(monkeypatch):
     assert started["auth_token"] == "from-flag"
 
 
+def test_main_serve_banner_redacts_the_halt_url(monkeypatch, capsys):
+    """The --halt-forward banner must not echo a URL that can carry basic auth.
+
+    A startup banner goes to stderr, which a supervisor captures -- journald,
+    a container log, a redirected fd -- and that artifact outlives the
+    process, so the credential would persist long after the operator stopped
+    looking at the command line they typed (issue #390).
+    """
+    monkeypatch.setattr(
+        "snagline.server.http_server.serve",
+        lambda monitor, host="127.0.0.1", port=8787, **kw: None,
+    )
+    assert (
+        main(
+            [
+                "serve",
+                "--halt-forward",
+                "https://halter:hunter@halt.example/pause",
+            ]
+        )
+        == 0
+    )
+    err = capsys.readouterr().err
+    assert "halt forwarding enabled" in err, "the banner must still be printed"
+    assert "halter:hunter" not in err, "the credential must not be echoed"
+    assert "halt.example" in err, "the host must stay identifiable"
+
+
 def test_maybe_dedup_wraps_sinks_only_when_cooldown_set() -> None:
     from snagline.cli import _maybe_dedup
     from snagline.sinks.console import ConsoleSink

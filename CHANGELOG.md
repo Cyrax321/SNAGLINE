@@ -23,6 +23,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   score-0.8 warning; values above `1.0` made the pre-breach warning
   unreachable. An out-of-range value is now a configuration error naming the
   knob (#317). 57305ac (fix(cli): make --list-versions read-only on fit and retrain paths)
+- `WebhookSink` and `SlackSink` no longer log the destination URL when a POST
+  fails. The URL is the credential in both cases: a Slack incoming webhook
+  embeds its secret as the final path segment
+  (`https://hooks.slack.com/services/T.../B.../<secret>`), and an arbitrary
+  webhook URL routinely carries basic auth (`https://user:pass@host/`). A sink
+  that cannot reach its destination is exactly the moment an operator reads the
+  log, so the raw URL was being handed to whoever was already looking at a
+  failed integration. Both sinks now log only scheme + host + port via a shared
+  `redacted_destination` helper in `sinks/base.py`, matching `PagerDutySink`,
+  which never logged its routing key. Their `__repr__` is redacted too, so the
+  URL cannot reach a diagnostic capture or an unhandled-exception report
+  (#390).
+- The same two sinks now name a POST failure by its class and status code
+  (`HTTP 503`, `URLError`) rather than logging the exception itself. A
+  `URLError` embeds the destination URL in its reason for some failures (`no
+  host given: <url>`), and the traceback a `logger.exception` call attaches
+  carries it out to the log verbatim -- a second route for the same leak, from
+  inside the fail-open `except` block where a further failure would be the
+  last thing the operator is told (#390).
+- `redacted_destination` no longer raises on a destination with an unbalanced
+  bracket in the authority (`https://[::1`). `urlsplit` itself raises
+  `ValueError` on that input, so the validity guard beneath it never ran and
+  the exception escaped through the two callers the helper exists to keep safe.
+  Such a destination is now reported as `<invalid destination url>`, without
+  echoing the malformed input back (#390).
+- The network sinks (`WebhookSink`, `SlackSink`, `PagerDutySink`) now bound the
+  whole POST by a wall-clock deadline instead of passing `timeout=` through to
+  `urlopen`. That argument is applied per socket operation, and only after name
+  resolution has already completed, so a stuck resolver held the call for as
+  long as it liked and a server trickling its body one byte at a time just
+  under the interval never tripped a read timeout at all. Issue #395 measured a
+  configured 2.0 s budget taking 36.2 s on exactly that trickle, on a request
+  the sink reported as successful. All three sinks now go through a shared
+  `bounded_post` in `sinks/base.py`, which raises `TimeoutError` when the
+  deadline passes and abandons the in-flight request on a daemon thread; the
+  sinks log it fail-open as before (#395).
+- The network sinks no longer follow a redirect. `urllib` honours a
+  `301`/`302`/`303` by re-issuing the request to the `Location` URL as a GET
+  with no body, and hands the final `2xx` back to the caller, so a sink that hit
+  a redirect reported a successful delivery while its payload travelled with the
+  POST the server rejected and went to a destination the server chose. That is
+  reachable without a misconfigured destination -- a trailing-slash hop, an
+  HTTP->HTTPS or proxy canonicalisation, or, worst, an auth redirect from an
+  expired credential that would otherwise have shown as a `401`. All three sinks
+  now POST through an opener whose `_NoRedirect` handler makes urllib raise
+  `HTTPError` for the `3xx`, which is logged fail-open as any other delivery
+  failure is; a `307`/`308` already raised, so the failure mode is now consistent
+  across redirect codes instead of silent for exactly the common ones (#389).
+- The halt webhook and `snagline hook --url` no longer hold the caller past
+  their configured budget. Both used bare `urllib.request.urlopen`, whose
+  `timeout=` is applied per socket operation and only after name resolution,
+  so a stalled resolver or a body trickled one byte per interval just under
+  the timeout parked the exchange far past the configured `halt_timeout_s`
+  with no `policy_error` ever counted, because nothing ever raised. For the
+  halt webhook this is the enforcement policy, called synchronously from
+  `ingest()`, so the stall was the host agent's own step while the operator's
+  budget read 250 ms. Both call sites now go through the shared `bounded_post`
+  in `sinks/base.py`, which bounds the whole exchange by a wall-clock deadline
+  and raises `TimeoutError` on overrun -- counted as a `policy_error` and left
+  fail-open, as any other halt failure already was (#415).
+- The halt webhook no longer follows a redirect. `urllib` rewrites a
+  `301`/`302`/`303` POST into a bodyless GET to the `Location` URL and hands
+  the final `2xx` back, and the halt path parses that reply into a
+  `HaltDirective` -- so a redirect let the enforcement decision arrive from a
+  server the operator never configured, on a round trip that looked
+  successful. An auth redirect from an expired credential, which would
+  otherwise have shown as a `401`, became a silent misrouting instead. The
+  `snagline hook --url` forward had the same shape, leaking the step event to
+  the redirect target. Both now POST through the opener carrying the
+  `_NoRedirect` handler added for the sinks (#389), which raises `HTTPError`
+  for the `3xx` and logs fail-open (#416).
+- The halt webhook and `snagline hook --url` no longer log the destination URL
+  when the POST fails. The halt URL can carry basic auth (`user:pass@host`)
+  and the failure line is what an operator reads when enforcement stops
+  working. Both now log only scheme + host + port via `redacted_destination`,
+  matching the network sinks. The `snagline serve` startup banner is redacted
+  too, since it prints the same URL to stderr, which a process supervisor
+  captures and keeps after the process is gone (#390).
 
 ## [0.1.0] - 2026-08-27
 

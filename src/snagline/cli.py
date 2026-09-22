@@ -20,6 +20,7 @@ import json
 import os
 import sys
 import time
+import urllib.request
 from collections.abc import Callable, Iterator
 from contextlib import suppress
 from pathlib import Path
@@ -28,7 +29,7 @@ from snagline.config import Config
 from snagline.events import StepEvent
 from snagline.monitor import Monitor
 from snagline.risk import FailureRisk
-from snagline.sinks.base import AlertSink
+from snagline.sinks.base import AlertSink, bounded_post, redacted_destination
 
 # Scaled benchmark-leg knobs, mirrored from
 # ``benchmarks.overhead_benchmark`` (which is not importable from an installed
@@ -652,19 +653,20 @@ def _cmd_hook(args: argparse.Namespace) -> int:
 
     if args.url:
         try:
-            import urllib.request
-
             req = urllib.request.Request(
                 args.url,
                 data=json.dumps(_event_to_json(event)).encode(),
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=args.timeout) as resp:
-                resp.read()
+            bounded_post(req, args.timeout)
         except Exception as exc:
+            # The URL can carry basic auth (``user:pass@host``), and a failed
+            # forward is when an operator reads this line (issue #390).
             print(
-                f"snagline hook: forward to {args.url} failed: {exc}", file=sys.stderr
+                f"snagline hook: forward to {redacted_destination(args.url)} failed: "
+                f"{exc}",
+                file=sys.stderr,
             )
 
     if not args.url and not args.out:
@@ -1082,8 +1084,13 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         file=sys.stderr,
     )
     if cfg.policy == "halt_webhook":
+        # The halt URL can carry basic auth (``user:pass@host``), and a startup
+        # banner lands in whatever the supervisor captures -- journald, a
+        # container log, a redirected stderr -- which outlives the process
+        # (issue #390).
         print(
-            f"snagline serve: halt forwarding enabled -> {cfg.halt_url} "
+            f"snagline serve: halt forwarding enabled -> "
+            f"{redacted_destination(cfg.halt_url or '')} "
             f"(timeout {cfg.halt_timeout_s}s, min severity "
             f"{cfg.min_severity_for_halt}); directives land on "
             "Monitor.last_directive and are readable at GET /directive "

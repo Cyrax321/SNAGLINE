@@ -35,7 +35,7 @@ from snagline.config import Config, validate_policy
 from snagline.detectors.base import Detector
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk
-from snagline.sinks.base import AlertSink
+from snagline.sinks.base import AlertSink, bounded_post, redacted_destination
 from snagline.state import StateBackend, default_state_backend
 
 logger = logging.getLogger("snagline")
@@ -584,6 +584,16 @@ class Monitor:
         connection error, malformed body, unknown action -- leaves the
         directive at continue (fail-open) and counts one ``policy_error``.
         Never raises into the host loop while ``fail_open=True``.
+
+        The round trip goes through ``bounded_post``, so the configured
+        ``halt_timeout_s`` is a wall-clock budget on the whole exchange rather
+        than a per-socket hint applied only after name resolution: without it
+        a stalled resolver or a trickling body parks this episode's ``ingest``
+        far past the budget, on a request the caller believes is bounded
+        (issue #415). The refusal to follow a redirect matters more here than
+        at a sink -- the reply is parsed into an enforcement directive, so a
+        followed 3xx would let the decision come from a server the operator
+        never configured (issue #416).
         """
         if risk.score < self._min_severity_for_halt:
             return
@@ -603,8 +613,7 @@ class Monitor:
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=self._halt_timeout_s) as resp:
-                body = resp.read(_MAX_HALT_RESPONSE_BYTES)
+            body = bounded_post(req, self._halt_timeout_s, _MAX_HALT_RESPONSE_BYTES)
             parsed = json.loads(body.decode("utf-8"))
             if not isinstance(parsed, dict):
                 raise ValueError("halt response must be a JSON object")
@@ -617,8 +626,12 @@ class Monitor:
             )
         except Exception:
             self._incr("policy_errors")
+            # The halt URL can carry basic auth (``user:pass@host``), and this
+            # is the line an operator reads when the policy stops working
+            # (issue #390).
             self._log_fault_once(
-                f"halt webhook {self._halt_url} failed; continuing (fail-open)"
+                f"halt webhook {redacted_destination(self._halt_url or '')} "
+                f"failed; continuing (fail-open)"
             )
             if not self._fail_open:
                 raise
