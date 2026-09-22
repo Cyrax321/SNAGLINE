@@ -16,6 +16,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fitting, writing `baseline.json`, or storing a new version. Without
   `--store-dir` it now fails closed with `--list-versions requires --store-dir`
   (exit 2) instead of silently writing a file or bumping the store (#293).
+- The `ml` extra's ensemble no longer pages on a healthy run when the
+  configured baseline was fitted from a stream that carried no `latency_ms`.
+  `EsnCusumDetector`'s Mahalanobis term gated on `ToolBaseline.count` while
+  `mean_latency` / `std_latency` are computed from `latency_count` only, so a
+  profile with `count=100, latency_count=0` legitimately read mean 0.0 ms /
+  std 0.0. Any real latency was then scored against the 1 ms sigma floor as a
+  ~100-sigma deviation, saturating that term to 1.0; it feeds
+  `max(anomaly, mahalanobis)`, so it armed the CUSUM on every step and the
+  detector fired a false `ml_ensemble` risk every few steps of an otherwise
+  healthy episode. The latency term now gates on `latency_count >= 2`, the
+  same fix the zero-dependency latency detector already had (#348). The
+  error term is unaffected -- measuring error rates on untimed streams is the
+  reason the two counts are kept separate (#101).
+- `snagline baseline` now reports a tool whose steps carried no timing as
+  `n=10 timed=0 mean=n/a std=n/a` instead of `n=10 mean=0.0ms std=0.0ms`.
+  The old line claimed a hundred samples averaged zero milliseconds, which
+  is what hid a baseline the latency detectors cannot use. Tools whose every
+  step was timed print exactly as before (#348).
 - `episode_token_budget` and `token_budget_warn_fraction` are now range-checked
   at construction and after env/file layering, like the horizon and stagnation
   knobs. A zero or negative budget used to fire a score-1.0 `budget_breach` on

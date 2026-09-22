@@ -315,7 +315,12 @@ class EsnCusumDetector:
 
         Computed over the standardized latency and error terms of the
         event's tool; mapped through d^2 / (d^2 + dof) so the value stays in
-        range and grows monotonically with distance.
+        range and grows monotonically with distance. The latency term is
+        gated on ``latency_count`` -- the moments it reads are computed from
+        timed steps only -- so a profile fitted from a stream whose adapter
+        reported no ``latency_ms`` contributes its error rate and nothing
+        else, rather than scoring every live latency as a ~100-sigma
+        deviation from a mean of zero (issue #348).
         """
         if self._baseline is None:
             return 0.0
@@ -333,7 +338,7 @@ class EsnCusumDetector:
         terms += z_e * z_e
         dof += 1
         lat = event.latency_ms
-        if lat is not None and lat > 0.0:
+        if lat is not None and lat > 0.0 and tb.latency_count >= 2:
             sigma_l = max(
                 tb.std_latency,
                 _SIGMA_FLOOR_ABS_MS,

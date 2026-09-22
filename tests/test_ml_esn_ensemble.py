@@ -243,6 +243,69 @@ def test_mahalanobis_disabled_without_baseline():
     assert det._mahalanobis_score(_ev(0, latency=9999.0, error=True)) == 0.0
 
 
+def _untimed_profile(n: int = 50, error_every: int = 0) -> BaselineProfile:
+    """A profile from a stream whose adapter reported no latency_ms.
+
+    ``count`` grows on every call while ``latency_count`` stays 0, which is
+    legitimate -- error rates are measured even on streams that report no
+    timing (issue #101) -- but it means ``mean_latency``/``std_latency`` are
+    0.0/0.0, not "zero-ms latency".
+    """
+    tb = ToolBaseline(tool_name="t")
+    for i in range(n):
+        tb.add(None, error=bool(error_every and i % error_every == 0))
+    return BaselineProfile(tools={"t": tb}, total_steps=n)
+
+
+def test_mahalanobis_untimed_baseline_does_not_score_latency():
+    """The latency term must gate on latency_count, not count.
+
+    Scoring a live latency against mean 0.0 with the 1 ms sigma floor makes
+    any real latency a ~100-sigma deviation, saturating this term to 1.0.
+    That feeds ``max(anomaly, mahalanobis)``, so it armed the CUSUM on every
+    step of a healthy episode (issue #348, the same defect the zero-dep
+    latency detector fixed).
+    """
+    det = _fast(baseline=_untimed_profile())
+    # A perfectly ordinary latency, against a baseline that has no latency
+    # samples at all: the latency term is absent, and the event matches the
+    # baseline's zero error rate, so there is nothing to score.
+    assert det._mahalanobis_score(_ev(0, latency=100.0)) == pytest.approx(0.0, abs=1e-9)
+    # And a wild one: without timed samples the baseline has no latency
+    # opinion, so 9000 ms is no more anomalous than 1 ms.
+    assert det._mahalanobis_score(_ev(1, latency=9000.0)) == pytest.approx(
+        0.0, abs=1e-9
+    )
+
+
+def test_untimed_baseline_healthy_stream_stays_silent():
+    """End to end: an untimed baseline must not page on a healthy run.
+
+    Before the gate this fired four times in 20 steps, because the saturated
+    Mahalanobis term overrode the ESN's healthy residual on every step.
+    """
+    det = _fast(baseline=_untimed_profile())
+    fires = [e.step_id for e in _healthy(40) if det.observe(e) is not None]
+    assert fires == [], f"untimed baseline produced false alarms: {fires}"
+
+
+def test_untimed_baseline_still_scores_genuine_errors():
+    """Scope guard: the error term survives without timing.
+
+    Removing the latency term must not remove the term that issue #101's
+    split exists to preserve. A tool that never errored in the healthy
+    baseline is genuinely anomalous when it errors live.
+    """
+    det = _fast(baseline=_untimed_profile())
+    assert det._mahalanobis_score(_ev(0, latency=100.0, error=True)) > 0.9
+
+
+def test_mahalanobis_timed_baseline_still_flags_latency():
+    """Regression guard: the gate must not neuter the timed path."""
+    det = _fast(baseline=_profile(100.0, 20.0))
+    assert det._mahalanobis_score(_ev(0, latency=5000.0, error=False)) > 0.9
+
+
 # --- Fail-open guarantees ----------------------------------------------------
 
 

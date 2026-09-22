@@ -24,6 +24,7 @@ from collections.abc import Callable, Iterator
 from contextlib import suppress
 from pathlib import Path
 
+from snagline.baseline import ToolBaseline
 from snagline.config import Config
 from snagline.events import StepEvent
 from snagline.monitor import Monitor
@@ -742,6 +743,24 @@ def _active_baseline_age(store, tenant: str, deployment: str) -> float | None:
     return None
 
 
+def _tool_line(tb: ToolBaseline) -> str:
+    """Render one fitted tool's summary line for ``baseline fit`` output.
+
+    ``count`` covers every observed tool call while the latency moments are
+    computed from the ``latency_count`` subset, so a profile fitted from a
+    stream whose adapter reported no ``latency_ms`` legitimately reads
+    ``n=100 mean=0.0ms``. Printed as-is that claims a hundred samples
+    averaged zero milliseconds -- the exact misunderstanding that hides a
+    baseline the latency detectors cannot use. Divergence is shown instead.
+    """
+    timed = f" timed={tb.latency_count}" if tb.latency_count != tb.count else ""
+    if tb.latency_count >= 2:
+        lat = f"mean={tb.mean_latency:.1f}ms std={tb.std_latency:.1f}ms"
+    else:
+        lat = "mean=n/a std=n/a"
+    return f"  {tb.tool_name}: n={tb.count}{timed} {lat} errors={tb.error_count}"
+
+
 def _cmd_baseline_retrain(args: argparse.Namespace) -> int:
     """Refit from the newest JSONL window and atomically bump the store.
 
@@ -1014,11 +1033,8 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
             f"snagline baseline: fitted {len(tools)} tool(s) from {profile.total_steps} step(s) "
             f"(semantic {semantic_model})"
         )
-        for name, tb in sorted(tools.items()):
-            print(
-                f"  {name}: n={tb.count} mean={tb.mean_latency:.1f}ms "
-                f"std={tb.std_latency:.1f}ms errors={tb.error_count}"
-            )
+        for _name, tb in sorted(tools.items()):
+            print(_tool_line(tb))
         print(f"snagline baseline: wrote {args.output}")
         return 0
 
@@ -1029,11 +1045,8 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
     print(
         f"snagline baseline: fitted {len(tools)} tool(s) from {profile.total_steps} step(s)"
     )
-    for name, tb in sorted(tools.items()):
-        print(
-            f"  {name}: n={tb.count} mean={tb.mean_latency:.1f}ms "
-            f"std={tb.std_latency:.1f}ms errors={tb.error_count}"
-        )
+    for _name, tb in sorted(tools.items()):
+        print(_tool_line(tb))
     print(f"snagline baseline: wrote {args.output}")
     return 0
 

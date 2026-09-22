@@ -141,6 +141,48 @@ def test_cli_baseline_list_versions_without_store_dir_fails_closed(
     assert not (tmp_path / "baseline.json").exists()
 
 
+def test_cli_baseline_reports_untimed_tools_separately(tmp_path, capsys):
+    """count covers every call; the latency moments come from the timed
+    subset only. Printing ``n=100 mean=0.0ms`` for a tool whose adapter
+    never reported latency claims a hundred samples averaged zero
+    milliseconds, and is exactly what hides a baseline the latency
+    detectors cannot use (issue #348).
+    """
+    traj = tmp_path / "healthy.jsonl"
+    rows = [_event("search", None) for _ in range(10)]
+    rows.append(_event("lookup", 50.0))
+    rows.append(_event("lookup", 70.0))
+    traj.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    out = tmp_path / "baseline.json"
+
+    rc = main(["baseline", str(traj), "--output", str(out)])
+    assert rc == 0
+    lines = capsys.readouterr().out.splitlines()
+    search = next(ln for ln in lines if ln.strip().startswith("search:"))
+    lookup = next(ln for ln in lines if ln.strip().startswith("lookup:"))
+    # Divergence is called out, not papered over with a 0.0 ms mean.
+    assert "n=10 timed=0" in search
+    assert "mean=n/a" in search
+    assert "std=n/a" in search
+    # A fully timed tool prints unchanged: no extra field, real moments.
+    assert "timed=" not in lookup
+    assert "mean=60.0ms" in lookup
+
+
+def test_cli_baseline_timed_tool_output_unchanged(tmp_path, capsys):
+    """A fully timed tool keeps its original line: the divergence note is
+    additive, so existing parsing and fixtures stay valid."""
+    traj = tmp_path / "healthy.jsonl"
+    traj.write_text(
+        "\n".join(json.dumps(_event("search", lat)) for lat in (100.0, 120.0)) + "\n"
+    )
+    rc = main(["baseline", str(traj), "--output", str(tmp_path / "b.json")])
+    assert rc == 0
+    line = next(ln for ln in capsys.readouterr().out.splitlines() if "search:" in ln)
+    # sample std (ddof=1) of [100, 120] is sqrt(200) ~ 14.1
+    assert line.strip() == "search: n=2 mean=110.0ms std=14.1ms errors=0"
+
+
 def test_fitted_at_roundtrip_and_old_files(tmp_path):
     # New files carry fitted_at; old schema-v1 files without it load as 0.0.
     traj = tmp_path / "h.jsonl"
