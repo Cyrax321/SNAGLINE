@@ -23,6 +23,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   score-0.8 warning; values above `1.0` made the pre-breach warning
   unreachable. An out-of-range value is now a configuration error naming the
   knob (#317). 57305ac (fix(cli): make --list-versions read-only on fit and retrain paths)
+- `WebhookSink` and `SlackSink` no longer log the destination URL when a POST
+  fails. The URL is the credential in both cases: a Slack incoming webhook
+  embeds its secret as the final path segment
+  (`https://hooks.slack.com/services/T.../B.../<secret>`), and an arbitrary
+  webhook URL routinely carries basic auth (`https://user:pass@host/`). A sink
+  that cannot reach its destination is exactly the moment an operator reads the
+  log, so the raw URL was being handed to whoever was already looking at a
+  failed integration. Both sinks now log only scheme + host + port via a shared
+  `redacted_destination` helper in `sinks/base.py`, matching `PagerDutySink`,
+  which never logged its routing key. Their `__repr__` is redacted too, so the
+  URL cannot reach a diagnostic capture or an unhandled-exception report
+  (#390).
+- The same two sinks now name a POST failure by its class and status code
+  (`HTTP 503`, `URLError`) rather than logging the exception itself. A
+  `URLError` embeds the destination URL in its reason for some failures (`no
+  host given: <url>`), and the traceback a `logger.exception` call attaches
+  carries it out to the log verbatim -- a second route for the same leak, from
+  inside the fail-open `except` block where a further failure would be the
+  last thing the operator is told (#390).
+- `redacted_destination` no longer raises on a destination with an unbalanced
+  bracket in the authority (`https://[::1`). `urlsplit` itself raises
+  `ValueError` on that input, so the validity guard beneath it never ran and
+  the exception escaped through the two callers the helper exists to keep safe.
+  Such a destination is now reported as `<invalid destination url>`, without
+  echoing the malformed input back (#390).
+- The network sinks (`WebhookSink`, `SlackSink`, `PagerDutySink`) now bound the
+  whole POST by a wall-clock deadline instead of passing `timeout=` through to
+  `urlopen`. That argument is applied per socket operation, and only after name
+  resolution has already completed, so a stuck resolver held the call for as
+  long as it liked and a server trickling its body one byte at a time just
+  under the interval never tripped a read timeout at all. Issue #395 measured a
+  configured 2.0 s budget taking 36.2 s on exactly that trickle, on a request
+  the sink reported as successful. All three sinks now go through a shared
+  `bounded_post` in `sinks/base.py`, which raises `TimeoutError` when the
+  deadline passes and abandons the in-flight request on a daemon thread; the
+  sinks log it fail-open as before (#395).
 
 ## [0.1.0] - 2026-08-27
 
