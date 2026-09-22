@@ -23,6 +23,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   score-0.8 warning; values above `1.0` made the pre-breach warning
   unreachable. An out-of-range value is now a configuration error naming the
   knob (#317). 57305ac (fix(cli): make --list-versions read-only on fit and retrain paths)
+- `Monitor(detectors, sinks, config=cfg)` now applies the enforcement knobs the
+  `Config` carries -- `policy`, `halt_url`, `halt_timeout_s`,
+  `min_severity_for_halt`, and `fail_open` -- instead of only its own
+  arguments. The direct constructor and `Monitor.default()` disagreed about
+  the same configuration, so an operator wiring `SNAGLINE_POLICY=halt_webhook`
+  into the library API silently got observation mode with no warning, while
+  the same config through `snagline serve` armed the webhook. A `None`
+  argument means "not given" and defers to the config; an explicitly passed
+  value still wins, and `Config`'s defaults are the same literals the
+  arguments used to carry, so every pre-existing call constructs identically
+  (#352).
 
 ## [0.1.0] - 2026-08-27
 

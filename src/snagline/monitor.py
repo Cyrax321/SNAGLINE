@@ -209,24 +209,31 @@ class Monitor:
     directive is surfaced thread-safely as :attr:`last_directive`. The
     default ``policy="observe"`` keeps construction byte-identical to the
     pre-#93 behavior: no callback, no network, zero overhead.
+
+    The five enforcement knobs (plus ``fail_open``) are also carried by
+    ``Config``. A ``None`` argument means "not given" and defers to the
+    config, so ``Monitor(detectors, sinks, config=cfg)`` honors
+    ``SNAGLINE_POLICY`` / ``SNAGLINE_HALT_URL`` exactly like
+    :meth:`Monitor.default` does; an explicitly passed value still wins
+    (issue #352). ``on_risk`` is deliberately not on ``Config`` -- callables
+    cannot arrive via env vars or config files.
     """
 
     def __init__(
         self,
         detectors: list[Detector],
         sinks: list[AlertSink],
-        fail_open: bool = True,
+        fail_open: bool | None = None,
         state_backend: StateBackend | None = None,
-        policy: str = DEFAULT_POLICY,
+        policy: str | None = None,
         on_risk: Callable[[FailureRisk], None] | None = None,
         halt_url: str | None = None,
-        halt_timeout_s: float = 0.25,
-        min_severity_for_halt: float = 0.8,
+        halt_timeout_s: float | None = None,
+        min_severity_for_halt: float | None = None,
         config: Config | None = None,
     ) -> None:
         self._detectors = list(detectors)
         self._sinks = list(sinks)
-        self._fail_open = fail_open
         self._state = state_backend or default_state_backend()
         # Horizon-scale time axis (issue #92). Inert unless one of the opt-in
         # horizon knobs is set on the config; all state lives in ``_clocks``,
@@ -263,6 +270,26 @@ class Monitor:
         self._fault_logged: set[str] = set()
         self._metrics = MonitorMetrics()
         self._metrics_lock = threading.Lock()
+        # The five enforcement knobs also live on Config (issue #352). A host
+        # that wires a resolved Config into the library API -- the documented
+        # way to pin knobs, and what SNAGLINE_POLICY=halt_webhook reaches --
+        # got observe mode with no warning: Monitor.default() applied them, the
+        # direct constructor read only its own arguments, and the two entry
+        # points disagreed about the same configuration. A None argument means
+        # "not given" and defers to the config; any explicit value wins, so
+        # every pre-existing call constructs identically (Config's defaults are
+        # the same literals the arguments used to carry).
+        if policy is None:
+            policy = cfg.policy
+        if halt_url is None:
+            halt_url = cfg.halt_url
+        if halt_timeout_s is None:
+            halt_timeout_s = cfg.halt_timeout_s
+        if min_severity_for_halt is None:
+            min_severity_for_halt = cfg.min_severity_for_halt
+        if fail_open is None:
+            fail_open = cfg.fail_open
+        self._fail_open = fail_open
         self._configure_policy(
             policy=policy,
             on_risk=on_risk,

@@ -766,3 +766,91 @@ def test_serve_halt_flags_map_to_config(monkeypatch):
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+# --- Config-borne enforcement knobs (issue #352) -----------------------------
+# The direct constructor read only its own arguments for the five enforcement
+# knobs (+ fail_open), while Monitor.default() applied them from Config, so
+# the same resolved config behaved differently through the two entry points:
+# SNAGLINE_POLICY=halt_webhook wired into Monitor(...) bought observe mode
+# with no warning. An argument left at its default now defers to the config.
+
+
+def test_constructor_applies_enforcement_knobs_from_config():
+    cfg = Config(
+        policy="halt_webhook",
+        halt_url="http://127.0.0.1:9/halt",
+        halt_timeout_s=0.5,
+        min_severity_for_halt=0.6,
+        fail_open=False,
+    )
+    m = Monitor([], [], config=cfg)
+    assert m.policy == "halt_webhook"
+    assert m.halt_url == "http://127.0.0.1:9/halt"
+    assert m._halt_timeout_s == 0.5
+    assert m._min_severity_for_halt == 0.6
+    assert m._fail_open is False
+
+
+def test_constructor_defaults_untouched_without_a_config():
+    # No config, no change: byte-identical to the pre-#352 constructor.
+    m = Monitor([], [])
+    assert m.policy == "observe"
+    assert m.halt_url is None
+    assert m._halt_timeout_s == 0.25
+    assert m._min_severity_for_halt == 0.8
+    assert m._fail_open is True
+
+
+def test_explicit_constructor_argument_wins_over_config():
+    # An explicit non-default argument is the caller's decision and must not be
+    # silently overridden by the config it also passed.
+    cfg = Config(
+        policy="halt_webhook",
+        halt_url="http://127.0.0.1:9/config",
+        halt_timeout_s=0.5,
+        min_severity_for_halt=0.6,
+        fail_open=False,
+    )
+    m = Monitor(
+        [],
+        [],
+        policy="callback",
+        halt_url="http://127.0.0.1:9/explicit",
+        halt_timeout_s=1.0,
+        min_severity_for_halt=0.9,
+        fail_open=True,
+        config=cfg,
+    )
+    assert m.policy == "callback"
+    assert m.halt_url == "http://127.0.0.1:9/explicit"
+    assert m._halt_timeout_s == 1.0
+    assert m._min_severity_for_halt == 0.9
+    assert m._fail_open is True
+
+
+def test_constructor_and_default_agree_on_a_config():
+    # The two entry points must not disagree about one configuration (#352).
+    cfg = Config(
+        policy="halt_webhook",
+        halt_url="http://127.0.0.1:9/halt",
+        halt_timeout_s=0.5,
+        min_severity_for_halt=0.6,
+        fail_open=False,
+    )
+    direct = Monitor([], [], config=cfg)
+    built = Monitor.default(config=cfg, sinks=[])
+    for m in (direct, built):
+        assert m.policy == "halt_webhook"
+        assert m.halt_url == "http://127.0.0.1:9/halt"
+        assert m._halt_timeout_s == 0.5
+        assert m._min_severity_for_halt == 0.6
+        assert m._fail_open is False
+
+
+def test_constructor_still_validates_config_borne_policy():
+    # The config path reaches the same _configure_policy validation: a bad
+    # value fails loudly at construction, not silently at ingest time.
+    cfg = Config(policy="halt_webhook", halt_url=None)
+    with pytest.raises(ValueError, match="requires halt_url"):
+        Monitor([], [], config=cfg)
