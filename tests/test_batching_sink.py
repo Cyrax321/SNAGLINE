@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import time
 
+import pytest
+
 from snagline.risk import SEVERITY_INFO, FailureRisk
 from snagline.sinks.batching import BatchingSink
 
@@ -157,5 +159,30 @@ def test_emit_stays_non_blocking_when_the_batch_is_full():
         assert time.monotonic() - start < 0.1, "emit must not wait on the sink"
         _wait_for(lambda: len(inner.emitted) == 3)
         assert len(inner.emitted) == 3
+    finally:
+        sink.close()
+
+
+# --- Non-positive flush_interval (issue #358) --------------------------------
+# _wake.wait() returns immediately for a zero/negative interval, so the flusher
+# spun through an empty queue ~780k times/sec -- a full core for the process
+# lifetime, while alerts still delivered and nothing else looked wrong. The
+# interval is now rejected at construction, like max_batch is bounded.
+
+
+@pytest.mark.parametrize("bad", [0.0, -1.0, -0.5])
+def test_non_positive_flush_interval_is_rejected(bad: float) -> None:
+    with pytest.raises(ValueError, match="flush_interval must be positive"):
+        BatchingSink(_RecordingSink(), max_batch=1000, flush_interval=bad)
+
+
+def test_positive_flush_interval_is_accepted_as_is() -> None:
+    inner = _RecordingSink()
+    sink = BatchingSink(inner, max_batch=1000, flush_interval=0.05)
+    try:
+        assert sink._flush_interval == 0.05
+        sink.emit(_risk(0))
+        sink.flush_now()
+        assert len(inner.emitted) == 1
     finally:
         sink.close()

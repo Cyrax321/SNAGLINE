@@ -12,6 +12,14 @@ rate limiter.
 wakes the flusher immediately rather than delivering on the caller's thread --
 ``emit`` stays non-blocking even when the wrapped sink is slow.
 
+A non-positive ``flush_interval`` is rejected at construction rather than
+clamped: ``_wake.wait`` returns immediately for one, so the flusher spins
+through an empty queue hundreds of thousands of times per second, pinning a
+full core for the life of the process while alerts still deliver and nothing
+else looks wrong. Unlike ``max_batch`` (clamped, since any size still paces)
+a non-positive interval has no meaningful reading -- the sink's whole point
+is pacing (issue #358).
+
 Fail-open: a delivery error is swallowed (never blocks ingest or the queue).
 ``close()`` drains the queue before returning, so a clean shutdown inside one
 ``flush_interval`` of a detection still delivers the alert.
@@ -40,6 +48,15 @@ class BatchingSink:
     ) -> None:
         self._sink = sink
         self._max_batch = max(1, max_batch)
+        if flush_interval <= 0.0:
+            # A non-positive interval makes _wake.wait return immediately, so
+            # the flusher busy-spins on an empty queue (~780k passes/sec, a
+            # full core, for the life of the process) while still delivering
+            # alerts -- nothing else looks wrong (issue #358). Reject it here
+            # rather than clamping: unlike max_batch there is no size that
+            # still paces, and the join in close() uses this same value as its
+            # timeout, so a negative one also starves the shutdown drain.
+            raise ValueError(f"flush_interval must be positive; got {flush_interval!r}")
         self._flush_interval = flush_interval
         self._min_gap = 1.0 / max_per_second if max_per_second else 0.0
         self._queue: collections.deque[FailureRisk] = collections.deque()
