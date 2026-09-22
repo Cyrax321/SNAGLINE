@@ -23,6 +23,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   score-0.8 warning; values above `1.0` made the pre-breach warning
   unreachable. An out-of-range value is now a configuration error naming the
   knob (#317). 57305ac (fix(cli): make --list-versions read-only on fit and retrain paths)
+- `Monitor.restore` now contains a malformed detector entry instead of
+  aborting the restore around it. Each detector's `load_state` hard-subscripts
+  fields an older release did not write, so a snapshot that crossed a version
+  boundary raised `KeyError`/`AttributeError` mid-loop: detectors already
+  loaded held the snapshot's state, the one that raised kept its live state,
+  and the sink and time-axis restoration that follow the loop never ran --
+  leaving a monitor whose components disagreed about which episodes existed,
+  with no indication of it. The entry is now logged and skipped, leaving that
+  detector on its live state while the rest of the restore completes. A
+  rejected slot is marked consumed, so it is not also reported as an unknown-
+  slot orphan (#384).
+- Detector `load_state` is now transactional. It builds the windows, scaler
+  positions, streaks and fired flags into locals and publishes them only once
+  every field has parsed; a snapshot rejected partway used to leave the
+  detector half on the snapshot and half on its live state -- the windows
+  replaced while the counts and fired flags kept their live values, so the
+  restored window contradicted the scaler position `observe` then used.
 
 ## [0.1.0] - 2026-08-27
 

@@ -177,7 +177,14 @@ class ErrorCascadeDetector:
 
     def load_state(self, state: dict[str, Any]) -> None:
         counts = state.get("counts", {})
-        self._windows = {
+        # Everything is built into locals first and only published once every
+        # conversion has succeeded. ``Monitor.restore_dict`` catches the
+        # ``ValueError`` a bad count raises and moves on, so assigning live
+        # attribute-by-attribute would leave the detector half-restored -- new
+        # windows paired with the old counts, consecutive and fired -- with the
+        # live window it was actually building destroyed and no signal that
+        # anything is wrong (review of #402).
+        windows = {
             ep: deque(
                 flags,
                 maxlen=effective_window_size(
@@ -190,11 +197,14 @@ class ErrorCascadeDetector:
             for ep, flags in state.get("windows", {}).items()
         }
         # Tolerant .get(): pre-#92 snapshots carry no scaler positions.
-        self._counts = {ep: int(n) for ep, n in state.get("counts", {}).items()}
-        self._consecutive = {
-            ep: int(v) for ep, v in state.get("consecutive", {}).items()
-        }
-        self._fired = {ep: bool(v) for ep, v in state.get("fired", {}).items()}
+        # Tolerant .get(): pre-#92 snapshots carry no scaler positions.
+        new_counts = {ep: int(n) for ep, n in counts.items()}
+        consecutive = {ep: int(v) for ep, v in state.get("consecutive", {}).items()}
+        fired = {ep: bool(v) for ep, v in state.get("fired", {}).items()}
+        self._windows = windows
+        self._counts = new_counts
+        self._consecutive = consecutive
+        self._fired = fired
         # The flag counts are derived from the windows above; a restored window
         # carries its own maxlen, so the cached sizes and counts are dropped and
         # recomputed on the first observe rather than trusted against a

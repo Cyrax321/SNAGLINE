@@ -915,21 +915,35 @@ class Monitor:
                             break
             if entry is None or matched_key is None:
                 continue
+            # Consumed from the moment we take responsibility for the entry:
+            # a rejected slot is known and handled, so it must not also be
+            # reported below as an unknown-slot orphan. Reporting it both
+            # ways would describe one bad entry as a composition problem it
+            # is not.
+            consumed.add(matched_key)
             try:
                 load(entry)
-            except Exception:
-                # A malformed entry (truncated JSON, version skew, a hand
-                # edit) must not abort the restore after earlier detectors
-                # already loaded -- restore_dict promises a caller that
-                # catches the ValueError is never left half-restored, and a
-                # bad entry would break that (issue #324). Mirrors the
-                # time_axis block below, which already tolerates this.
+            except Exception as exc:  # noqa: BLE001 - containment, not silence
+                # A malformed entry must not abort the restore halfway
+                # through: every detector that already loaded holds the
+                # snapshot's state, this one keeps its live state, and the
+                # sink/time-axis restoration below never runs at all -- so
+                # the monitor ends up with detectors that disagree about
+                # which episodes exist. ``strict_names`` validated the
+                # composition, not each payload's shape, and the individual
+                # ``load_state`` implementations hard-subscript fields that
+                # an older release did not write. Skipping logs the slot that
+                # failed and leaves the rest of the restore intact (issue
+                # #384).
                 logger.warning(
-                    "snagline: malformed snapshot entry for detector %r; ignored",
+                    "snagline: malformed snapshot entry %r rejected (%s: %s); "
+                    "detector %r keeps its live state",
                     matched_key,
+                    type(exc).__name__,
+                    exc,
+                    getattr(detector, "name", type(detector).__name__),
                 )
                 continue
-            consumed.add(matched_key)
         orphaned = {
             k
             for k, v in dumped_detectors.items()

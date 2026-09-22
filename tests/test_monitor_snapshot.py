@@ -208,6 +208,19 @@ def _lat(step: int, ms: float) -> StepEvent:
     )
 
 
+def _err(step: int) -> StepEvent:
+    return StepEvent(
+        step_id=str(step),
+        episode_id="ep",
+        timestamp=float(step),
+        action_type="tool_call",
+        action_signature=f"s{step}",
+        tool_name="api",
+        latency_ms=100.0,
+        error=True,
+    )
+
+
 def test_latency_state_round_trip_behavioral():
     d1 = LatencyAnomalyDetector(min_samples=3)
     d2 = LatencyAnomalyDetector(min_samples=3)
@@ -371,3 +384,190 @@ def test_strict_restore_rejection_applies_no_detector_state(tmp_path):
         target.restore(path, strict_names=True)
     loop = cast(LoopDetector, target._detectors[1])
     assert loop._windows == {}
+
+
+# --- one malformed detector entry must not abort the restore (issue #384) ----
+
+
+def test_malformed_detector_entry_does_not_abort_restore(caplog):
+    """A snapshot whose payload is missing a field an older release did not
+    write must cost one detector its restored state, not the whole restore.
+
+    Before the containment the ``KeyError`` propagated out of restore_dict
+    mid-loop: detectors already loaded held the snapshot's state, the one
+    that raised kept its live state, and the sink/time-axis restoration that
+    follows the loop never ran -- so the monitor's components disagreed about
+    which episodes existed, with no indication of it.
+    """
+    detectors, sinks = _composition()
+    target = Monitor(detectors, sinks)
+    for i in range(6):
+        target.ingest(_lat(i, 500.0))
+
+    live_latency = cast(LatencyAnomalyDetector, target._detectors[2])
+    live_keys = set(live_latency._states)
+    assert live_keys, "fixture: live state must exist to compare against"
+
+    # LatencyAnomalyDetector slot 2. The payload is well-formed except for the
+    # fields a pre-refit release would not have written -- exactly the shape
+    # of a snapshot that crossed a version boundary.
+    bad = {"states": [[["ep", "api"], {"n": 5, "mean": 10.0}]]}
+
+    before = {i: dict(getattr(s, "risks", [])) for i, s in enumerate(target._sinks)}
+    with caplog.at_level("WARNING", logger="snagline"):
+        # Must not raise: the restore completes around the rejected entry.
+        target.restore_dict(
+            {
+                "format_version": SNAPSHOT_FORMAT_VERSION,
+                "detectors": {"2:latency_anomaly": bad},
+                "live_episodes": ["ep"],
+                "time_axis": {
+                    "ep": {"last_ts": 0.0, "elapsed": 3.0},
+                },
+            }
+        )
+
+    # The rejected detector keeps its live state rather than a half-applied
+    # mix of the snapshot and what it had accumulated.
+    assert set(live_latency._states) == live_keys
+
+    # The restoration that the exception used to skip did run: the clock the
+    # snapshot carried is present, so the episode is not orphaned on resume.
+    clock = target._clocks.get("ep")
+    assert clock is not None and clock.elapsed == 3.0
+
+    # The failure is surfaced, not swallowed.
+    assert any("rejected" in rec.getMessage() for rec in caplog.records)
+
+    # Sink state is untouched by a restore that only carried detectors.
+    assert {
+        i: dict(getattr(s, "risks", [])) for i, s in enumerate(target._sinks)
+    } == before
+
+
+def test_malformed_entry_still_consumes_its_slot(caplog):
+    """A rejected entry is marked consumed, so it is not also reported as an
+    unknown-slot orphan. Two messages for one bad entry would be noise."""
+    detectors, sinks = _composition()
+    target = Monitor(detectors, sinks)
+    target.restore_dict(
+        {
+            "format_version": SNAPSHOT_FORMAT_VERSION,
+            # Slot 0 is LoopDetector. Its load_state is tolerant of dict
+            # payloads, so a non-dict is what actually breaks it -- an older
+            # release's entry shape, or a hand-edited file.
+            "detectors": {"0:loop": "not a dict"},
+        }
+    )
+    warned = [rec.getMessage() for rec in caplog.records]
+    assert any("0:loop" in w and "rejected" in w for w in warned)
+    # The rejected slot is consumed, so it is not ALSO reported as an
+    # unknown-slot orphan: two warnings for one bad entry is noise.
+    assert not any("unknown detector slot" in w for w in warned)
+
+
+def test_good_detectors_are_restored_around_a_bad_one():
+    """The point of containment is not just "no raise": the detectors that
+    parse cleanly must still load, so a partial snapshot degrades one
+    detector instead of the whole restore."""
+    detectors, sinks = _composition()
+    target = Monitor(detectors, sinks)
+    good = {
+        "states": [
+            [
+                ["ep", "api"],
+                {
+                    "n": 5,
+                    "mean": 10.0,
+                    "m2": 0.0,
+                    "cusum": 0.0,
+                    "mu0": None,
+                    "sigma0": 0.0,
+                    "frozen": False,
+                },
+            ]
+        ]
+    }
+    bad = "not a dict"
+    target.restore_dict(
+        {
+            "format_version": SNAPSHOT_FORMAT_VERSION,
+            "detectors": {
+                "2:latency_anomaly": good,
+                "0:loop": bad,
+            },
+        }
+    )
+    latency = cast(LatencyAnomalyDetector, target._detectors[2])
+    loop = cast(LoopDetector, target._detectors[0])
+    assert ("ep", "api") in latency._states, "the good entry still loaded"
+    assert loop._windows == {}, "the bad detector is untouched, not cleared"
+
+
+def test_detector_load_state_is_atomic_when_a_count_is_bad():
+    """A snapshot that parses partway must leave the detector's whole state,
+    not a mix of the snapshot and live traffic (review of #402).
+
+    ``restore_dict`` catches the ``ValueError`` a non-integer count raises and
+    moves on, so the detector never learns the restore failed. Assigning
+    attribute-by-attribute meant the windows had already been replaced with the
+    snapshot's while the counts, consecutive streaks and fired flags stayed at
+    their live values -- the real observed window destroyed, and a window whose
+    contents contradicted the counts the scaler now reports.
+    """
+    detector = ErrorCascadeDetector(window_size=8)
+    for i in range(3):
+        detector.observe(_err(i))
+    live = detector.dump_state()
+    assert live["windows"], "fixture: live state must exist to compare against"
+
+    # ``windows`` parses; ``counts`` does not, so the failure lands between
+    # the two assignments under the old ordering.
+    bad = {
+        "windows": {"ep": [1, 0]},
+        "counts": {"other": "not-an-int"},
+        "consecutive": {"ep": 9},
+        "fired": {"ep": True},
+    }
+    with pytest.raises(ValueError):
+        detector.load_state(bad)
+
+    after = detector.dump_state()
+    assert after == live, (
+        "a rejected snapshot must leave the detector on its live state, not a "
+        f"half-applied mix: {after} vs {live}"
+    )
+
+
+def test_detector_load_state_applies_when_the_snapshot_is_good():
+    """The atomicity change must not turn every load into a rejection. A
+    well-formed snapshot still replaces the state in full."""
+    detector = ErrorCascadeDetector(window_size=8)
+    detector.observe(_err(0))
+    detector.load_state(
+        {
+            "windows": {"ep": [1, 0, 1]},
+            "counts": {"ep": 12},
+            "consecutive": {"ep": 2},
+            "fired": {"ep": True},
+        }
+    )
+    assert list(detector._windows["ep"]) == [1, 0, 1]
+    assert detector._counts == {"ep": 12}
+    assert detector._consecutive == {"ep": 2}
+    assert detector._fired == {"ep": True}
+
+
+def test_strict_restore_rejects_before_any_load_runs(tmp_path):
+    """Regression guard: containment must not soften the strict path. A
+    composition mismatch is a setup error, not a malformed payload, and the
+    whole point of validating before applying is that nothing is applied."""
+    path = str(tmp_path / "state.json")
+    source = Monitor([LoopDetector(), ErrorCascadeDetector()], [ListSink()])
+    source.ingest(_lat(0, 100.0))
+    source.snapshot(path)
+    target = Monitor([ErrorCascadeDetector()], [ListSink()])
+    with pytest.raises(ValueError, match="composition mismatch"):
+        target.restore(path, strict_names=True)
+    cascade = cast(ErrorCascadeDetector, target._detectors[0])
+    assert cascade._windows == {}
