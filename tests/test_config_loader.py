@@ -409,3 +409,50 @@ def test_token_runaway_envelope_out_of_range_aborts_startup():
     assert cfg.episode_token_budget == 1000
     assert cfg.token_budget_warn_fraction == 0.8
     assert Config(token_runaway_enabled=True).episode_token_budget is None
+
+
+def test_score_thresholds_and_tolerances_out_of_range_abort_startup():
+    """Issue #385: the goal-drift / ml-ensemble comparison knobs are gated, not
+    divided, so a bad value never raises downstream -- it either storms healthy
+    traffic or makes the detector's own gate always true. Both are silent."""
+    # A score threshold outside (0.0, 1.0]: 0.0 fires on a zero score (healthy
+    # traffic pages), anything above 1.0 can never fire at all because scores
+    # are clamped.
+    for value in (0.0, -1.0, 1.5, 2.0):
+        with pytest.raises(ValueError, match="goal_drift_score_threshold"):
+            Config(goal_drift_enabled=True, goal_drift_score_threshold=value)
+        with pytest.raises(ValueError, match="ml_ensemble_score_threshold"):
+            Config(ml_ensemble_enabled=True, ml_ensemble_score_threshold=value)
+    # The tolerance knobs are slack subtracted from a non-negative drift
+    # measure, so a negative one adds to the drift instead of absorbing it.
+    for value in (-0.1, -1.0):
+        with pytest.raises(ValueError, match="goal_drift_error_tolerance"):
+            Config(goal_drift_enabled=True, goal_drift_error_tolerance=value)
+        with pytest.raises(ValueError, match="goal_drift_latency_k"):
+            Config(goal_drift_enabled=True, goal_drift_latency_k=value)
+
+    # Env layering bypasses __post_init__ via setattr, so resolve() must
+    # re-check: a threshold of 2.0 would otherwise run a detector that can
+    # never fire, reporting detector_errors == 0 the whole time.
+    with pytest.raises(ValueError, match="goal_drift_score_threshold"):
+        Config.resolve(environ={"SNAGLINE_GOAL_DRIFT_SCORE_THRESHOLD": "2.0"})
+    with pytest.raises(ValueError, match="ml_ensemble_score_threshold"):
+        Config.resolve(environ={"SNAGLINE_ML_ENSEMBLE_SCORE_THRESHOLD": "-1"})
+    with pytest.raises(ValueError, match="goal_drift_error_tolerance"):
+        Config.resolve(environ={"SNAGLINE_GOAL_DRIFT_ERROR_TOLERANCE": "-0.5"})
+    with pytest.raises(ValueError, match="goal_drift_latency_k"):
+        Config.resolve(environ={"SNAGLINE_GOAL_DRIFT_LATENCY_K": "-3"})
+
+    # The bounds must not eat a legitimate config: the defaults pass every
+    # layer, as does a threshold pinned at the top of the clamped score range
+    # and slack of exactly zero.
+    assert Config(goal_drift_enabled=True).goal_drift_score_threshold == 0.5
+    cfg = Config.resolve(
+        environ={
+            "SNAGLINE_GOAL_DRIFT_ENABLED": "true",
+            "SNAGLINE_GOAL_DRIFT_SCORE_THRESHOLD": "1.0",
+            "SNAGLINE_GOAL_DRIFT_LATENCY_K": "0",
+        }
+    )
+    assert cfg.goal_drift_score_threshold == 1.0
+    assert cfg.goal_drift_latency_k == 0.0
