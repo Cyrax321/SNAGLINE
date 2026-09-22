@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import types
 from collections.abc import Mapping
@@ -62,7 +63,17 @@ def _coerce(hint: type, value: str) -> Any:
     if hint is int:
         return int(value)
     if hint is float:
-        return float(value)
+        parsed = float(value)
+        # ``float()`` happily accepts "inf", "-inf", "nan" and overflows like
+        # "1e400". Every one of them silently deadens the knob's detector for
+        # the whole run: ``cusum > inf`` is never true, and
+        # ``max(0.0, nan)`` is 0.0, which pins a CUSUM accumulator at zero.
+        # The process starts cleanly and the safety net is off with nothing
+        # in the logs to say so, so reject the value where it enters instead
+        # of letting a non-finite comparison disable detection (issue #383).
+        if not math.isfinite(parsed):
+            raise ValueError(f"non-finite float value: {value!r}")
+        return parsed
     return value
 
 
@@ -610,7 +621,14 @@ class Config:
         if path.endswith(".toml"):
             data: dict[str, Any] = _load_toml(text)
         else:
+            # ``json.loads`` accepts the bare ``Infinity`` / ``NaN`` tokens by
+            # default, and literals like ``1e400`` overflow to inf without a
+            # complaint. Reject either here rather than letting a non-finite
+            # knob silently deaden its detector (issue #383).
             data = json.loads(text)
+        for key, value in data.items():
+            if isinstance(value, float) and not math.isfinite(value):
+                raise ValueError(f"{key}: non-finite float value {value!r} in {path}")
         valid = {f.name for f in fields(cls)}
         return cls(**{k: v for k, v in data.items() if k in valid})
 
