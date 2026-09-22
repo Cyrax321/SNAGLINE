@@ -23,6 +23,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   score-0.8 warning; values above `1.0` made the pre-breach warning
   unreachable. An out-of-range value is now a configuration error naming the
   knob (#317). 57305ac (fix(cli): make --list-versions read-only on fit and retrain paths)
+- `semantic_drift_cusum_h` and `semantic_drift_cusum_k` are now range-checked
+  at construction and after env/file layering, alongside the deterministic
+  CUSUM bars. `cusum_h` is the denominator of the semantic goal-drift alarm
+  score, so `0` raised `ZeroDivisionError` on every scored step; the
+  detector's fail-open wrapper swallowed it and re-logged a traceback once per
+  step while no `goal_drift` risk ever fired. A negative `cusum_h` or
+  `cusum_k` inverted the CUSUM and stormed a false positive on nearly every
+  step. Both are now startup configuration errors naming the knob (#370).
+- A `SNAGLINE_*` key naming an object-typed field now logs a warning when
+  ignored, instead of vanishing silently. `Config.from_env_overrides` warned
+  only for values that failed coercion; a key naming `goal_drift_baseline` or
+  `calibration_baseline` (both `BaselineProfile | None`, deliberately out of
+  reach of string coercion) was skipped with no log line, so the module's own
+  promise that ignored keys are "ignored (logged at warning)" did not hold.
+  An operator setting either env form got no feedback that it could never
+  apply, and found out only by noticing the detector staying inert. The
+  warning now also points at the right alternative: `SNAGLINE_CALIBRATION_
+  BASELINE_PATH` for the one field with a path form, or passing the object in
+  code for `goal_drift_baseline`, which has none (#355).
 
 ## [0.1.0] - 2026-08-27
 

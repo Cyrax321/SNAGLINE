@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 import pytest
 
@@ -329,6 +330,67 @@ def test_from_env_overrides_still_drops_uncoercible_values():
     assert cfg.stagnation_min_novelty == 0.05
 
 
+def test_from_env_warns_when_a_key_names_an_object_typed_field(caplog):
+    """Issue #355: a present key naming a non-scalar field used to be skipped
+    with no log line at all, so ``SNAGLINE_GOAL_DRIFT_BASELINE`` /
+    ``SNAGLINE_CALIBRATION_BASELINE`` were silent no-ops -- discoverable only
+    by noticing the detector staying inert. Both now log, like a malformed
+    value always did."""
+    caplog.set_level(logging.WARNING, logger="snagline.config")
+    env = {
+        "SNAGLINE_GOAL_DRIFT_BASELINE": "/tmp/x.json",
+        "SNAGLINE_CALIBRATION_BASELINE": "/tmp/y.json",
+    }
+    overrides = Config.from_env_overrides(environ=env)
+    assert overrides == {}, "an object-typed field must never be set from env"
+    message = "\n".join(r.getMessage() for r in caplog.records)
+    assert "SNAGLINE_GOAL_DRIFT_BASELINE" in message
+    assert "SNAGLINE_CALIBRATION_BASELINE" in message
+    assert "goal_drift_baseline" in message
+    assert "calibration_baseline" in message
+
+
+def test_object_typed_field_advice_names_the_path_variant_when_one_exists(caplog):
+    """Only ``calibration_baseline`` has a ``*_path`` form; the advice for
+    ``goal_drift_baseline`` must not invent one."""
+    caplog.set_level(logging.WARNING, logger="snagline.config")
+
+    Config.from_env_overrides(environ={"SNAGLINE_CALIBRATION_BASELINE": "/tmp/y.json"})
+    assert any(
+        "SNAGLINE_CALIBRATION_BASELINE_PATH" in r.getMessage() for r in caplog.records
+    )
+
+    caplog.clear()
+    Config.from_env_overrides(environ={"SNAGLINE_GOAL_DRIFT_BASELINE": "/tmp/x.json"})
+    assert any(
+        "goal_drift_baseline" in r.getMessage()
+        and "SNAGLINE_GOAL_DRIFT_BASELINE_PATH" not in r.getMessage()
+        for r in caplog.records
+    ), "no goal_drift_baseline_path exists; the advice must say to pass it in code"
+
+
+def test_object_typed_field_warning_survives_the_resolve_layer(caplog, tmp_path):
+    """``resolve`` is the entrypoint ``serve``/``watch``/``replay`` all use, so
+    the operator has to see the warning there too, not only via ``from_env``."""
+    caplog.set_level(logging.WARNING, logger="snagline.config")
+    cfg_path = tmp_path / "conf.json"
+    cfg_path.write_text("{}", encoding="utf-8")
+    Config.resolve(
+        path=str(cfg_path), environ={"SNAGLINE_GOAL_DRIFT_BASELINE": "/tmp/x.json"}
+    )
+    assert any("SNAGLINE_GOAL_DRIFT_BASELINE" in r.getMessage() for r in caplog.records)
+
+
+def test_unknown_env_keys_stay_silent(caplog):
+    """The new warning is scoped to keys that name a real but non-scalar field;
+    a truly unknown key is still silent (it may belong to a sibling tool)."""
+    caplog.set_level(logging.WARNING, logger="snagline.config")
+    Config.from_env_overrides(environ={"SNAGLINE_BOGUS_FIELD": "1"})
+    assert not [
+        r for r in caplog.records if "SNAGLINE_BOGUS_FIELD" in r.getMessage()
+    ], "unknown keys must not warn"
+
+
 def test_every_shipped_detector_is_in_readme_detector_table():
     """Guard for issue #206: README detector table must list every detector wired in Monitor.default()."""
     import pathlib
@@ -409,3 +471,42 @@ def test_token_runaway_envelope_out_of_range_aborts_startup():
     assert cfg.episode_token_budget == 1000
     assert cfg.token_budget_warn_fraction == 0.8
     assert Config(token_runaway_enabled=True).episode_token_budget is None
+
+
+def test_semantic_drift_cusum_knobs_out_of_range_abort_startup():
+    """Issue #370: semantic_drift_cusum_h is the denominator of the alarm
+    score and semantic_drift_cusum_k is the per-step subtraction, so both
+    coerce cleanly from env but fail loudly in opposite directions -- h=0
+    deadens the detector with a swallowed ZeroDivisionError logged once per
+    step, and a negative h or k storms a false positive on nearly every step.
+    Same contract as the stagnation knobs (#132) and the deterministic CUSUM
+    bars (#331): a configuration error at startup, not a broken detector
+    discovered once steps are flowing."""
+    for h in (0.0, -0.5):
+        with pytest.raises(ValueError, match="semantic_drift_cusum_h"):
+            Config(semantic_drift_enabled=True, semantic_drift_cusum_h=h)
+    for k in (-0.1, -1.0):
+        with pytest.raises(ValueError, match="semantic_drift_cusum_k"):
+            Config(semantic_drift_enabled=True, semantic_drift_cusum_k=k)
+
+    # Env layering bypasses __post_init__ via setattr, so resolve() must
+    # re-check too -- a typo'd SNAGLINE_SEMANTIC_DRIFT_CUSUM_H=0 must not
+    # deaden the detector after a clean startup.
+    with pytest.raises(ValueError, match="semantic_drift_cusum_h"):
+        Config.resolve(environ={"SNAGLINE_SEMANTIC_DRIFT_CUSUM_H": "0"})
+    with pytest.raises(ValueError, match="semantic_drift_cusum_k"):
+        Config.resolve(environ={"SNAGLINE_SEMANTIC_DRIFT_CUSUM_K": "-0.1"})
+
+    # The defaults are valid, so a stock config (and the opt-in path with its
+    # shipped values) must survive every layer without tripping the checks.
+    cfg = Config.resolve(environ={"SNAGLINE_SEMANTIC_DRIFT_ENABLED": "true"})
+    assert cfg.semantic_drift_cusum_h == 0.5
+    assert cfg.semantic_drift_cusum_k == 0.05
+    assert Config(semantic_drift_enabled=True).semantic_drift_cusum_h == 0.5
+    # A zero slack is legitimate (no debt decay), so it must be accepted.
+    assert (
+        Config(
+            semantic_drift_enabled=True, semantic_drift_cusum_k=0.0
+        ).semantic_drift_cusum_k
+        == 0.0
+    )

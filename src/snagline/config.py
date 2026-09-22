@@ -253,6 +253,38 @@ def _validated_divisor_thresholds(cfg: Config) -> None:
             )
 
 
+def _validated_semantic_drift(cfg: Config) -> None:
+    """Validate the semantic goal-drift CUSUM knobs (issue #370); raise when
+    invalid.
+
+    Same contract as the horizon knobs (issue #92) and the deterministic
+    CUSUM bars (#331): an out-of-range value is a configuration error and
+    fails loudly at construction/resolve time instead of reaching
+    ``SemanticGoalDriftDetector._observe``, where the consequences are the two
+    things a drift detector must never do.
+
+    ``cusum_h`` is the denominator of the alarm score, so ``0`` raises
+    ``ZeroDivisionError`` on every scored step; ``observe`` swallows it
+    fail-open and re-logs a traceback once per step, and the episode never
+    alarms. A negative ``h`` makes ``debt >= h`` trivially true (debt is
+    clamped to ``>= 0``), and a negative slack ``k`` adds to the debt instead
+    of subtracting, so either one storms a false positive on nearly every
+    step.
+    """
+    if cfg.semantic_drift_cusum_h <= 0:
+        raise ValueError(
+            "semantic_drift_cusum_h must be positive; it is the denominator "
+            "of the alarm score, so 0 deadens the detector with a swallowed "
+            f"ZeroDivisionError; got {cfg.semantic_drift_cusum_h!r}"
+        )
+    if cfg.semantic_drift_cusum_k < 0:
+        raise ValueError(
+            "semantic_drift_cusum_k must be >= 0; a negative slack adds to "
+            "the CUSUM debt instead of subtracting and storms false "
+            f"positives; got {cfg.semantic_drift_cusum_k!r}"
+        )
+
+
 @dataclass
 class Config:
     # Loop detector
@@ -548,6 +580,9 @@ class Config:
         # ZeroDivisionError at ingest time and fail-open then silently disables
         # the detector for the rest of the run.
         _validated_divisor_thresholds(self)
+        # Issue #370: same policy for the semantic goal-drift CUSUM knobs.
+        # Their defaults are valid, so only a configured value trips these.
+        _validated_semantic_drift(self)
 
     # --- 12-factor configuration (project.md §5.4, ATTACH_ANY_SYSTEM P0) -----
     @classmethod
@@ -563,7 +598,8 @@ class Config:
         it (issue #66).
 
         Reads ``<prefix><FIELD>`` (case-insensitive). Unknown prefixes, unknown
-        keys, and values that fail to coerce are ignored (logged at warning)
+        keys, values that fail to coerce, and keys naming object-typed fields
+        that cannot be built from a string are ignored (logged at warning)
         rather than fatal, so a host can pass through unrelated environment
         without breaking startup.
         """
@@ -582,6 +618,31 @@ class Config:
                     overrides[name] = _coerce(hint, value)
                 except ValueError:
                     logger.warning("snagline: ignoring bad env %s=%r", key, value)
+            else:
+                # A present key naming a field that cannot be built from a
+                # string. _coercible_hint keeps object-typed fields
+                # (goal_drift_baseline / calibration_baseline, both
+                # ``BaselineProfile | None``) out of reach of coercion on
+                # purpose -- a profile is a fitted artifact, not a path --
+                # but nothing else told the operator this, so the env form of
+                # either field was a silent no-op, discoverable only by
+                # noticing the detector staying inert. The module docstring
+                # promises that ignored keys are "ignored (logged at
+                # warning)", and a key that can never apply is as worth
+                # logging as one whose value is malformed (issue #355).
+                path_field = f"{name}_path"
+                if path_field in hints:
+                    advise = f" use {prefix}{path_field.upper()} for a file path"
+                else:
+                    advise = " pass the object in code"
+                logger.warning(
+                    "snagline: ignoring env %s=%r: %s is an object-typed field "
+                    "and cannot be set from the environment;%s",
+                    key,
+                    value,
+                    name,
+                    advise,
+                )
         return overrides
 
     @classmethod
@@ -663,4 +724,9 @@ class Config:
         # (issue #322): SNAGLINE_LOOP_REPEAT_THRESHOLD=0 must abort startup
         # with a clear error, not ZeroDivisionError inside the detector.
         _validated_divisor_thresholds(cfg)
+        # Same re-validation for the semantic goal-drift CUSUM knobs (issue
+        # #370): SNAGLINE_SEMANTIC_DRIFT_CUSUM_H=0 must abort startup with a
+        # clear error, not deaden the detector with a swallowed
+        # ZeroDivisionError once steps start flowing.
+        _validated_semantic_drift(cfg)
         return cfg
