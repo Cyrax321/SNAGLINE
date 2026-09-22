@@ -22,11 +22,14 @@ several sustained spikes. Only ``latency_ms`` and ``tool_name`` are read -- no
 content (project.md §1.4).
 
 Calibrated start (issue #101): passing a fitted ``BaselineProfile`` replaces
-the live warm-up for tools it describes well enough (``count >=
+the live warm-up for tools it describes well enough (``latency_count >=
 min_samples``): the CUSUM starts frozen at the profile's healthy mean and
-floored spread instead of learning from early live samples. Episodes shorter
-than the warm-up are therefore monitorable from their first step, with no new
-knobs: k/h stay as configured.
+floored spread instead of learning from early live samples. The gate is on
+``latency_count``, the latency-bearing subset, because the seeded statistics
+are computed from it alone -- a profile fitted from a stream whose adapter
+reported no timings has no latency statistics to seed from (issue #348).
+Episodes shorter than the warm-up are therefore monitorable from their first
+step, with no new knobs: k/h stay as configured.
 """
 
 from __future__ import annotations
@@ -215,7 +218,21 @@ class LatencyAnomalyDetector:
             seeded: ToolBaseline | None = None
             if self._baseline is not None:
                 candidate = self._baseline.tools.get(key[1])
-                if candidate is not None and candidate.count >= self.min_samples:
+                # Gate on latency_count, not count: the stats being seeded
+                # (mean_latency / std_latency) are computed from the
+                # latency-bearing subset only. A profile fitted from a stream
+                # whose adapter reported no timings legitimately has
+                # count=100, latency_count=0, mean_latency=0.0 (issue #101
+                # supports exactly that stream), and seeding from it freezes
+                # onto a zero baseline. _floored_sigma keeps the reference
+                # spread finite -- the absolute floor, 1 ms by default -- so a
+                # real call measures as a large but finite multiple of it and
+                # crosses the CUSUM threshold on the first step, paging
+                # critical on step 0 of every episode (issue #348).
+                if (
+                    candidate is not None
+                    and candidate.latency_count >= self.min_samples
+                ):
                     seeded = candidate
             if seeded is not None:
                 state.seed(seeded.mean_latency, seeded.std_latency)
