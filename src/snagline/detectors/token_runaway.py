@@ -71,6 +71,18 @@ class TokenRunawayDetector:
             raise ValueError(
                 f"warn_fraction must be within (0, 1]; got {self.warn_fraction!r}"
             )
+        # Mirrors Config._validated_cusum_slack (issue #421): direct construction
+        # with explicit kwargs skips the Config check, hence the duplicate guard
+        # here. A negative slack adds |k| to the accumulator every scored step
+        # regardless of the data, so the alarm becomes a function of step count
+        # alone and storms healthy traffic (measured: 20 risks in 30 steps on a
+        # perfectly constant 100 tokens/step). ``0`` is fine -- no slack.
+        if self.k < 0:
+            raise ValueError(
+                f"k must be >= 0; got {self.k!r}. The slack is subtracted from "
+                "the CUSUM accumulator each scored step, so a negative value "
+                "adds |k| unconditionally and alarms on healthy traffic"
+            )
         self._states: dict[str, _WelfordCUSUM] = {}
         self._totals: dict[str, int] = {}
         self._warned: dict[str, bool] = {}

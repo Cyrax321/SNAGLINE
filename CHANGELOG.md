@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nothing yet.
 
 ### Fixed
+- `cusum_k` and `token_cusum_k` are now range-checked at construction and after
+  env/file layering. The CUSUM slack is subtracted from the accumulator every
+  scored step, so a negative value *adds* `|k|` unconditionally and the
+  accumulator climbs by `|k|` per step no matter what the data does -- the
+  alarm becomes a function of step count alone and storms false positives on
+  perfectly healthy traffic (measured: 20 risks in 30 steps on a constant 100
+  tokens/step, score climbing to 1.0). `0` stays legitimate: it means no
+  slack, maximally sensitive but not inverted (#421).
 - `snagline baseline --list-versions` is now honored on both the fit and
   `retrain` paths and is read-only everywhere: it lists and exits 0 without
   fitting, writing `baseline.json`, or storing a new version. Without

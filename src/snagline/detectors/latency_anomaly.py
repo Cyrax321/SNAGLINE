@@ -191,6 +191,18 @@ class LatencyAnomalyDetector:
         self._states_lock = threading.Lock()
         # Periodic baseline re-fit (issue #92); 0 disables (the default).
         self.refit_every = cfg.cusum_refit_every
+        # Mirrors Config._validated_cusum_slack (issue #421): direct construction
+        # with explicit kwargs skips the Config check, hence the duplicate guard
+        # here. A negative slack adds |k| to the accumulator every scored step
+        # regardless of the data, so the alarm becomes a function of step count
+        # alone and storms healthy traffic (measured: 20 risks in 30 steps on a
+        # perfectly constant 100 ms latency). ``0`` is fine -- no slack.
+        if self.k < 0:
+            raise ValueError(
+                f"k must be >= 0; got {self.k!r}. The slack is subtracted from "
+                "the CUSUM accumulator each scored step, so a negative value "
+                "adds |k| unconditionally and alarms on healthy traffic"
+            )
 
     def observe(self, event: StepEvent) -> FailureRisk | None:
         if event.latency_ms is None:
