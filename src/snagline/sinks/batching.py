@@ -21,11 +21,14 @@ from __future__ import annotations
 
 import collections
 import contextlib
+import logging
 import threading
 import time
 
 from snagline.risk import FailureRisk
 from snagline.sinks.base import AlertSink
+
+logger = logging.getLogger("snagline")
 
 
 class BatchingSink:
@@ -114,7 +117,33 @@ class BatchingSink:
         self._stop.set()
         self._wake.set()  # unblock the interval wait so the drain happens now
         self._thread.join(timeout=self._flush_interval + 1.0)
-        # If the thread did not finish its drain within the join timeout, flush
-        # on the caller's thread. ``_flush`` is a no-op on an empty queue, so
-        # this is safe either way.
-        self._flush()
+        if not self._thread.is_alive():
+            # The flusher drained and exited: pick up anything enqueued after
+            # its final pass. ``_flush`` is a no-op on an empty queue.
+            self._flush()
+            return
+        # The flusher is still inside ``_deliver`` -- the wrapped sink is hung
+        # (a network sink whose ``urlopen`` never returns, e.g. an unresolvable
+        # host against a black-holed resolver; ``emit``'s timeout does not
+        # bound DNS). It already cleared the queue, but alerts kept arriving,
+        # so the fallback flush has real work. Wait once more for a
+        # slow-but-progressing delivery instead of hanging forever, and make an
+        # undelivered shutdown observable rather than silent (issue #393).
+        #
+        # The acquire is a readiness probe -- "the flusher is no longer inside
+        # _deliver" -- and must be released *before* the flush. ``_flush`` ->
+        # ``_deliver`` re-acquires this lock, and ``Lock`` is not reentrant, so
+        # holding it across the call makes that re-acquire block forever with
+        # no timeout covering it: shutdown hangs on exactly the path this
+        # method exists to bound. ``_flush``'s snapshot-and-clear under the
+        # queue lock keeps the two flush paths from double-delivering.
+        if self._delivery_lock.acquire(timeout=self._flush_interval + 1.0):
+            self._delivery_lock.release()
+            self._flush()
+        else:
+            logger.warning(
+                "snagline BatchingSink: shutdown timed out after %.1fs with "
+                "%d alert(s) undelivered; the wrapped sink did not return",
+                self._flush_interval + 1.0,
+                len(self._queue),
+            )

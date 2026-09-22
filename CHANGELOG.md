@@ -23,6 +23,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   score-0.8 warning; values above `1.0` made the pre-breach warning
   unreachable. An out-of-range value is now a configuration error naming the
   knob (#317). 57305ac (fix(cli): make --list-versions read-only on fit and retrain paths)
+- `WebhookSink` and `SlackSink` no longer log the destination URL when a POST
+  fails. The URL is the credential in both cases: a Slack incoming webhook
+  embeds its secret as the final path segment
+  (`https://hooks.slack.com/services/T.../B.../<secret>`), and an arbitrary
+  webhook URL routinely carries basic auth (`https://user:pass@host/`). A sink
+  that cannot reach its destination is exactly the moment an operator reads the
+  log, so the raw URL was being handed to whoever was already looking at a
+  failed integration. Both sinks now log only scheme + host + port via a shared
+  `redacted_destination` helper in `sinks/base.py`, matching `PagerDutySink`,
+  which never logged its routing key. Their `__repr__` is redacted too, since
+  the default attribute dump would leak the same URL into any diagnostic
+  capture (#390).
+- `snagline serve --max-body-bytes 0` (or any negative) is now rejected at
+  startup with exit 2 instead of being accepted. `do_POST` compares the
+  declared length against the cap with a strict `>`, so a cap of 0 rejects
+  *every* POST with 413: the sidecar came up cleanly, reported `GET /health`
+  green, and silently dropped 100% of inbound telemetry. The neighbouring
+  `max_risks` knob was already clamped with `max(1, ...)` while this one was
+  not, and the flag has no `None`/unlimited value -- worse, `--episode-ttl-seconds`
+  on the next line documents `0 disables`, so 0 was the value an operator
+  reaching for "no body limit" was most likely to type. `make_handler` /
+  `make_server` now raise on a non-positive cap too, so library callers cannot
+  build a green-but-deaf server either (#394).
+- `BatchingSink.close()` no longer hangs forever when the wrapped sink is
+  stuck. It joined the flusher for `flush_interval + 1.0` s and then called
+  `_flush()` unconditionally, which takes `_delivery_lock` with no bound -- so
+  when the background thread was parked inside `_deliver` on a hung endpoint,
+  shutdown parked on the very lock that thread held. The flusher clears the
+  queue before taking the lock, so the deadlock needed an alert enqueued
+  *while* it was parked, which is what a live alert stream does; a hung
+  shutdown produced no diagnostic at all. `close()` now waits once more with
+  the same budget and, if delivery still does not return, logs how many alerts
+  went undelivered instead of blocking indefinitely (#393). The acquired lock
+  is also now released *before* the fallback `_flush()`: `_flush` -> `_deliver`
+  re-acquires that non-reentrant lock, so holding it across the call
+  self-deadlocked shutdown whenever the probe succeeded and the queue was
+  non-empty -- reachable whenever a delivery finished just as the deadline
+  expired and an alert arrived mid-shutdown.
 
 ## [0.1.0] - 2026-08-27
 

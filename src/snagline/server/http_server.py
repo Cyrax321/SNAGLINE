@@ -912,6 +912,17 @@ def make_handler(
     # most recent max_risks entries rather than growing without limit.
     _Handler.snagline_risks = deque(maxlen=max(1, max_risks))
     _Handler.snagline_auth = auth_token
+    if max_body_bytes <= 0:
+        # do_POST compares ``length > snagline_max_body`` with a strict ``>``,
+        # so a cap of 0 (or any negative) rejects *every* POST with 413: the
+        # sidecar starts cleanly, answers /health green, and silently drops
+        # 100% of inbound telemetry. Reject it at construction, before the
+        # banner claims a working server (issue #394).
+        raise ValueError(
+            "max_body_bytes must be a positive number of bytes, got "
+            f"{max_body_bytes}; the cap is compared with a strict >, so a "
+            "non-positive value rejects every POST with 413"
+        )
     _Handler.snagline_max_body = max_body_bytes
     _Handler.snagline_collector = SidecarMetricsCollector(
         episode_ttl_seconds=episode_ttl_seconds
