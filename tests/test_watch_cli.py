@@ -172,23 +172,64 @@ def test_watch_finalizes_every_episode_in_a_multi_episode_file(
     assert len(aborts) == 2, err
 
 
-def test_watch_episode_id_override_still_fires_for_overridden_id(
+def test_watch_episode_id_override_attributes_events_to_the_flag(
     tmp_path, capsys, monkeypatch
 ):
-    """--episode-id keeps working: events carry ids of their own here, but the
-    override id is still finalized (zero-events fallback, issue #225)."""
+    """The issue #354 repro: ``--episode-id`` documented attribution, but the
+    parsed event's own id was ingested and the flag only named the zero-events
+    fallback at teardown. An operator scoping a multi-tenant stream to one
+    episode silently got per-event attribution. The override now applies at
+    parse time, so the emitted risk names the flag's id."""
     path = tmp_path / "ep.jsonl"
     path.write_text(
-        _event_line("1", "real-ep", "message")
+        _event_line("1", "from-event", "message")
         + "\n"
-        + _event_line("2", "real-ep", "tool_call")
+        + _event_line("2", "from-event", "tool_call")
         + "\n"
     )
     monkeypatch.setenv("SNAGLINE_SILENT_ABORT_ENABLED", "1")
-    rc = main(["watch", "--file", str(path), "--episode-id", "real-ep"])
+    rc = main(["watch", "--file", str(path), "--episode-id", "operator-override"])
     assert rc == 0
     err = capsys.readouterr().err
-    assert '"trigger": "silent_abort"' in err
+    risks = [
+        json.loads(line)
+        for line in err.splitlines()
+        if line.startswith("{") and '"trigger"' in line
+    ]
+    assert any(
+        r["trigger"] == "silent_abort" and r["episode_id"] == "operator-override"
+        for r in risks
+    ), err
+    assert not any(r["episode_id"] == "from-event" for r in risks), (
+        "the events' own ids must not survive the override: " + err
+    )
+
+
+def test_watch_episode_id_override_collapses_a_multi_episode_stream(
+    tmp_path, capsys, monkeypatch
+):
+    """Every line attributes to the override, so a multi-episode file becomes
+    one episode and fires one abort under that id -- not one per source id."""
+    path = tmp_path / "multi.jsonl"
+    lines = [
+        _event_line("1", "ep-a", "message"),
+        _event_line("2", "ep-a", "tool_call"),
+        _event_line("3", "ep-b", "message"),
+        _event_line("4", "ep-b", "tool_call"),
+    ]
+    path.write_text("\n".join(lines) + "\n")
+    monkeypatch.setenv("SNAGLINE_SILENT_ABORT_ENABLED", "1")
+    rc = main(["watch", "--file", str(path), "--episode-id", "scoped"])
+    assert rc == 0
+    err = capsys.readouterr().err
+    risks = [
+        json.loads(line)
+        for line in err.splitlines()
+        if line.startswith("{") and '"trigger"' in line
+    ]
+    aborts = [r for r in risks if r["trigger"] == "silent_abort"]
+    assert {r["episode_id"] for r in aborts} == {"scoped"}, err
+    assert len(aborts) == 1, "one ingested episode, one finalization: " + err
 
 
 def test_watch_zero_events_still_finalizes_the_fallback_id(capsys, monkeypatch):

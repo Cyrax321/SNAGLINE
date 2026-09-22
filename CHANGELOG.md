@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   score-0.8 warning; values above `1.0` made the pre-breach warning
   unreachable. An out-of-range value is now a configuration error naming the
   knob (#317). 57305ac (fix(cli): make --list-versions read-only on fit and retrain paths)
+- `snagline watch --episode-id X` now attributes ingested events to X. The
+  flag's help text promised attribution, but the parsed event's own
+  `episode_id` was ingested and the flag only named the zero-events fallback
+  at teardown, so an operator scoping a multi-tenant stdin stream to one
+  episode silently got per-event attribution with no warning. The override
+  is applied at parse time (via `dataclasses.replace`, since `StepEvent` is
+  frozen), so ingest and the teardown set see one id (#354).
 
 ## [0.1.0] - 2026-08-27
 

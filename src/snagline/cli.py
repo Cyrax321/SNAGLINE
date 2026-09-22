@@ -593,6 +593,16 @@ def _cmd_watch(args: argparse.Namespace) -> int:
                         file=sys.stderr,
                     )
                     continue
+                if args.episode_id is not None:
+                    # The flag documents attribution ("Episode id to attribute
+                    # events to"), but for years it only named the zero-events
+                    # fallback id at teardown -- the parsed event's own id was
+                    # ingested instead, so an operator scoping a multi-tenant
+                    # stream to one episode silently got per-event attribution
+                    # and nothing warned them (issue #354). Override at parse
+                    # time so ingest and the teardown set see one id;
+                    # StepEvent is frozen, hence replace.
+                    event = dataclasses.replace(event, episode_id=args.episode_id)
                 monitor.ingest(event)
                 episodes.add(event.episode_id)
                 steps += 1
