@@ -23,6 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   score-0.8 warning; values above `1.0` made the pre-breach warning
   unreachable. An out-of-range value is now a configuration error naming the
   knob (#317). 57305ac (fix(cli): make --list-versions read-only on fit and retrain paths)
+- `semantic_drift_cusum_h` and `semantic_drift_cusum_k` are now range-checked
+  at construction and after env/file layering, alongside the deterministic
+  CUSUM bars. `cusum_h` is the denominator of the semantic goal-drift alarm
+  score, so `0` raised `ZeroDivisionError` on every scored step; the
+  detector's fail-open wrapper swallowed it and re-logged a traceback once per
+  step while no `goal_drift` risk ever fired. A negative `cusum_h` or
+  `cusum_k` inverted the CUSUM and stormed a false positive on nearly every
+  step. Both are now startup configuration errors naming the knob (#370).
 
 ## [0.1.0] - 2026-08-27
 

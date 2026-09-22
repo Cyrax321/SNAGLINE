@@ -409,3 +409,42 @@ def test_token_runaway_envelope_out_of_range_aborts_startup():
     assert cfg.episode_token_budget == 1000
     assert cfg.token_budget_warn_fraction == 0.8
     assert Config(token_runaway_enabled=True).episode_token_budget is None
+
+
+def test_semantic_drift_cusum_knobs_out_of_range_abort_startup():
+    """Issue #370: semantic_drift_cusum_h is the denominator of the alarm
+    score and semantic_drift_cusum_k is the per-step subtraction, so both
+    coerce cleanly from env but fail loudly in opposite directions -- h=0
+    deadens the detector with a swallowed ZeroDivisionError logged once per
+    step, and a negative h or k storms a false positive on nearly every step.
+    Same contract as the stagnation knobs (#132) and the deterministic CUSUM
+    bars (#331): a configuration error at startup, not a broken detector
+    discovered once steps are flowing."""
+    for h in (0.0, -0.5):
+        with pytest.raises(ValueError, match="semantic_drift_cusum_h"):
+            Config(semantic_drift_enabled=True, semantic_drift_cusum_h=h)
+    for k in (-0.1, -1.0):
+        with pytest.raises(ValueError, match="semantic_drift_cusum_k"):
+            Config(semantic_drift_enabled=True, semantic_drift_cusum_k=k)
+
+    # Env layering bypasses __post_init__ via setattr, so resolve() must
+    # re-check too -- a typo'd SNAGLINE_SEMANTIC_DRIFT_CUSUM_H=0 must not
+    # deaden the detector after a clean startup.
+    with pytest.raises(ValueError, match="semantic_drift_cusum_h"):
+        Config.resolve(environ={"SNAGLINE_SEMANTIC_DRIFT_CUSUM_H": "0"})
+    with pytest.raises(ValueError, match="semantic_drift_cusum_k"):
+        Config.resolve(environ={"SNAGLINE_SEMANTIC_DRIFT_CUSUM_K": "-0.1"})
+
+    # The defaults are valid, so a stock config (and the opt-in path with its
+    # shipped values) must survive every layer without tripping the checks.
+    cfg = Config.resolve(environ={"SNAGLINE_SEMANTIC_DRIFT_ENABLED": "true"})
+    assert cfg.semantic_drift_cusum_h == 0.5
+    assert cfg.semantic_drift_cusum_k == 0.05
+    assert Config(semantic_drift_enabled=True).semantic_drift_cusum_h == 0.5
+    # A zero slack is legitimate (no debt decay), so it must be accepted.
+    assert (
+        Config(
+            semantic_drift_enabled=True, semantic_drift_cusum_k=0.0
+        ).semantic_drift_cusum_k
+        == 0.0
+    )
