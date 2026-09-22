@@ -24,12 +24,19 @@ class _FakeCompletions:
 
 
 class _FakeChat:
-    completions = _FakeCompletions()
+    def __init__(self):
+        self.completions = _FakeCompletions()
 
 
 class _FakeClient:
-    chat = _FakeChat()
-    completions = _FakeCompletions()
+    """Per-instance resources: ``wrap_client`` mutates the resource objects it
+    hands out, so class-level attributes would leak a wrapper (and its bound
+    monitor) across tests -- a later test's events would land in the earlier
+    test's spy, or arrive twice."""
+
+    def __init__(self):
+        self.chat = _FakeChat()
+        self.completions = _FakeCompletions()
 
 
 def test_wrap_client_records_on_success():

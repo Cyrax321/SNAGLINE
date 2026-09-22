@@ -91,7 +91,10 @@ enterprise-grade alerting. Concretely:
    lever.
    - **Done:** `snagline.auto.openai` (#33), `snagline.auto.anthropic` (#34),
      `snagline.auto.langchain` (#35). All import-safe (no-op when SDK absent)
-     and handle sync + async.
+     and handle sync + async, the documented `with stream as s:` /
+     `async with ... as stream:` streaming form (#335), and idempotent
+     composition of global and per-client instrumentation so a call is never
+     recorded twice (#336).
 3. **Publish to PyPI** with versioning and per-framework extras; load config
    from env/yml with secret handling (12-factor).
    - **Done (code side):** PyPI-ready metadata + verified `python -m build`

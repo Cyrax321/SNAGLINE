@@ -33,7 +33,7 @@ import inspect
 import itertools
 import logging
 import time
-from typing import Any
+from typing import Any, Literal
 
 from snagline.events import StepEvent, make_signature
 
@@ -150,6 +150,31 @@ class _SyncStreamWrapper:
             with contextlib.suppress(Exception):
                 close()
 
+    # ``with stream as s:`` is the form both SDKs' docs use for streaming.
+    # Dunder lookup bypasses __getattr__ (it searches the type, not the
+    # instance), so delegating alone never reached the wrapped stream's
+    # __enter__/__exit__ and the form raised TypeError while recording
+    # nothing -- a silent hole in coverage (issue #335). Enter returns self:
+    # iteration still goes through the wrapper, so the event still fires at
+    # exhaustion.
+    def __enter__(self) -> _SyncStreamWrapper:
+        return self
+
+    def __exit__(self, *exc_info: object) -> Literal[False]:
+        # An exception escaping the body is the observed call's visible
+        # outcome: the caller's block died before the stream finished, and
+        # close() alone would record the call as a clean success. This also
+        # covers failures surfaced through proxied stream methods (``s.text()``
+        # and friends go through __getattr__, so the wrapper's __next__ never
+        # sees them) -- without it a mid-stream error inside a ``with`` block
+        # is a silent false negative. _emit is guarded, so when the stream
+        # already emitted at exhaustion this is a no-op and close() only
+        # closes the underlying stream.
+        if exc_info[1] is not None:
+            self._emit(error=True, error_type=type(exc_info[1]).__name__)
+        self.close()
+        return False
+
     def __getattr__(self, name: str) -> Any:
         return getattr(self._stream, name)
 
@@ -223,6 +248,20 @@ class _AsyncStreamWrapper:
                 if inspect.isawaitable(res):
                     await res
 
+    # ``async with stream as s:`` -- same dunder-lookup gap as the sync twin
+    # (issue #335); __getattr__ never participates in async protocol lookup.
+    async def __aenter__(self) -> _AsyncStreamWrapper:
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> Literal[False]:
+        # Same treatment as the sync twin: an exception escaping the body is
+        # the call's visible outcome, and proxied async stream methods (an
+        # ``await s.text()`` failure) never pass through __anext__.
+        if exc_info[1] is not None:
+            self._emit(error=True, error_type=type(exc_info[1]).__name__)
+        await self.aclose()
+        return False
+
     def __getattr__(self, name: str) -> Any:
         return getattr(self._stream, name)
 
@@ -266,6 +305,13 @@ def _is_async_call(original) -> bool:
 
 
 def _wrap_one(monitor, original, tool_name):
+    # Idempotent: wrapping an already-wrapped callable stacks a second layer
+    # and double-counts every call (issue #336). Global mode guards this in
+    # _patch_resource_classes; the per-client path did not, so composing the
+    # two modes -- or calling wrap_client twice -- emitted one event per
+    # layer. Return the existing wrapper rather than re-wrapping.
+    if getattr(original, "__snagline_wrapped__", False):
+        return original
     counter = itertools.count()
     is_async = _is_async_call(original)
 
@@ -320,7 +366,13 @@ def _wrap_one(monitor, original, tool_name):
         _emit(monitor, counter, model, tool_name, sig_text, start, False)
         return result
 
-    return _async if is_async else _sync
+    wrapper = _async if is_async else _sync
+    # Mark the wrapper itself, not just the class attribute global mode sets
+    # it on: the per-client path wraps a bound method and never marked its
+    # own output, so the guard above could not see it and a second
+    # wrap_client stacked another layer (issue #336).
+    wrapper.__snagline_wrapped__ = True  # type: ignore[attr-defined,union-attr]
+    return wrapper
 
 
 def wrap_client(monitor, client):
@@ -343,6 +395,7 @@ def _patch_client(monitor, client) -> int:
     their documented "True if anything was patched" contract.
     """
     patched = 0
+    already = 0
     for path in ("chat.completions.create", "completions.create"):
         cur = client
         ok = True
@@ -357,9 +410,15 @@ def _patch_client(monitor, client) -> int:
         method = getattr(cur, name, None)
         if method is None or not callable(method):
             continue
+        # Skip anything the global path (or a prior wrap_client) already
+        # wrapped: stacking a second layer double-counts every call (issue
+        # #336). This is the per-client twin of _patch_resource_classes' guard.
+        if getattr(method, "__snagline_wrapped__", False):
+            already += 1
+            continue
         setattr(cur, name, _wrap_one(monitor, method, "openai." + path))
         patched += 1
-    if patched == 0:
+    if patched == 0 and already == 0:
         logger.warning(
             "snagline.auto: wrap_client found no create method to patch on %r",
             client,
@@ -416,7 +475,7 @@ def _patch_resource_classes(monitor) -> int:
             seen_wrapped = True
             continue  # already instrumented; re-instrumenting would double-count
         wrapper = _wrap_one(monitor, original, tool_name)
-        wrapper.__snagline_wrapped__ = True  # type: ignore[attr-defined]
+        wrapper.__snagline_wrapped__ = True  # type: ignore[attr-defined,union-attr]
         wrapper.__snagline_original__ = original  # type: ignore[attr-defined]
         cls.create = wrapper
         patched += 1

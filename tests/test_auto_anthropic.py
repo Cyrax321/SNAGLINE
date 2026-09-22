@@ -19,7 +19,12 @@ class _FakeMessages:
 
 
 class _FakeClient:
-    messages = _FakeMessages()
+    """Per-instance resource: ``wrap_client`` mutates the object it finds, so a
+    class-level attribute would leak a wrapper bound to another test's monitor
+    across tests."""
+
+    def __init__(self):
+        self.messages = _FakeMessages()
 
 
 def test_wrap_client_records_on_success():

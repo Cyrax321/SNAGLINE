@@ -45,6 +45,12 @@ def _emit(monitor, counter, model, tool_name, sig_text, start, error) -> None:
 
 
 def _wrap_one(monitor, original, tool_name):
+    # Idempotent: wrapping an already-wrapped callable stacks a second layer
+    # and double-counts every call (issue #336). The OpenAI/Anthropic modules
+    # share the same sentinel, so one host instrumenting through more than one
+    # of these paths stays at one event per call.
+    if getattr(original, "__snagline_wrapped__", False):
+        return original
     counter = itertools.count()
     is_async = inspect.iscoroutinefunction(original)
 
@@ -82,7 +88,11 @@ def _wrap_one(monitor, original, tool_name):
             _emit(monitor, counter, model_name, tool_name, sig_text, start, error)
         return result
 
-    return _async if is_async else _sync
+    wrapper = _async if is_async else _sync
+    # Mark the wrapper so a second wrap_client does not stack another layer
+    # (issue #336); the guard in _wrap_one reads this attribute.
+    wrapper.__snagline_wrapped__ = True  # type: ignore[attr-defined,union-attr]
+    return wrapper
 
 
 def wrap_client(monitor, client):
@@ -96,13 +106,17 @@ def _patch_client(monitor, client) -> int:
 
     Returns the number of methods newly wrapped, so the instrument_*
     entrypoints can honour their documented "True if anything was patched"
-    contract on the explicit-client path.
+    contract on the explicit-client path.  Already-wrapped entrypoints are
+    left alone: a second layer would double-count every call (issue #336).
     """
     patched = 0
     for name in _LANGCHAIN_METHODS:
         method = getattr(client, name, None)
         if method is None or not callable(method):
             continue
+        # _wrap_one returns the existing wrapper unchanged when the method is
+        # already instrumented, so setattr is a harmless no-op that keeps the
+        # entrypoint visible for other paths.
         setattr(client, name, _wrap_one(monitor, method, "langchain." + name))
         patched += 1
     if patched == 0:

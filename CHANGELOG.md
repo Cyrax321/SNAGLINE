@@ -23,6 +23,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   score-0.8 warning; values above `1.0` made the pre-breach warning
   unreachable. An out-of-range value is now a configuration error naming the
   knob (#317). 57305ac (fix(cli): make --list-versions read-only on fit and retrain paths)
+- `snagline.auto` stream wrappers now support the context-manager form. Both
+  SDKs document streaming as `with client....create(stream=True) as stream:`,
+  but the wrappers only proxied the raw stream's attributes through
+  `__getattr__`, and implicit special-method lookup for `with` / `async with`
+  resolves on the *type*, never through `__getattr__` -- so the form raised
+  `TypeError` and emitted zero events, a monitored call that was not monitored
+  at all. `_SyncStreamWrapper` / `_AsyncStreamWrapper` in both `auto/openai.py`
+  and `auto/anthropic.py` now define `__enter__`/`__exit__` and
+  `__aenter__`/`__aexit__`, returning themselves so iteration still flows
+  through the wrapper and the deferred event still fires at exhaustion or
+  close (#335).
+- `wrap_client` (the per-client `snagline.auto` path) is now idempotent like
+  global mode. It had no `__snagline_wrapped__` guard, so composing global and
+  per-client instrumentation -- or calling `wrap_client` twice -- stacked a
+  second wrapper layer and emitted one event per layer per call, silently
+  biasing every counting detector (`error_cascade` tripping on ~2 real
+  failures, doubled loop/stagnation repetition, every latency in the CUSUM
+  window twice). `_wrap_one` now marks its own output and returns an already
+  wrapped callable verbatim across `auto/openai.py`, `auto/anthropic.py` and
+  `auto/langchain.py` (whose `_wrap_one` never set the sentinel at all), and a
+  second `wrap_client` that finds everything already wrapped stays quiet
+  instead of warning that nothing was patchable (#336).
 
 ## [0.1.0] - 2026-08-27
 

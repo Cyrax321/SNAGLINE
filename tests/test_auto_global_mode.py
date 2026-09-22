@@ -33,7 +33,9 @@ import pytest
 import snagline.auto.anthropic as anth_mod
 import snagline.auto.openai as oai_mod
 from snagline.auto.anthropic import instrument_anthropic
+from snagline.auto.anthropic import wrap_client as wrap_anthropic
 from snagline.auto.openai import instrument_openai
+from snagline.auto.openai import wrap_client as wrap_openai
 
 
 class _SpyMonitor:
@@ -308,3 +310,51 @@ def test_instrument_global_does_not_walk_client_cached_property(
     out = client.chat.completions.create(model="gpt", messages=[])
     assert out == "sync-ok"
     assert len(mon.events) == 1
+
+
+# --- composing global and per-client mode (issue #336) -----------------------
+# Both modes wrap ``create``; stacking two layers emits one event per layer per
+# call. The class-attribute wrapper and the per-client bound-method wrapper both
+# carry ``__snagline_wrapped__``, so whichever runs second sees the first.
+
+
+def test_global_then_wrap_client_does_not_double_count(fake_openai_sdk, openai_present):
+    mon = _SpyMonitor()
+    chat, _ = fake_openai_sdk
+    assert instrument_openai(mon) is True
+    client = _FakeSdkClient(chat.Completions())
+    # Per-client mode on top of the globally patched class.
+    wrap_openai(mon, client)
+    out = client.chat.completions.create(model="gpt", messages=[])
+    assert out == "sync-ok"
+    assert len(mon.events) == 1, "global + per-client must not stack two layers"
+
+
+def test_wrap_client_then_global_does_not_double_count(fake_openai_sdk, openai_present):
+    chat, _ = fake_openai_sdk
+    mon = _SpyMonitor()
+    client = _FakeSdkClient(chat.Completions())
+    wrap_openai(mon, client)
+    # Global mode now patches the class the per-client wrapper sits on.
+    assert instrument_openai(mon) is True
+    out = client.chat.completions.create(model="gpt", messages=[])
+    assert out == "sync-ok"
+    assert len(mon.events) == 1
+
+
+def test_global_plus_wrap_client_covers_both_client_shapes(
+    fake_anthropic_sdk, anthropic_present
+):
+    """A globally patched class plus an explicitly wrapped client: the wrapped
+    client's calls count once, and a second client of the same class is
+    monitored by the class patch -- also once."""
+    mon = _SpyMonitor()
+    resource = fake_anthropic_sdk
+    assert instrument_anthropic(mon) is True
+    wrapped_client = _FakeSdkClient(resource.Messages())
+    wrap_anthropic(mon, wrapped_client)
+
+    assert wrapped_client.messages.create(model="claude", messages=[]) == "sync-ok"
+    plain_client = _FakeSdkClient(resource.Messages())
+    assert plain_client.messages.create(model="claude", messages=[]) == "sync-ok"
+    assert len(mon.events) == 2, "one event per call, regardless of which mode saw it"

@@ -27,7 +27,7 @@ import inspect
 import itertools
 import logging
 import time
-from typing import Any
+from typing import Any, Literal
 
 from snagline.events import StepEvent, make_signature
 
@@ -144,6 +144,21 @@ class _SyncStreamWrapper:
             with contextlib.suppress(Exception):
                 close()
 
+    # ``with stream as s:`` -- dunder lookup bypasses __getattr__, so the
+    # context-manager form raised TypeError and recorded nothing (issue #335).
+    def __enter__(self) -> _SyncStreamWrapper:
+        return self
+
+    def __exit__(self, *exc_info: object) -> Literal[False]:
+        # An exception escaping the body is the observed call's visible
+        # outcome; close() alone would record it as a clean success, and
+        # failures surfaced through proxied stream methods (``s.text()``)
+        # are invisible to __next__. See openai.py for the full rationale.
+        if exc_info[1] is not None:
+            self._emit(error=True, error_type=type(exc_info[1]).__name__)
+        self.close()
+        return False
+
     def __getattr__(self, name: str) -> Any:
         return getattr(self._stream, name)
 
@@ -217,6 +232,18 @@ class _AsyncStreamWrapper:
                 if inspect.isawaitable(res):
                     await res
 
+    # ``async with stream as s:`` -- same dunder-lookup gap as the sync twin
+    # (issue #335).
+    async def __aenter__(self) -> _AsyncStreamWrapper:
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> Literal[False]:
+        # Same treatment as the sync twin (see openai.py).
+        if exc_info[1] is not None:
+            self._emit(error=True, error_type=type(exc_info[1]).__name__)
+        await self.aclose()
+        return False
+
     def __getattr__(self, name: str) -> Any:
         return getattr(self._stream, name)
 
@@ -259,6 +286,10 @@ def _is_async_call(original) -> bool:
 
 
 def _wrap_one(monitor, original, tool_name):
+    # Idempotent: a second layer double-counts every call (issue #336).
+    # See openai.py for the full rationale.
+    if getattr(original, "__snagline_wrapped__", False):
+        return original
     counter = itertools.count()
     is_async = _is_async_call(original)
 
@@ -313,7 +344,11 @@ def _wrap_one(monitor, original, tool_name):
         _emit(monitor, counter, model, tool_name, sig_text, start, False)
         return result
 
-    return _async if is_async else _sync
+    wrapper = _async if is_async else _sync
+    # Marked here so the idempotency guard above sees per-client wrappers
+    # too, not just the class attributes global mode marks (issue #336).
+    wrapper.__snagline_wrapped__ = True  # type: ignore[attr-defined,union-attr]
+    return wrapper
 
 
 def wrap_client(monitor, client):
@@ -338,6 +373,11 @@ def _patch_client(monitor, client) -> int:
     method = getattr(cur, "create", None)
     if method is None or not callable(method):
         logger.warning("snagline.auto: wrap_client found no create method on %r", cur)
+        return 0
+    # Skip anything the global path (or a prior wrap_client) already wrapped:
+    # stacking a second layer double-counts every call (issue #336). This is
+    # the per-client twin of _patch_resource_classes' guard.
+    if getattr(method, "__snagline_wrapped__", False):
         return 0
     cur.create = _wrap_one(monitor, method, "anthropic.messages.create")
     return 1
@@ -374,7 +414,7 @@ def _patch_resource_classes(monitor) -> int:
             seen_wrapped = True
             continue  # already instrumented; re-instrumenting would double-count
         wrapper = _wrap_one(monitor, original, "anthropic.messages.create")
-        wrapper.__snagline_wrapped__ = True  # type: ignore[attr-defined]
+        wrapper.__snagline_wrapped__ = True  # type: ignore[attr-defined,union-attr]
         wrapper.__snagline_original__ = original  # type: ignore[attr-defined]
         cls.create = wrapper
         patched += 1
