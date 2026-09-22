@@ -177,20 +177,35 @@ class ErrorCascadeDetector:
 
     def load_state(self, state: dict[str, Any]) -> None:
         counts = state.get("counts", {})
-        self._windows = {
-            ep: deque(
+        windows = state.get("windows", {})
+        # Tolerant .get(): pre-#92 snapshots carry no scaler positions, so
+        # each episode's position is inferred from the window it shipped.
+        # The inferred value must seed _counts too, not merely size the
+        # deque -- observe() reads _counts.get(ep, 0), so an episode left
+        # absent restarts the scaler at the base and the first post-restore
+        # observe refits the deque down, discarding the history that was
+        # just restored (issue #403).
+        # The windows and counts are built into locals and published only once
+        # the whole snapshot has parsed: ``int()`` on a malformed count raises
+        # partway through, and assigning live attribute-by-attribute would
+        # leave the detector half-cleared -- some episodes restored, the rest
+        # silently dropped -- with its live state destroyed and nothing
+        # reporting the mismatch (review of #402).
+        new_windows: dict[str, deque] = {}
+        new_counts: dict[str, int] = {}
+        for ep, flags in windows.items():
+            n = int(counts.get(ep, len(flags)))
+            new_windows[ep] = deque(
                 flags,
                 maxlen=effective_window_size(
-                    self.window_size,
-                    int(counts.get(ep, len(flags))),
-                    self._scale_steps,
-                    self._max_window,
+                    self.window_size, n, self._scale_steps, self._max_window
                 ),
             )
-            for ep, flags in state.get("windows", {}).items()
-        }
-        # Tolerant .get(): pre-#92 snapshots carry no scaler positions.
-        self._counts = {ep: int(n) for ep, n in state.get("counts", {}).items()}
+            new_counts[ep] = n
+        for ep, n in counts.items():
+            new_counts.setdefault(ep, int(n))
+        self._windows = new_windows
+        self._counts = new_counts
         self._consecutive = {
             ep: int(v) for ep, v in state.get("consecutive", {}).items()
         }

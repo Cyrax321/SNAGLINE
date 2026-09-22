@@ -8,6 +8,7 @@ from typing import cast
 
 import pytest
 
+from snagline.config import Config
 from snagline.detectors.compaction_tripwire import CompactionTripwireDetector
 from snagline.detectors.error_cascade import ErrorCascadeDetector
 from snagline.detectors.goal_drift import GoalDriftDetector
@@ -371,3 +372,165 @@ def test_strict_restore_rejection_applies_no_detector_state(tmp_path):
         target.restore(path, strict_names=True)
     loop = cast(LoopDetector, target._detectors[1])
     assert loop._windows == {}
+
+
+# --- a rejected snapshot leaves the detector on its live state, whole (review
+#     of #402) ---------------------------------------------------------------
+
+
+def _tool(step: int, name: str = "api") -> StepEvent:
+    return StepEvent(
+        step_id=str(step),
+        episode_id="ep",
+        timestamp=float(step),
+        action_type="tool_call",
+        action_signature=f"call:{name}:{step}",
+        tool_name=name,
+        latency_ms=100.0,
+    )
+
+
+def test_loop_load_state_is_atomic_when_a_near_count_is_bad():
+    """``restore_dict`` catches the exception and moves on, so a snapshot that
+    parses partway must leave the detector's whole state rather than a mix.
+
+    The loop detector carries four window families plus the stall counters.
+    Assigning attribute-by-attribute meant the plain windows, counts and fired
+    sets had already been replaced with the snapshot's when a bad near-count
+    raised -- the live window destroyed, and restored windows paired with the
+    fired sets live traffic had computed for different signatures entirely.
+    """
+    detector = LoopDetector()
+    for i in range(3):
+        detector.observe(_tool(i))
+    live = detector.dump_state()
+    assert live["windows"], "fixture: live state must exist to compare against"
+
+    bad = {
+        "windows": {"ep": ["call:other:0"]},
+        "counts": {"ep": 4},
+        "fired": {"ep": ["call:other:0"]},
+        # ``windows`` and ``fired`` parse; ``near_counts`` does not, so the
+        # failure lands after those families were built (and, pre-fix, after
+        # they were assigned).
+        "near_windows": {"ep": ["call:near:0"]},
+        "near_counts": {"ep": "not-an-int"},
+    }
+    with pytest.raises(ValueError):
+        detector.load_state(bad)
+
+    after = detector.dump_state()
+    assert after == live, (
+        "a rejected snapshot must leave the detector on its live state, not a "
+        f"half-applied mix: {after} vs {live}"
+    )
+
+
+def test_loop_load_state_applies_when_the_snapshot_is_good():
+    """The atomicity change must not turn every load into a rejection."""
+    detector = LoopDetector()
+    detector.observe(_tool(0))
+    detector.load_state(
+        {
+            "windows": {"ep": ["call:api:0", "call:api:1"]},
+            "counts": {"ep": 12},
+            "fired": {"ep": ["call:api:1"]},
+            "near_windows": {},
+            "near_counts": {},
+            "near_fired": {},
+            "cycle_windows": {},
+            "cycle_counts": {},
+            "cycle_fired": {},
+            "stall_sig": {},
+            "stall_count": {},
+            "stall_start": {},
+            "stall_fired": {},
+        }
+    )
+    assert list(detector._windows["ep"]) == ["call:api:0", "call:api:1"]
+    assert detector._counts == {"ep": 12}
+    assert detector._fired == {"ep": {"call:api:1"}}
+
+
+def test_meltdown_load_state_is_atomic_when_a_count_is_bad():
+    """Same shape as the loop detector, one window family: a bad count raises
+    after the rebuilt window is already in hand, so the live entropy window
+    must not have been clobbered (review of #402)."""
+    detector = MeltdownDetector(window_size=8)
+    for i in range(3):
+        detector.observe(_tool(i, name="t" if i % 2 else "u"))
+    live = detector.dump_state()
+    assert live["windows"], "fixture: live state must exist to compare against"
+
+    bad = {
+        "windows": {"ep": ["t", "u"]},
+        # ``windows`` parses; the count does not.
+        "counts": {"ep": "not-an-int"},
+    }
+    with pytest.raises(ValueError):
+        detector.load_state(bad)
+
+    after = detector.dump_state()
+    assert after == live, (
+        "a rejected snapshot must leave the detector on its live state, not a "
+        f"half-applied mix: {after} vs {live}"
+    )
+
+
+def test_meltdown_load_state_applies_when_the_snapshot_is_good():
+    """The atomicity change must not turn every load into a rejection."""
+    detector = MeltdownDetector(window_size=8)
+    detector.observe(_tool(0))
+    detector.load_state(
+        {
+            "windows": {"ep": ["t", "u", "t"]},
+            "counts": {"ep": 12},
+            "fired": {"ep": True},
+            "clear_streak": {"ep": 2},
+        }
+    )
+    assert list(detector._eps["ep"].window) == ["t", "u", "t"]
+    assert detector._counts == {"ep": 12}
+    assert detector._fired == {"ep": True}
+    assert detector._clear_streak == {"ep": 2}
+
+
+def test_error_cascade_load_state_is_atomic_when_a_count_is_bad():
+    """Same shape as the loop and meltdown detectors: ``int()`` on a malformed
+    count raises after the rebuilt window is already in hand, so the live
+    cascade window must not have been clobbered (review of #402).
+
+    #406 reintroduced the attribute-by-attribute assignment here while adding
+    the scaler-position seeding, which is why this test exists for this
+    detector and not just its siblings.
+    """
+    detector = ErrorCascadeDetector(window_size=8)
+    for i in range(3):
+        detector.observe(_tool(i))
+    live = detector.dump_state()
+    assert live["windows"], "fixture: live state must exist to compare against"
+
+    bad = {
+        "windows": {"ep": [True, False]},
+        # ``windows`` parses; the count does not.
+        "counts": {"ep": "not-an-int"},
+    }
+    with pytest.raises(ValueError):
+        detector.load_state(bad)
+
+    after = detector.dump_state()
+    assert after == live, (
+        "a rejected snapshot must leave the detector on its live state, not a "
+        f"half-applied mix: {after} vs {live}"
+    )
+
+
+def test_error_cascade_load_state_applies_when_the_snapshot_is_good():
+    """The atomicity change must not turn every load into a rejection, and the
+    scaler position the window was sized from must seed ``_counts`` (issue
+    #403): an episode absent from ``counts`` still needs its position."""
+    detector = ErrorCascadeDetector(window_size=8, config=Config(window_scale_steps=4))
+    detector.load_state({"windows": {"ep": [True, False, True]}})
+    assert list(detector._windows["ep"]) == [True, False, True]
+    # Inferred from the shipped window, not left absent.
+    assert detector._counts == {"ep": 3}

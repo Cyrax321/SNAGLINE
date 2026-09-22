@@ -455,68 +455,98 @@ class LoopDetector:
             "stall_fired": dict(self._stall_fired),
         }
 
+    @staticmethod
+    def _restore_scaled_windows(
+        base: int,
+        windows: dict[str, Any],
+        counts: dict[str, Any],
+        scale_steps: int,
+        max_window: int,
+    ) -> tuple[dict[str, deque], dict[str, int]]:
+        """Rebuild one window family and the scaler positions that match it.
+
+        The position is inferred from the shipped window when the snapshot
+        carries none (pre-#92 files). That inference must seed the returned
+        counts too, not merely size the deque: ``observe`` reads the counts
+        dict to pick the next target, so an episode left absent restarts the
+        scaler at ``base`` and the first post-restore observe refits the
+        deque down, discarding the history this just restored (#403).
+        """
+        restored: dict[str, deque] = {}
+        positions: dict[str, int] = {}
+        for ep, sigs in windows.items():
+            n = int(counts.get(ep, len(sigs)))
+            restored[ep] = deque(
+                sigs,
+                maxlen=effective_window_size(base, n, scale_steps, max_window),
+            )
+            positions[ep] = n
+        for ep, n in counts.items():
+            # A position may exist without a window (history expired but the
+            # scaler position should survive a further restore) and is
+            # authoritative when both are present.
+            positions.setdefault(ep, int(n))
+        return restored, positions
+
     def load_state(self, state: dict[str, Any]) -> None:
+        # Every family is rebuilt into locals and published only once the whole
+        # snapshot has parsed. ``Monitor.restore_dict`` catches the
+        # ``ValueError`` a bad count raises and moves on, so assigning
+        # attribute-by-attribute would leave the detector half-restored --
+        # fresh windows paired with the counts and fired-sets it still holds
+        # from live traffic -- with the live windows destroyed and nothing
+        # reporting the mismatch. The stall counters are cheap to copy, so
+        # they are held back too rather than being the one attribute that
+        # lands before the failure.
         counts = state.get("counts", {})
-        self._windows = {
-            ep: deque(
-                sigs,
-                maxlen=effective_window_size(
-                    self.window_size,
-                    int(counts.get(ep, len(sigs))),
-                    self._scale_steps,
-                    self._max_window,
-                ),
-            )
-            for ep, sigs in state.get("windows", {}).items()
-        }
-        # Tolerant .get() so pre-#92 snapshots restore cleanly; the counts only
-        # position the auto-scaler and default to the window they imply.
-        self._counts = {ep: int(n) for ep, n in state.get("counts", {}).items()}
-        self._fired = {ep: set(sigs) for ep, sigs in state.get("fired", {}).items()}
+        windows, new_counts = self._restore_scaled_windows(
+            self.window_size,
+            state.get("windows", {}),
+            counts,
+            self._scale_steps,
+            self._max_window,
+        )
+        fired = {ep: set(sigs) for ep, sigs in state.get("fired", {}).items()}
         near_counts = state.get("near_counts", {})
-        self._near_windows = {
-            ep: deque(
-                sigs,
-                maxlen=effective_window_size(
-                    self.window_size,
-                    int(near_counts.get(ep, len(sigs))),
-                    self._scale_steps,
-                    self._max_window,
-                ),
-            )
-            for ep, sigs in state.get("near_windows", {}).items()
-        }
-        self._near_fired = {
-            ep: set(sigs) for ep, sigs in state.get("near_fired", {}).items()
-        }
-        self._near_counts = {
-            ep: int(n) for ep, n in state.get("near_counts", {}).items()
-        }
+        near_windows, near_counts_restored = self._restore_scaled_windows(
+            self.window_size,
+            state.get("near_windows", {}),
+            near_counts,
+            self._scale_steps,
+            self._max_window,
+        )
+        near_fired = {ep: set(sigs) for ep, sigs in state.get("near_fired", {}).items()}
         cycle_counts = state.get("cycle_counts", {})
-        self._cycle_windows = {
-            ep: deque(
-                sigs,
-                maxlen=effective_window_size(
-                    self.loop_cycle_window_size,
-                    int(cycle_counts.get(ep, len(sigs))),
-                    self._scale_steps,
-                    self._max_window,
-                ),
-            )
-            for ep, sigs in state.get("cycle_windows", {}).items()
-        }
-        self._cycle_counts = {
-            ep: int(n) for ep, n in state.get("cycle_counts", {}).items()
-        }
-        self._cycle_fired = dict(state.get("cycle_fired", {}))
-        self._stall_sig = dict(state.get("stall_sig", {}))
-        self._stall_count = dict(state.get("stall_count", {}))
-        self._stall_start = dict(state.get("stall_start", {}))
-        self._stall_fired = dict(state.get("stall_fired", {}))
-        # Counters are derived from the windows restored above; a restored
-        # window carries its own maxlen, so the cached sizes and counts are
-        # dropped and rebuilt on the first observe rather than trusted against
-        # a snapshot whose scaling position differs.
+        cycle_windows, cycle_counts_restored = self._restore_scaled_windows(
+            self.loop_cycle_window_size,
+            state.get("cycle_windows", {}),
+            cycle_counts,
+            self._scale_steps,
+            self._max_window,
+        )
+        cycle_fired = dict(state.get("cycle_fired", {}))
+        stall_sig = dict(state.get("stall_sig", {}))
+        stall_count = dict(state.get("stall_count", {}))
+        stall_start = dict(state.get("stall_start", {}))
+        stall_fired = dict(state.get("stall_fired", {}))
+        # Every conversion above succeeded: publish atomically.
+        self._windows = windows
+        self._counts = new_counts
+        self._fired = fired
+        self._near_windows = near_windows
+        self._near_counts = near_counts_restored
+        self._near_fired = near_fired
+        self._cycle_windows = cycle_windows
+        self._cycle_counts = cycle_counts_restored
+        self._cycle_fired = cycle_fired
+        self._stall_sig = stall_sig
+        self._stall_count = stall_count
+        self._stall_start = stall_start
+        self._stall_fired = stall_fired
+        # The cached counters are derived from the windows just published: a
+        # restored window carries its own maxlen, so the cached sizes and counts
+        # are dropped and rebuilt on the first observe rather than trusted
+        # against a snapshot whose scaling position differs.
         self._counts_map = {}
         self._window_sizes = {}
         self._near_counts_map = {}

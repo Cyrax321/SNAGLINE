@@ -56,7 +56,13 @@ class _EpisodeWindow:
     def push(self, key: str, maxlen: int) -> None:
         self.window.append(key)
         self.counts[key] += 1
-        if len(self.window) > maxlen:
+        # Pop while over, not once: push() appends exactly one item, so a
+        # single pop only ever holds a too-wide window at its current width.
+        # A window that arrives oversized -- a restore whose inferred
+        # position disagreed with the live target -- would then stay the
+        # wrong size for the rest of the episode, computing entropy over a
+        # sample the bit-tuned thresholds were not written for (issue #403).
+        while len(self.window) > maxlen:
             old = self.window.popleft()
             self.counts[old] -= 1
             if self.counts[old] <= 0:
@@ -176,19 +182,41 @@ class MeltdownDetector:
         }
 
     def load_state(self, state: dict[str, Any]) -> None:
-        self._eps = {}
+        snapshot_counts = state.get("counts", {})
+        # Tolerant .get(): pre-#92 snapshots carry no scaler positions, so
+        # each episode's position is inferred from the window it shipped.
+        # The inferred value must seed _counts as well, not merely size the
+        # window -- observe() reads _counts.get(ep, 0) to compute the target,
+        # so an episode left absent starts the scaler over at the base and
+        # the first post-restore observe refits the just-restored window away
+        # (issue #403).
+        # Everything is built into locals and published only once the whole
+        # snapshot has parsed. ``Monitor.restore_dict`` catches the
+        # ``ValueError`` a bad count raises and moves on, so assigning live
+        # attribute-by-attribute would leave the detector half-restored --
+        # rebuilt windows paired with the fired flags and clear streaks it
+        # still holds from live traffic -- with the live windows destroyed and
+        # nothing reporting the mismatch (review of #402).
+        eps: dict[str, _EpisodeWindow] = {}
+        new_counts: dict[str, int] = {}
         for ep, keys in state.get("windows", {}).items():
             w = _EpisodeWindow()
-            n = int(state.get("counts", {}).get(ep, len(keys)))
+            n = int(snapshot_counts.get(ep, len(keys)))
             target = effective_window_size(
                 self.window_size, n, self._scale_steps, self._max_window
             )
             for key in keys:
                 w.push(key, target)
-            self._eps[ep] = w
-        # Tolerant .get(): pre-#92 snapshots carry no scaler positions.
-        self._counts = {ep: int(n) for ep, n in state.get("counts", {}).items()}
-        self._fired = {ep: bool(v) for ep, v in state.get("fired", {}).items()}
-        self._clear_streak = {
-            ep: int(v) for ep, v in state.get("clear_streak", {}).items()
-        }
+            eps[ep] = w
+            new_counts[ep] = n
+        for ep, n in snapshot_counts.items():
+            # A position may exist without a window (an episode whose history
+            # expired but whose scaler position should survive a further
+            # restore), and it is authoritative when both are present.
+            new_counts.setdefault(ep, int(n))
+        fired = {ep: bool(v) for ep, v in state.get("fired", {}).items()}
+        clear_streak = {ep: int(v) for ep, v in state.get("clear_streak", {}).items()}
+        self._eps = eps
+        self._counts = new_counts
+        self._fired = fired
+        self._clear_streak = clear_streak

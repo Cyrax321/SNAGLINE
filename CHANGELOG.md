@@ -23,6 +23,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   score-0.8 warning; values above `1.0` made the pre-breach warning
   unreachable. An out-of-range value is now a configuration error naming the
   knob (#317). 57305ac (fix(cli): make --list-versions read-only on fit and retrain paths)
+- Detector `load_state` is now transactional. It builds the windows, scaler
+  positions, streaks and fired flags into locals and publishes them only once
+  every field has parsed; a snapshot rejected partway used to leave the
+  detector half on the snapshot and half on its live state -- the windows
+  replaced while the counts and fired flags kept their live values, so the
+  restored window contradicted the scaler position `observe` then used.
+- Scaled-window restore now seeds the auto-scaler position it inferred, not
+  just the window width. `load_state` sized a restored window from the
+  position it read off the payload but rebuilt the scaler's `counts` dict
+  from the payload alone, so an episode present in `windows` but missing from
+  `counts` (a pre-#92 snapshot, or a partial one) restored at the correct
+  width and then lost it: `MeltdownDetector`'s window was left stuck wide for
+  the rest of the episode because `push` popped at most one item per call,
+  while `ErrorCascadeDetector` and `LoopDetector` refit their deques down to
+  the base on the very next observe, discarding the history the restore
+  applied. All three detectors now seed the position they inferred, and
+  `MeltdownDetector.push` pops while over instead of once (#403).
 
 ## [0.1.0] - 2026-08-27
 
