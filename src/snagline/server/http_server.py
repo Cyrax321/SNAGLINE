@@ -28,7 +28,10 @@ Optionally protect the endpoints with a shared secret by passing
 ``auth_token=`` to ``make_server``/``serve``. When set, requests must carry the
 token via ``Authorization: Bearer <token>`` or ``X-Snagline-Token: <token>``;
 missing or wrong tokens get 401. ``GET /health`` stays open for liveness
-probes -- everything else, GET and POST alike, is behind the token.
+probes -- everything else, GET and POST alike, is behind the token. The
+comparison is constant-time (``hmac.compare_digest``): the gate protects
+event ingestion, metrics reads and the halt-directive path, so the token
+must not be recoverable from response timing (issue #375).
 
 The listener can terminate TLS itself (issue #120): pass ``certfile=`` and
 ``keyfile=`` (or a ready-made ``ssl_context=``) and each accepted connection
@@ -72,6 +75,7 @@ one-way telemetry, and callers should not block on detection results.
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import math
@@ -544,10 +548,29 @@ def make_handler(
             token = self.snagline_auth
             if not token:
                 return True
+            # Constant-time, not == (issue #375): str.__eq__ returns at the
+            # first differing character, so its runtime grows with the shared
+            # prefix and the token leaks to anyone who can average response
+            # times. This gate protects /events injection, /metrics and
+            # /risks reads, and --halt-forward's directive path, so it gets
+            # the standard treatment.
+            #
+            # Compared as UTF-8 bytes on purpose: compare_digest raises
+            # TypeError on non-ASCII str, and Authorization is
+            # attacker-controlled -- a probe carrying an accented value would
+            # otherwise crash the handler thread from an unauthenticated
+            # caller. UTF-8 encoding is a bijection for valid strings, so
+            # equality semantics are unchanged.
+            token_b = token.encode()
             authz = self.headers.get("Authorization", "")
             if authz.startswith("Bearer "):
-                return authz[len("Bearer ") :].strip() == token
-            return self.headers.get("X-Snagline-Token") == token
+                return hmac.compare_digest(
+                    authz[len("Bearer ") :].strip().encode(), token_b
+                )
+            header = self.headers.get("X-Snagline-Token")
+            if header is None:
+                return False
+            return hmac.compare_digest(header.encode(), token_b)
 
         def do_GET(self) -> None:  # noqa: N802 - http.server naming
             # /health is deliberately open: a liveness probe (k8s, ELB, docker

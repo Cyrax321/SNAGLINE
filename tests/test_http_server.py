@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import socket
 import threading
 import urllib.error
 import urllib.request
 from typing import Any
+
+import pytest
 
 from snagline.monitor import Monitor
 from snagline.risk import FailureRisk
@@ -164,6 +167,138 @@ def test_post_requires_token_when_configured() -> None:
     finally:
         server.shutdown()
         server.server_close()
+
+
+def _raw_request(base: str, raw_headers: str, path: str = "/events") -> int:
+    """Send a hand-built request whose header bytes we control exactly.
+
+    Needed for the non-ASCII cases (issue #375): urllib refuses to send a
+    header value containing non-ASCII characters, but a real attacker has no
+    such scruple, so the server must be tested with the bytes it would
+    actually receive."""
+    host, _, port = base.split("//", 1)[1].rpartition(":")
+    with socket.create_connection((host, int(port)), timeout=5) as sock:
+        sock.sendall(
+            f"POST {path} HTTP/1.1\r\nHost: {host}:{port}\r\n"
+            f"Content-Length: 0\r\n{raw_headers}\r\n".encode()
+        )
+        line = sock.makefile().readline()
+    # "HTTP/1.1 401 Unauthorized\r\n"
+    return int(line.split()[1])
+
+
+def test_partial_prefix_token_is_still_rejected() -> None:
+    """Issue #375: str.__eq__ returned at the first differing character, so a
+    guess sharing a long prefix cost slightly longer -- the timing leak the
+    constant-time comparison closes. Whatever the comparison, a prefix that is
+    not the whole token must never authorize."""
+    sink = _RecordingSink()
+    server, base = _start_server(sink, auth_token="secret-token-1234567890")
+    try:
+        for guess in (
+            "secret-token-123456789",  # shares 22 of 24 characters
+            "secret-token-12345678900",  # correct prefix, longer
+            "Secret-token-1234567890",  # case differs on char 1
+        ):
+            req = urllib.request.Request(
+                base + "/events",
+                data=b"",
+                headers={"Authorization": f"Bearer {guess}"},
+                method="POST",
+            )
+            try:
+                urllib.request.urlopen(req, timeout=5)
+                raise AssertionError(f"expected HTTP 401 for guess {guess!r}")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 401
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+@pytest.mark.parametrize("header", ["Authorization", "X-Snagline-Token"])
+def test_non_ascii_token_header_is_rejected_without_crashing(header: str) -> None:
+    """Issue #375 regression guard: the obvious fix -- hmac.compare_digest on
+    the raw header string -- raises TypeError on any non-ASCII str, and both
+    Authorization and X-Snagline-Token are attacker-controlled. A probe
+    carrying an accented value must get a clean 401, not a 500 or a dead
+    handler thread."""
+    sink = _RecordingSink()
+    server, base = _start_server(sink, auth_token="secret")
+    try:
+        assert _raw_request(base, f"{header}: caf\xe9\r\n") == 401
+        # The handler survived: a legitimate request still gets 202.
+        event = {
+            "step_id": "0",
+            "episode_id": "ep-non-ascii",
+            "timestamp": 1718300000.0,
+            "action_type": "tool_call",
+            "action_signature": "aaaa1111bbbb2222",
+            "tool_name": "search",
+        }
+        req = urllib.request.Request(
+            base + "/events",
+            data=json.dumps(event).encode(),
+            headers={"Authorization": "Bearer secret"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            assert resp.status == 202
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_absent_token_header_is_rejected_without_error() -> None:
+    """The X-Snagline-Token branch compares a possibly-None header; the None
+    case must short-circuit to 401 rather than reach compare_digest."""
+    sink = _RecordingSink()
+    server, base = _start_server(sink, auth_token="secret")
+    try:
+        assert _raw_request(base, "") == 401  # neither header present
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_token_comparison_goes_through_hmac_compare_digest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pins the security property itself (issue #375): the token must be
+    compared through hmac.compare_digest, never with ==.
+
+    Every behavioural test here also passes with plain ==, because string
+    equality rejects a wrong token just as well -- the vulnerability is in the
+    *timing*, and that is ~1.6 ns per comparison, far below what a statistical
+    timing test could separate without being flaky. So the invariant is pinned
+    by observing the call it routes through: a silent revert to == would leave
+    every other test green, and this is the only line of defence."""
+    import hmac as hmac_module
+
+    calls: list[tuple[bytes, bytes]] = []
+    real = hmac_module.compare_digest
+
+    def spy(a: bytes, b: bytes) -> bool:
+        calls.append((a, b))
+        return real(a, b)
+
+    monkeypatch.setattr(hmac_module, "compare_digest", spy)
+
+    sink = _RecordingSink()
+    server, base = _start_server(sink, auth_token="secret")
+    try:
+        req = urllib.request.Request(
+            base + "/metrics",
+            headers={"Authorization": "Bearer secret"},
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=5):
+            pass
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert (b"secret", b"secret") in calls
 
 
 def test_events_endpoint_accepts_batch() -> None:

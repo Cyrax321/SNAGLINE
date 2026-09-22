@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Nothing yet.
 
+### Security
+- The sidecar's auth token is now compared with `hmac.compare_digest` instead
+  of `==`. `str.__eq__` returns at the first differing character, so its
+  runtime grew with the shared prefix and the token was recoverable by anyone
+  able to average response times. The gate protects `/events` injection,
+  `/metrics` and `/risks` reads, and `--halt-forward`'s directive path. Both
+  header values are compared as UTF-8 bytes: the naive string form of
+  `compare_digest` raises `TypeError` on a non-ASCII value, and
+  `Authorization` is attacker-controlled, so that would have turned an
+  unauthenticated probe into a handler crash (#375).
+
 ### Fixed
 - `snagline baseline --list-versions` is now honored on both the fit and
   `retrain` paths and is read-only everywhere: it lists and exits 0 without
