@@ -31,6 +31,7 @@ knobs: k/h stay as configured.
 
 from __future__ import annotations
 
+import logging
 import math
 import threading
 from typing import Any
@@ -39,6 +40,8 @@ from snagline.baseline import BaselineProfile, ToolBaseline
 from snagline.config import Config
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk
+
+logger = logging.getLogger("snagline")
 
 
 class _WelfordCUSUM:
@@ -194,6 +197,19 @@ class LatencyAnomalyDetector:
 
     def observe(self, event: StepEvent) -> FailureRisk | None:
         if event.latency_ms is None:
+            return None
+        # A non-finite or negative latency is not evidence about the tool: a
+        # NaN propagates through warm-up into mu0, and CPython's
+        # ``max(0.0, NaN)`` returns ``0.0``, so ``cusum > h`` is False forever
+        # -- the detector goes dark with no crash and no log line for fail-open
+        # to catch (issue #350). Inf is the mirror image: cusum becomes Inf and
+        # the detector alarms on every step. Drop the sample like a missing
+        # one, so warm-up is not satisfied by garbage either.
+        latency = event.latency_ms
+        if not math.isfinite(latency) or latency < 0:
+            logger.debug(
+                "snagline: latency_anomaly ignoring unusable latency_ms %r", latency
+            )
             return None
         # Only leaf tool calls carry a meaningful per-tool latency. A planning
         # chain (``plan_step``) or other aggregate step reports the duration of

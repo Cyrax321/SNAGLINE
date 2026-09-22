@@ -20,6 +20,8 @@ quiet is preferred.
 
 from __future__ import annotations
 
+import logging
+import math
 from typing import Any
 
 from snagline.config import Config
@@ -27,6 +29,29 @@ from snagline.detectors.base import snapshot_items
 from snagline.detectors.latency_anomaly import _WelfordCUSUM
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk
+
+logger = logging.getLogger("snagline")
+
+
+def _usable_tokens(value: float | None) -> float:
+    """Coerce one token field to a usable non-negative count, else 0.
+
+    Adapters derive these from a provider ``usage`` object, which can carry NaN
+    or Inf (a malformed usage blob) or a negative count (an adapter bug).
+    Neither is evidence about the run: ``int(NaN)`` raises ``ValueError`` and
+    ``int(Inf)`` overflows, and both escape ``observe`` straight into
+    ``Monitor.ingest``'s fail-open handler -- the detector then stays installed
+    and reports nothing for the rest of the run (issue #349). A negative count
+    is subtler still: it silently *reduces* the running budget total, so a
+    later breach looks smaller than it is. Treated as 0, one malformed field
+    costs at most this step's contribution instead of the whole episode.
+    """
+    if value is None:
+        return 0.0
+    if not math.isfinite(value) or value < 0:
+        logger.debug("snagline: token_runaway ignoring unusable token count %r", value)
+        return 0.0
+    return value
 
 
 class TokenRunawayDetector:
@@ -77,9 +102,13 @@ class TokenRunawayDetector:
         self._breached: dict[str, bool] = {}
 
     def observe(self, event: StepEvent) -> FailureRisk | None:
-        if event.tokens_in is None and event.tokens_out is None:
+        tin = _usable_tokens(event.tokens_in)
+        tout = _usable_tokens(event.tokens_out)
+        if tin == 0.0 and tout == 0.0:
+            # No usable signal this step: either the event carried neither field
+            # (the documented skip) or both counts were unusable (issue #349).
             return None
-        step_tokens = int((event.tokens_in or 0) + (event.tokens_out or 0))
+        step_tokens = int(tin + tout)
         ep = event.episode_id
 
         # Deterministic envelope first: it needs no warm-up and carries the
