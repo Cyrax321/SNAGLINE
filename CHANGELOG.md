@@ -23,6 +23,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   score-0.8 warning; values above `1.0` made the pre-breach warning
   unreachable. An out-of-range value is now a configuration error naming the
   knob (#317). 57305ac (fix(cli): make --list-versions read-only on fit and retrain paths)
+- `EsnCusumDetector` (the `ml` extra) now range-checks its constructor knobs:
+  `reservoir_size >= 1`, `cusum_k >= 0.0`, `cusum_h > 0.0`. `cusum_h = 0.0`
+  divided by zero in the score formula on every step, so the detector was
+  permanently dark while logging a traceback per step; a negative `cusum_h`
+  could never be crossed and silently disabled detection; a negative
+  `cusum_k` inflated the accumulator and fired false alarms on healthy traffic.
+  The knobs have no `Config` field, so the constructor is the only gate. A
+  persistent internal fault is also now logged once instead of per step:
+  `observe()` swallows the exception, so `MLOrchestrator._log_fault_once`
+  could never dedupe it (#386).
 
 ## [0.1.0] - 2026-08-27
 

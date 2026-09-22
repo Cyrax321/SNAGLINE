@@ -445,3 +445,132 @@ def test_fitted_first_live_step_is_silent_then_scores():
     assert st.context_prev is not None
     second = det._esn_anomaly(st, det._features(healthy[1]))
     assert second is not None  # scores from the previous context
+
+
+# --- knob validation and fail-open log discipline (issue #386) ----------------
+
+
+@pytest.mark.parametrize("bad", [0, -1, -32])
+def test_reservoir_size_below_one_is_rejected(bad: int) -> None:
+    """An empty reservoir cannot be built; fail at construction with a message
+    that names the knob, not a numpy reduction error."""
+    with pytest.raises(ValueError, match="reservoir_size must be >= 1"):
+        EsnCusumDetector(reservoir_size=bad)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("bad", [-0.001, -1.0, -100.0])
+def test_negative_cusum_k_is_rejected(bad: float) -> None:
+    """A negative slack inflates the accumulator every step (16 false positives
+    on 50 healthy steps when measured); 0.0 is legitimate and stays allowed."""
+    with pytest.raises(ValueError, match="cusum_k must be >= 0.0"):
+        EsnCusumDetector(cusum_k=bad)
+
+
+@pytest.mark.parametrize("bad", [0.0, -1e-9, -1.0])
+def test_non_positive_cusum_h_is_rejected(bad: float) -> None:
+    """cusum_h=0.0 divided by zero in the score formula on *every* step (50
+    swallowed ZeroDivisionErrors, zero risks -- the detector was permanently
+    dark and the log made it look merely noisy); a negative h can never be
+    crossed by a non-negative accumulator, silently disabling detection."""
+    with pytest.raises(ValueError, match="cusum_h must be > 0.0"):
+        EsnCusumDetector(cusum_h=bad)
+
+
+def test_validation_error_names_the_knob_and_its_effect() -> None:
+    """An out-of-range knob is a configuration error: the message must say which
+    knob and why, so it is distinguishable from an internal fault."""
+    with pytest.raises(ValueError) as exc_info:
+        EsnCusumDetector(cusum_h=0.0)
+    message = str(exc_info.value)
+    assert "cusum_h" in message
+    assert "silently disabling" in message
+
+
+def test_boundary_values_are_accepted() -> None:
+    """Positive control: the rejected bounds are open, so the legitimate
+    boundary still constructs and detects. cusum_k=0.0 makes the accumulator
+    sum the raw signal, and a small cusum_h still fires on sustained drift."""
+    det = EsnCusumDetector(warmup_steps=5, cusum_k=0.0, cusum_h=0.25)
+    healthy = [det.observe(e) for e in _healthy(30)]
+    assert all(r is None for r in healthy), "healthy traffic must stay silent"
+    fired = [det.observe(e) for e in _unhealthy(20, start=30)]
+    assert any(r is not None and r.trigger == "ml_ensemble" for r in fired)
+
+
+def _faulty_det(exc_type: type[Exception]) -> EsnCusumDetector:
+    """A detector whose feature extraction always raises the given class."""
+    det = _fast()
+
+    def boom(_event: StepEvent) -> object:
+        raise exc_type("synthetic persistent fault")
+
+    det._features = boom  # type: ignore[assignment]
+    return det
+
+
+def test_persistent_fault_is_logged_once_not_per_step(caplog) -> None:
+    """The fail-open wrapper must dedupe: before the fix a fault raised on
+    every step produced one ERROR record per step (50 for 50 steps), and
+    MLOrchestrator._log_fault_once could not help because the exception never
+    escaped observe() to reach its own handler."""
+    det = _faulty_det(RuntimeError)
+    with caplog.at_level(logging.ERROR, logger="snagline"):
+        for i in range(50):
+            assert det.observe(_ev(i)) is None  # never raises into the host
+    failures = [r for r in caplog.records if r.exc_info is not None]
+    assert len(failures) == 1, f"expected 1 logged fault, got {len(failures)}"
+    assert "fail-open" in failures[0].getMessage()
+
+
+def test_a_different_fault_after_the_first_is_still_reported(caplog) -> None:
+    """The dedupe key carries the exception class: a *new* fault must still
+    surface, otherwise the first fault would silence every later one."""
+    det = _faulty_det(RuntimeError)
+    with caplog.at_level(logging.ERROR, logger="snagline"):
+        for _ in range(10):
+            det.observe(_ev(0))
+
+        def boom_value(_event: StepEvent) -> object:
+            raise ValueError("a different fault")
+
+        det._features = boom_value  # type: ignore[assignment]
+        for _ in range(10):
+            det.observe(_ev(0))
+
+        def boom_key(_event: StepEvent) -> object:
+            raise KeyError("yet another")
+
+        det._features = boom_key  # type: ignore[assignment]
+        for _ in range(10):
+            det.observe(_ev(0))
+
+    types = {
+        r.exc_info[0].__name__  # type: ignore[index]
+        for r in caplog.records
+        if r.exc_info is not None
+    }
+    assert types == {"RuntimeError", "ValueError", "KeyError"}
+
+
+def test_mutated_h_degrades_to_saturated_score_not_division_by_zero(caplog) -> None:
+    """Defense in depth on the score denominator. __init__ rejects cusum_h <= 0,
+    so this simulates a future path mutating _h after construction: the floor
+    keeps the division non-zero, so the detector saturates -- every step scores
+    in the valid range -- instead of raising (and being swallowed and logged)
+    on every step."""
+    det = _fast()
+    det._h = 0.0  # type: ignore[attr-defined]
+    with caplog.at_level(logging.ERROR, logger="snagline"):
+        risks = [det.observe(e) for e in _healthy(20)]
+    assert all(r is not None and 0.5 <= r.score <= 1.0 for r in risks)
+    assert [r for r in caplog.records if r.exc_info is not None] == []
+
+
+def test_valid_knobs_do_not_trip_the_validation() -> None:
+    """The shipped construction path -- Monitor.default builds this detector
+    with defaults -- must be unaffected."""
+    det = EsnCusumDetector()
+    assert det._h == 3.0
+    assert det._k == 0.25
+    for event in _healthy(40):
+        assert det.observe(event) is None

@@ -77,6 +77,12 @@ _UNKNOWN_TOOL_SCORE = 0.6
 _RESIDUAL_SIGMA_INFLATION = 3.0
 _ESN_ANOMALY_FLOOR = 0.05
 _RIDGE_ALPHA = 1e-3
+# Defensive floor on the CUSUM threshold (issue #386). __init__ rejects
+# cusum_h <= 0, so this only matters if a future path mutates _h after
+# construction; it keeps the score denominator non-zero so a bad value
+# degrades to a saturated score instead of a ZeroDivisionError that
+# fail-open would swallow -- and log -- on every step.
+_CUSUM_H_FLOOR = 1e-12
 
 
 class _EpisodeState:
@@ -122,6 +128,12 @@ class EsnCusumDetector:
     instances built with the same arguments produce identical outputs on the
     same stream. Any exception inside :meth:`observe` is logged and swallowed
     (fail-open); it must never reach the host agent.
+
+    Knob contract (issue #386): ``reservoir_size``, ``cusum_k`` and
+    ``cusum_h`` are range-checked at construction. Unlike the Config-backed
+    detectors these knobs have no ``Config`` field, so there is no upstream
+    check to duplicate -- this constructor is the only gate. An out-of-range
+    value is a configuration error, not a run-time hazard.
     """
 
     name = "esn_cusum"
@@ -138,10 +150,32 @@ class EsnCusumDetector:
         cusum_k: float = 0.25,
         cusum_h: float = 3.0,
     ) -> None:
+        # The ESN knobs are not exposed through Config -- Monitor.default
+        # builds this detector with defaults only -- so __init__ is the sole
+        # gate, unlike the Config-backed detectors whose duplicate guard here
+        # mirrors an upstream check. Bad values fail loudly at construction
+        # rather than silently at run time: cusum_h <= 0 divides by zero in
+        # the score formula (or, when negative, makes the fire condition
+        # unreachable and permanently disables the detector), a negative
+        # cusum_k inflates the accumulator with every step, and
+        # reservoir_size < 1 builds an empty reservoir.
+        if reservoir_size < 1:
+            raise ValueError("reservoir_size must be >= 1")
+        if cusum_k < 0.0:
+            raise ValueError("cusum_k must be >= 0.0")
+        if cusum_h <= 0.0:
+            raise ValueError(
+                "cusum_h must be > 0.0; 0.0 divides by zero in the score "
+                "formula and a negative value makes the fire condition "
+                "unreachable, silently disabling the detector"
+            )
         self._baseline = baseline
         self._warmup_steps = max(1, warmup_steps)
         self._k = cusum_k
         self._h = cusum_h
+        # A persistent internal fault is reported once, not per step (issue
+        # #386); see _log_fault_once.
+        self._fault_logged: set[str] = set()
         rng = np.random.Generator(np.random.PCG64(seed))
         w = rng.uniform(-1.0, 1.0, (reservoir_size, reservoir_size))
         radius = float(np.max(np.abs(np.linalg.eigvals(w))))
@@ -160,14 +194,33 @@ class EsnCusumDetector:
     def observe(self, event: StepEvent) -> FailureRisk | None:
         """Score one step; fail-open wrapper around the numeric path.
 
-        Never raises: an internal error is logged once per occurrence by the
-        Monitor and here as well, then ignored (project.md section 1.2).
+        Never raises: an internal error is logged once per distinct fault and
+        ignored (project.md section 1.2). Before issue #386 a persistent fault
+        logged a traceback on every step -- 50 ERROR records for 50 steps --
+        and :meth:`MLOrchestrator._log_fault_once` could not dedupe it, because
+        the exception never propagated out of this method to reach its own
+        handler.
         """
         try:
             return self._observe(event)
-        except Exception:
-            logger.exception("snagline: esn_cusum raised; ignoring (fail-open)")
+        except Exception as exc:
+            self._log_fault_once("observe", exc)
             return None
+
+    def _log_fault_once(self, phase: str, exc: BaseException) -> None:
+        """Log an internal fault exactly once, mirroring MLOrchestrator.
+
+        The key carries the exception class so a *different* fault surfacing
+        later still gets reported: the goal is to stop the flood from one
+        persistent fault, not to silence every fault after the first.
+        """
+        key = f"{self.name}:{phase}:{type(exc).__name__}"
+        if key in self._fault_logged:
+            return
+        self._fault_logged.add(key)
+        logger.exception(
+            "snagline: esn_cusum raised during %s; ignoring (fail-open)", phase
+        )
 
     def fit(self, events: Iterable[StepEvent]) -> None:
         """Fit the readout and residual statistics on a healthy trajectory.
@@ -221,7 +274,13 @@ class EsnCusumDetector:
         signal = max(anomaly, self._mahalanobis_score(event))
         st.cusum = max(0.0, st.cusum + signal - self._k)
         if st.cusum >= self._h:
-            score = min(1.0, 0.5 + 0.5 * (st.cusum - self._h) / self._h)
+            # __init__ rejects cusum_h <= 0; the floor guards only a future
+            # path that mutates _h after construction (issue #386). It floors
+            # the denominator alone: with the true _h in the numerator a
+            # degenerate h still saturates the score, instead of dividing by
+            # zero and being swallowed -- and logged -- on every step.
+            h = max(self._h, _CUSUM_H_FLOOR)
+            score = min(1.0, 0.5 + 0.5 * (st.cusum - self._h) / h)
             st.cusum = 0.0  # re-arm so a persistent fault re-alarms later
             return FailureRisk(
                 event.episode_id,
