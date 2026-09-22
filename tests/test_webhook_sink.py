@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import urllib.request
 from unittest import mock
 
@@ -143,3 +144,33 @@ def test_min_severity_unset_is_unfiltered() -> None:
         sink = WebhookSink("http://x")
         sink.emit(_risk_with_severity("info"))
     assert len(posted) == 1
+
+
+# --- a failed POST must not log the destination URL (issue #390) --------------
+# The URL is the credential: it can carry basic auth (``user:pass@host``) and,
+# for some providers, a secret path segment. A dead endpoint is exactly when an
+# operator reads the log.
+
+_HOOK_URL = "https://alice:hunter2@hooks.example/alerts"
+
+
+def test_failure_log_omits_basic_auth_credentials(caplog) -> None:
+    sink = WebhookSink(_HOOK_URL)
+    with caplog.at_level(logging.ERROR, logger="snagline"):
+        with mock.patch.object(
+            urllib.request, "urlopen", side_effect=OSError("connection refused")
+        ):
+            sink.emit(_risk())
+    assert caplog.records, "the failed POST must be logged"
+    for record in caplog.records:
+        text = record.getMessage()
+        assert "hunter2" not in text, "basic-auth password reached the log record"
+        assert "alice" not in text, "basic-auth username reached the log record"
+        assert "hooks.example" in text, "the log must still name the host"
+
+
+def test_repr_omits_basic_auth_credentials() -> None:
+    # repr lands in diagnostic dumps and unhandled-exception reports, so it
+    # must not carry the credential either.
+    assert "hunter2" not in repr(WebhookSink(_HOOK_URL))
+    assert "hooks.example" in repr(WebhookSink(_HOOK_URL))

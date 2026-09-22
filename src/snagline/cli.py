@@ -320,7 +320,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--max-body-bytes",
         type=int,
         default=1_000_000,
-        help="Reject POST bodies larger than this with 413 [default: 1000000].",
+        help="Reject POST bodies larger than this with 413 [default: 1000000]. "
+        "Must be positive: there is no unlimited value, and 0 rejects every "
+        "POST (issue #394) -- unlike --episode-ttl-seconds, 0 does not mean "
+        "off. Raise the cap if a payload is being turned away.",
     )
     p_serve.add_argument(
         "--read-timeout",
@@ -1072,6 +1075,19 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     if args.client_ca and not args.certfile:
         print(
             "snagline serve: --client-ca requires --certfile",
+            file=sys.stderr,
+        )
+        return 2
+    if args.max_body_bytes <= 0:
+        # Unlike --episode-ttl-seconds (where 0 means "disable"), 0 here is
+        # not an "unlimited" escape hatch -- it is the one value that rejects
+        # every POST, because the cap is compared with a strict >. There is
+        # no unlimited mode; say so rather than letting the sidecar come up
+        # healthy and drop 100% of telemetry (issue #394).
+        print(
+            "snagline serve: --max-body-bytes must be a positive number of "
+            f"bytes, got {args.max_body_bytes}; there is no unlimited value "
+            "-- use a larger cap instead",
             file=sys.stderr,
         )
         return 2

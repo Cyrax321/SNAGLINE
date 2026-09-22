@@ -7,6 +7,8 @@ import json
 from argparse import Namespace
 from typing import cast
 
+import pytest
+
 from snagline.cli import main
 from snagline.config import Config
 from snagline.sinks.base import AlertSink
@@ -276,6 +278,29 @@ def test_main_serve_passes_auth_token_and_limits(monkeypatch):
     assert started["auth_token"] == "s3cret"
     assert started["max_body_bytes"] == 4096
     assert started["max_risks"] == 7
+
+
+@pytest.mark.parametrize("bad", [0, -1, -1_000_000])
+def test_main_serve_rejects_a_non_positive_max_body_bytes(monkeypatch, capsys, bad):
+    """``--max-body-bytes 0`` rejects every POST with 413: the cap is compared
+    with a strict ``>``, so 0 (or any negative) admits no body at all. The
+    sidecar would have come up green on /health while dropping 100% of
+    telemetry, so the CLI must refuse before the banner (issue #394)."""
+    started: dict = {}
+
+    def _fake_serve(monitor, host="127.0.0.1", port=8787, **kwargs):
+        started.update(kwargs)
+
+    monkeypatch.setattr("snagline.server.http_server.serve", _fake_serve)
+
+    code = main(["serve", "--max-body-bytes", str(bad)])
+    assert code == 2, "a non-positive cap must be a startup error, not accepted"
+    assert not started, "serve() must not have been started for a bad cap"
+    err = capsys.readouterr().err
+    assert "--max-body-bytes" in err
+    # The trap the issue calls out: 0 disables the *neighbouring* knob, so the
+    # message must say there is no unlimited value here.
+    assert "unlimited" in err
 
 
 def test_main_serve_reads_auth_token_from_the_environment(monkeypatch):
