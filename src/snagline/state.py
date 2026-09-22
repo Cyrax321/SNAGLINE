@@ -21,8 +21,39 @@ import threading
 from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
 from typing import Literal, Protocol
+from urllib.parse import urlparse
 
 logger = logging.getLogger("snagline")
+
+
+def _redact_url(url: str) -> str:
+    """Drop the credential from a redis URL before it reaches a log line.
+
+    redis-py reads the password from the URL itself (``redis://:secret@host``
+    or ``redis://user:pass@host``), so this knob is normally *set* with a
+    secret in it -- and the value is logged exactly when the URL is rejected,
+    which is the moment an operator goes looking in the logs. Keep scheme and
+    host (they are what identifies the misconfigured target) and drop the rest,
+    which is where query-string options can also carry a password.
+
+    A URL redis-py rejects may not parse at all, so anything unparseable
+    becomes a placeholder rather than being echoed back (review of #409).
+    """
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return "<invalid redis url>"
+    if not parsed.scheme:
+        return "<invalid redis url>"
+    if parsed.scheme == "unix":
+        # A socket path stands in for a host and carries no credential.
+        return f"unix://{parsed.path}"
+    if not parsed.hostname:
+        return "<invalid redis url>"
+    netloc = parsed.hostname
+    if parsed.port is not None:
+        netloc = f"{parsed.hostname}:{parsed.port}"
+    return f"{parsed.scheme}://{netloc}/"
 
 
 class StateBackend(Protocol):
@@ -259,5 +290,39 @@ def default_state_backend() -> StateBackend:
                 logger.warning(
                     "snagline: redis backend requested but redis not installed; "
                     "falling back to in-memory state"
+                )
+            except ValueError as exc:
+                # redis-py's URL parser rejects any scheme other than
+                # redis/rediss/unix at construction, before a socket is ever
+                # opened -- a typo'd or pasted URL from a sibling service
+                # (``postgres://...``), a bare ``host:port``, or a
+                # secrets-manager placeholder that is not a URL at all. The
+                # contract of this knob is to be optional: both neighbouring
+                # arms warn and fall back, so an unparseable URL must not be
+                # the one that escapes into startup (issue #392).
+                #
+                # The URL is the credential -- redis-py takes the password
+                # from it -- so only the redacted form is logged. The
+                # exception text is gated too: redis-py's parse failures can
+                # quote the offending value back, and once the URL carries a
+                # credential that value is secret. Without the credential the
+                # message is diagnosis and safe to keep (review of #409).
+                parsed_url = urlparse(url)
+                carries_secret = bool(
+                    parsed_url.username
+                    or parsed_url.password is not None
+                    or parsed_url.query
+                )
+                detail = (
+                    type(exc).__name__
+                    if carries_secret
+                    else f"{type(exc).__name__}: {exc}"
+                )
+                logger.warning(
+                    "snagline: redis backend requested but "
+                    "SNAGLINE_STATE_REDIS_URL=%s is not a usable redis URL "
+                    "(%s); falling back to in-memory state",
+                    _redact_url(url),
+                    detail,
                 )
     return MemoryStateBackend()

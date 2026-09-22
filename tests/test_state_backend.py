@@ -298,3 +298,188 @@ def test_release_during_parked_waiter_blocks_new_entry_until_drain():
     while "ep" in backend._locks and time.monotonic() < deadline:
         time.sleep(0.01)
     assert "ep" not in backend._locks
+
+
+# --- a bad redis URL degrades to in-memory instead of crashing startup (#392)
+
+
+@pytest.fixture
+def fake_redis(monkeypatch):
+    """Stand in for redis-py: ``from_url`` validates the scheme at
+     construction, before any socket is opened, and raises ``ValueError`` for
+     anything that is not redis/rediss/unix.
+
+    redis-py 8.x's ``ConnectionPool.from_url`` behaves exactly this way, so the
+     stub reproduces the real failure shape without needing a server or the
+     extra installed.
+    """
+    import sys
+    import types
+    from urllib.parse import urlsplit
+
+    module = types.ModuleType("redis")
+
+    class FakeRedis:
+        @staticmethod
+        def from_url(url):
+            scheme = urlsplit(url).scheme.lower()
+            if scheme not in ("redis", "rediss", "unix"):
+                raise ValueError(
+                    "Redis URL must specify one of the following schemes "
+                    "(redis://, rediss://, unix://)"
+                )
+            return FakeRedis()
+
+    module.Redis = FakeRedis  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "redis", module)
+    return module
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgres://host:5432/db",  # copied from a sibling service
+        "host:6379",  # a bare host, not a URL
+        "${REDIS_URL}",  # an unsubstituted secrets-manager placeholder
+        "http://localhost:6379",  # the wrong scheme entirely
+    ],
+)
+def test_bad_redis_url_falls_back_not_raises(monkeypatch, caplog, fake_redis, url):
+    """A URL redis-py rejects must warn and degrade, not escape into startup.
+
+    The knob's whole purpose is to be optional: both neighbouring arms warn
+    and fall back, so an unparseable URL being the one that crashes
+    ``Monitor.default()`` was an inconsistency rather than a policy.
+    """
+    monkeypatch.setenv("SNAGLINE_STATE_BACKEND", "redis")
+    monkeypatch.setenv("SNAGLINE_STATE_REDIS_URL", url)
+    with caplog.at_level("WARNING", logger="snagline"):
+        backend = default_state_backend()
+    assert isinstance(backend, MemoryStateBackend)
+    assert any("not a usable redis URL" in r.message for r in caplog.records), [
+        r.message for r in caplog.records
+    ]
+
+
+def test_good_redis_url_still_builds_the_backend(monkeypatch, fake_redis):
+    """Regression guard: the new arm must not swallow a URL the parser
+    accepts. A widening that fell back on every URL would be worse than the
+    crash it fixes."""
+    monkeypatch.setenv("SNAGLINE_STATE_BACKEND", "redis")
+    monkeypatch.setenv("SNAGLINE_STATE_REDIS_URL", "redis://localhost:6379/0")
+    backend = default_state_backend()
+    assert isinstance(backend, RedisStateBackend)
+
+
+def test_bad_redis_url_warning_names_the_target(monkeypatch, caplog, fake_redis):
+    """The warning still names the offending host and scheme: the fallback is
+    silent at the protocol level (in-memory state looks fine), so the log line
+    is the operator's only signal that their coordination knob did not take --
+    and identifying *which* endpoint was misconfigured is what makes the line
+    actionable."""
+    monkeypatch.setenv("SNAGLINE_STATE_BACKEND", "redis")
+    monkeypatch.setenv("SNAGLINE_STATE_REDIS_URL", "postgres://host:5432/db")
+    with caplog.at_level("WARNING", logger="snagline"):
+        default_state_backend()
+    record = next(r for r in caplog.records if "not a usable redis URL" in r.message)
+    assert "postgres://host:5432/" in record.message
+
+
+@pytest.mark.parametrize(
+    "url, secret",
+    [
+        # redis-py takes the password from the URL, so this is the documented
+        # way to configure the backend -- and a typo in the scheme is exactly
+        # when the operator reads this line.
+        ("redis://:hunter2-secret@redis.internal:6379/0", "hunter2-secret"),
+        # The user:pass spelling, and a query-string password (accepted by
+        # redis-py as an alternative to userinfo).
+        ("redis://alice:hunter2@redis.internal:6379/0", "hunter2"),
+        ("rediss://redis.internal?password=[REDACTED]", "hunter2"),
+    ],
+)
+def test_bad_redis_url_warning_redacts_the_credential(
+    monkeypatch, caplog, echo_redis, url, secret
+):
+    """The URL is the credential: redis-py reads the password out of it, so
+    logging it verbatim leaks the secret into the operator's log collector at
+    the exact moment they go looking (review of #409). The host stays, since
+    identifying the misconfigured endpoint is the point of the line."""
+    monkeypatch.setenv("SNAGLINE_STATE_BACKEND", "redis")
+    monkeypatch.setenv("SNAGLINE_STATE_REDIS_URL", url)
+    with caplog.at_level("WARNING", logger="snagline"):
+        backend = default_state_backend()
+    assert isinstance(backend, MemoryStateBackend)
+    record = next(r for r in caplog.records if "not a usable redis URL" in r.message)
+    assert secret not in record.message, "credential reached the log line"
+    assert "redis.internal" in record.message, "the host must still be named"
+
+
+@pytest.fixture
+def echo_redis(monkeypatch):
+    """A redis-py stub whose parse failure quotes the offending URL back in
+    the exception text, as redis-py's own ``parse_url`` does for some inputs.
+
+    The scheme validator in ``fake_redis`` does not, so this separate stub
+    exists to cover the second leak path: the exception, not just the URL.
+    """
+    import sys
+    import types
+
+    module = types.ModuleType("redis")
+
+    class FakeRedis:
+        @staticmethod
+        def from_url(url):
+            raise ValueError(
+                f"invalid connection parameters in {url!r}; see redis-py docs"
+            )
+
+    module.Redis = FakeRedis  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "redis", module)
+    return module
+
+
+def test_bad_redis_url_withholds_exception_text_that_echoes_it(
+    monkeypatch, caplog, echo_redis
+):
+    """The exception can carry the URL verbatim, so once the URL holds a
+    credential only the exception's *type* is logged. Without the credential
+    the message is diagnosis and stays (review of #409)."""
+    monkeypatch.setenv("SNAGLINE_STATE_BACKEND", "redis")
+    monkeypatch.setenv("SNAGLINE_STATE_REDIS_URL", "redis://:hunter2@host:6379/0")
+    with caplog.at_level("WARNING", logger="snagline"):
+        default_state_backend()
+    record = next(r for r in caplog.records if "not a usable redis URL" in r.message)
+    assert "hunter2" not in record.message
+    assert "ValueError" in record.message, "the exception type must still be named"
+
+
+def test_bad_redis_url_keeps_exception_text_when_url_has_no_secret(
+    monkeypatch, caplog, echo_redis
+):
+    """The gate is not a blanket suppression: a credential-free URL keeps the
+    full message, which is what tells the operator what is actually wrong."""
+    monkeypatch.setenv("SNAGLINE_STATE_BACKEND", "redis")
+    monkeypatch.setenv("SNAGLINE_STATE_REDIS_URL", "redis-s://host:6379/0")
+    with caplog.at_level("WARNING", logger="snagline"):
+        default_state_backend()
+    record = next(r for r in caplog.records if "not a usable redis URL" in r.message)
+    assert "redis-s://host:6379/0" in record.message
+    assert "invalid connection parameters" in record.message
+
+
+@pytest.mark.parametrize(
+    "url, expected",
+    [
+        ("redis://:pw@host:6379/0", "redis://host:6379/"),
+        ("redis://host:6379/0", "redis://host:6379/"),
+        ("unix:///var/run/redis.sock", "unix:///var/run/redis.sock"),
+        ("not a url at all", "<invalid redis url>"),
+        ("", "<invalid redis url>"),
+    ],
+)
+def test_redact_url(url, expected):
+    from snagline.state import _redact_url
+
+    assert _redact_url(url) == expected

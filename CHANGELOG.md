@@ -23,6 +23,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   score-0.8 warning; values above `1.0` made the pre-breach warning
   unreachable. An out-of-range value is now a configuration error naming the
   knob (#317). 57305ac (fix(cli): make --list-versions read-only on fit and retrain paths)
+- `SNAGLINE_STATE_REDIS_URL` pointing at an unusable URL now warns and falls
+  back to in-memory state instead of crashing startup. redis-py's URL parser
+  rejects any scheme other than redis/rediss/unix at construction, before a
+  socket is ever opened, so `SNAGLINE_STATE_REDIS_URL=postgres://...`, a bare
+  `host:6379`, or an unsubstituted secrets-manager placeholder raised
+  `ValueError` out of `default_state_backend()` and through
+  `Monitor.default()` -- the one arm of an otherwise optional knob that
+  escaped. The caught set now matches what the constructor can raise, and the
+  warning names the offending target. The URL is the credential -- redis-py
+  reads the password out of it -- so it appears in that line redacted to
+  scheme and host, and once it carries a secret the exception's own text is
+  withheld too, since redis-py's parse failures can quote the value back
+  (#392).
 
 ## [0.1.0] - 2026-08-27
 
