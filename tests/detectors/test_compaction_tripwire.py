@@ -163,6 +163,95 @@ def test_new_compaction_resets_pending_set_and_deadline():
     assert PIN_C[:16] in risks[0].detail
 
 
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {},  # no pinned key at all: truncation-style, tracked no constraints
+        {"pinned": []},  # key present but empty
+        {"pinned": PIN_A},  # malformed: a string is not a pin collection
+    ],
+)
+def test_pinless_compaction_keeps_the_previous_window_alive(metadata):
+    # grace_steps=3 -> the deadline is the fourth observed event. The first
+    # compaction pins A and B and neither is confirmed before a later
+    # compaction arrives carrying no usable pins of its own. That event only
+    # argues about itself ("nothing decayed here") and must not delete the
+    # outstanding window: the risk still fires at the *original* deadline,
+    # naming both pins (issue #356).
+    d = CompactionTripwireDetector(grace_steps=3)
+    risks = _feed(
+        d,
+        [
+            _compaction(0, [PIN_A, PIN_B]),
+            _plain(1),
+            _event(2, "compaction", metadata),
+            _plain(3),  # original deadline: fires here
+        ],
+    )
+    assert len(risks) == 1
+    assert risks[0].step_id == "3"
+    assert PIN_A[:16] in risks[0].detail
+    assert PIN_B[:16] in risks[0].detail
+
+
+def test_confirmation_after_a_pinless_compaction_still_counts():
+    # The retained window is live, not frozen: a constraint_present arriving
+    # after the pin-less compaction still retracts its pins, so a fully
+    # confirmed window stays silent.
+    d = CompactionTripwireDetector(grace_steps=3)
+    risks = _feed(
+        d,
+        [
+            _compaction(0, [PIN_A, PIN_B]),
+            _event(1, "compaction", {}),
+            _present(2, PIN_A),
+            _present(3, PIN_B),
+            _plain(4),  # original deadline; every pin already confirmed
+        ],
+    )
+    assert risks == []
+
+
+def test_pinless_compaction_does_not_refire_a_spent_window():
+    # A window that already fired stays fired: a later pin-less compaction
+    # carries nothing to reset the latch with, and no second risk appears.
+    d = CompactionTripwireDetector(grace_steps=2)
+    risks = _feed(
+        d,
+        [
+            _compaction(0, [PIN_A]),
+            _plain(1),
+            _plain(2),  # deadline: fires
+            _event(3, "compaction", {}),
+            _plain(4),
+            _plain(5),
+        ],
+    )
+    assert len(risks) == 1
+    assert risks[0].step_id == "2"
+
+
+def test_pinless_compaction_is_transparent_to_a_later_replacement():
+    # Retaining the window does not weaken the #90 rule: a later compaction
+    # that does carry pins still replaces it and restarts the countdown from
+    # itself, so the dropped pin A never fires.
+    d = CompactionTripwireDetector(grace_steps=2)
+    risks = _feed(
+        d,
+        [
+            _compaction(0, [PIN_A]),
+            _event(1, "compaction", {}),
+            _compaction(2, [PIN_B]),
+            _plain(3),
+            _plain(4),  # second window's deadline: fires on B only
+        ],
+    )
+    assert len(risks) == 1
+    assert risks[0].step_id == "4"
+    assert PIN_B[:16] in risks[0].detail
+    assert PIN_A[:16] not in risks[0].detail
+
+
 def test_multi_episode_isolation():
     # Two interleaved episodes share one detector: e1 never re-confirms and
     # fires on its own third follow-up; e2 confirms in time and stays silent.

@@ -17,11 +17,13 @@ After a ``compaction`` event the host has ``grace_steps`` subsequent events to
 re-confirm every pinned constraint hash with a ``constraint_present`` event.
 If any pin is still unconfirmed once that deadline is reached, exactly one
 ``FailureRisk(score=0.9, trigger="governance_decay")`` fires, naming the
-16-hex prefixes of the missing pins. A later ``compaction`` replaces the
-pending set and restarts the grace window (the issue's "new compaction resets
-pending set" rule). Confirmations that arrive after the risk fired are noted
-but do not retract or re-fire anything; only a new compaction opens a new
-window.
+16-hex prefixes of the missing pins. A later ``compaction`` that carries pins
+of its own replaces the pending set and restarts the grace window (the issue's
+"new compaction resets pending set" rule). A pin-less ``compaction``
+(truncation-style, no constraint tracking) does not: it says nothing about the
+previous window's pins, so that window stands and can still fire. Confirmations
+that arrive after the risk fired are noted but do not retract or re-fire
+anything; only a new pin-bearing compaction opens a new window.
 
 Privacy posture (project.md §1.4 / §11): hashes only. Constraint text never
 reaches snagline; the adapter hashes canonical constraint text itself and
@@ -126,9 +128,20 @@ class CompactionTripwireDetector:
         n = st.ordinal
 
         if event.action_type == _COMPACTION:
-            # A new compaction replaces any previous window wholesale and
-            # restarts the grace countdown (issue #90 acceptance criteria).
-            st.pending = self._open_window(event.metadata, n)
+            # A new compaction carrying pins of its own replaces any previous
+            # window wholesale and restarts the grace countdown (issue #90's
+            # "new compaction resets pending set" rule).
+            window = self._open_window(event.metadata, n)
+            if window is not None:
+                st.pending = window
+            # A compaction with no usable pins (truncation-style, no constraint
+            # tracking) argues only about itself -- "nothing can decay" -- and
+            # says nothing about the previous window's pins. Assigning None
+            # here anyway silently deleted an in-flight window whose pins were
+            # still unconfirmed and whose deadline had not arrived, so a
+            # governance-decay finding that would have fired vanished instead
+            # (issue #356). The previous window stands; only a pin-bearing
+            # compaction replaces it.
         elif event.action_type == _CONSTRAINT_PRESENT:
             pending = st.pending
             if (
