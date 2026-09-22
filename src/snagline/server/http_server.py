@@ -68,6 +68,27 @@ choice, not this library's concern.
 Risks produced during ingestion are dispatched to the Monitor's sinks as
 usual (console by default), not returned in the HTTP response: ingestion is
 one-way telemetry, and callers should not block on detection results.
+
+Request origin (issue #388): authenticating the *token* does not
+authenticate the *sender*. ``snagline serve`` defaults to no token ("unset
+means all endpoints are open"), and a web page the operator visits can
+address the loopback sidecar from inside the boundary the bind was meant to
+keep out. ``POST`` is therefore gated on two things a forged cross-site
+request cannot supply together:
+
+* a JSON content type. The CORS-safelisted types (``text/plain``,
+  ``application/x-www-form-urlencoded``, ``multipart/form-data``) are the
+  only ones a cross-site ``fetch`` can send without an ``OPTIONS``
+  preflight, so requiring ``application/json`` forces one, and the sidecar
+  answers any preflight with no ``Access-Control-Allow-Origin`` -- the
+  browser then never sends the request at all. Every shipped client (the
+  three network sinks, ``snagline hook``) already sends JSON.
+* a same-site origin, when the client declares one. ``Sec-Fetch-Site`` and
+  ``Origin`` are absent from non-browser clients (curl, urllib, a sink),
+  so a missing header is not an error; a request that *declares* itself
+  cross-site is refused with 403 and a warning that names the origin, so an
+  attempt is distinguishable from a mistyped token instead of vanishing into
+  the general 401 noise.
 """
 
 from __future__ import annotations
@@ -94,6 +115,14 @@ logger = logging.getLogger("snagline")
 
 # Content type required for Prometheus text exposition format 0.0.4.
 PROMETHEUS_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
+# The only content type a POST body may carry (issue #388). Everything the
+# sidecar accepts is JSON, and the CORS-safelisted types are exactly the ones a
+# cross-site fetch can send without a preflight -- see the module docstring.
+_REQUIRED_CONTENT_TYPE = "application/json"
+# Values of ``Sec-Fetch-Site`` that do not mark a request as cross-site
+# (issue #388). "none" covers a user-typed URL / bookmark / curl-equivalent
+# browser navigation; a cross-site fetch reports "cross-site".
+_SAME_SITE_VALUES = frozenset({"same-origin", "same-site", "none"})
 # Supported values of the metrics_format config/env/request toggle.
 METRICS_FORMATS = ("prometheus", "classic")
 # Bound on distinct episode ids tracked for the episodes-active gauge. Episode
@@ -549,6 +578,57 @@ def make_handler(
                 return authz[len("Bearer ") :].strip() == token
             return self.headers.get("X-Snagline-Token") == token
 
+        def _cross_site_origin(self) -> str | None:
+            """The origin a browser declared for this request, or None.
+
+            Returns the declared origin only when the request *marks itself*
+            cross-site. Non-browser clients -- curl, urllib, a sink, a hook
+            script -- send neither ``Sec-Fetch-Site`` nor ``Origin``, so a
+            missing header is not an error and this stays None (issue #388).
+
+            ``Sec-Fetch-Site`` is authoritative when present: it is set by the
+            browser on every fetch and names the relationship directly, so it
+            needs no comparison against the bound host. ``Origin`` is the
+            fallback (Safari < 16.4 and older browsers): it is compared with
+            the ``Host`` header the request arrived on, which the browser sets
+            to the same authority for a same-origin request. ``Origin: null``
+            is a sandboxed iframe or a ``file://`` page and counts as
+            cross-site.
+            """
+            site = self.headers.get("Sec-Fetch-Site")
+            if site is not None:
+                if site.strip().lower() not in _SAME_SITE_VALUES:
+                    return self.headers.get("Origin") or site.strip().lower()
+                return None
+            origin = self.headers.get("Origin")
+            if origin is None:
+                return None
+            declared = origin.strip().lower()
+            if declared == "null":
+                return origin
+            host = self.headers.get("Host")
+            if not host:
+                return None
+            return (
+                origin
+                if declared
+                not in {
+                    f"http://{host}".lower(),
+                    f"https://{host}".lower(),
+                }
+                else None
+            )
+
+        def _json_content_type(self) -> bool:
+            """Whether the request declared a JSON body (issue #388).
+
+            Only the media type is compared, so ``application/json;
+            charset=utf-8`` is accepted. An absent header is not: the shipped
+            clients all set it, and a browser POST always sets one.
+            """
+            raw = self.headers.get("Content-Type", "")
+            return raw.split(";", 1)[0].strip().lower() == _REQUIRED_CONTENT_TYPE
+
         def do_GET(self) -> None:  # noqa: N802 - http.server naming
             # /health is deliberately open: a liveness probe (k8s, ELB, docker
             # healthcheck) generally cannot be taught to carry a shared secret,
@@ -618,20 +698,68 @@ def make_handler(
             self._respond_text(200, body, PROMETHEUS_CONTENT_TYPE)
 
         def do_POST(self) -> None:  # noqa: N802 - http.server naming
+            # A token only proves the sender *has* it; it says nothing about
+            # where the request came from. Check the origin first so an
+            # attempt that reaches the token gate is still distinguishable
+            # from a mistyped token in the logs (issue #388).
+            cross_site = self._cross_site_origin()
             if not self._authorized():
+                if cross_site is not None:
+                    logger.warning(
+                        "snagline http: rejected a cross-site POST from %r "
+                        "at the auth gate (token unset would have honoured it)",
+                        cross_site,
+                    )
                 # Drain the declared body before replying: closing a
                 # connection that still has unread inbound data makes the
                 # kernel send RST and the sender can lose the 401 response
                 # entirely (same rationale as the over-cap drain, #121;
                 # observed over TLS where close timing shifts the race).
-                declared = self._parse_content_length()
-                if declared is None:
+                length = self._parse_content_length()
+                if length is None:
                     return
-                self._discard_overcap_body(declared)
+                self._discard_overcap_body(length)
                 self._respond(401, {"error": "unauthorized"})
                 return
+            if cross_site is not None:
+                # This is the case the token cannot cover: with the default
+                # no-token configuration the auth gate is wide open, and a
+                # page the operator visited can issue a cross-site POST as a
+                # CORS "simple request" -- no preflight, so the browser sends
+                # it and the write lands (issue #388). Refuse it, and log the
+                # origin so the attempt is visible rather than silent.
+                logger.warning(
+                    "snagline http: refused a cross-site POST from %r; "
+                    "mutating endpoints are same-site only",
+                    cross_site,
+                )
+                length = self._parse_content_length()
+                if length is None:
+                    return
+                self._discard_overcap_body(length)
+                self._respond(403, {"error": "cross-site request refused"})
+                return
+            # Parsed once, before any gate that needs to drain a body: a
+            # malformed Content-Length answers 400 here and nothing below runs.
             length = self._parse_content_length()
             if length is None:
+                return
+            # A forged cross-site request cannot supply this without triggering
+            # an OPTIONS preflight, which this server answers with no
+            # Access-Control-Allow-Origin -- the browser then never sends the
+            # POST (issue #388). Every shipped client sends JSON, so this
+            # costs a real client nothing.
+            if not self._json_content_type():
+                self._discard_overcap_body(length)
+                self._respond(
+                    415,
+                    {
+                        "error": "unsupported media type",
+                        "detail": (
+                            f"POST requires Content-Type: {_REQUIRED_CONTENT_TYPE}"
+                        ),
+                    },
+                )
                 return
             if length > self.snagline_max_body:
                 # Consume the over-cap body first: closing with megabytes

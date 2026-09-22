@@ -76,8 +76,15 @@ def _request(
     path: str,
     body: bytes = b"",
     token: str | None = None,
+    content_type: str = "application/json",
 ) -> bytes:
-    """One raw-socket HTTP/1.0 request; returns the full wire response."""
+    """One raw-socket HTTP/1.0 request; returns the full wire response.
+
+    A POST body carries a JSON content type by default (issue #388): the
+    sidecar now refuses the CORS-safelisted types a forged cross-site request
+    would use, and these tests exercise real client behaviour, not the
+    forgery path.
+    """
     sock = socket.create_connection(("127.0.0.1", port), timeout=10)
     try:
         lines = [f"{method} {path} HTTP/1.0", "Host: localhost"]
@@ -85,6 +92,8 @@ def _request(
             lines.append(f"Authorization: Bearer {token}")
         if body:
             lines.append(f"Content-Length: {len(body)}")
+        if (body or method == "POST") and content_type is not None:
+            lines.append(f"Content-Type: {content_type}")
         lines.append("")
         sock.sendall(("\r\n".join(lines) + "\r\n").encode() + body)
         chunks: list[bytes] = []

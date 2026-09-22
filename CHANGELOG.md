@@ -24,6 +24,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unreachable. An out-of-range value is now a configuration error naming the
   knob (#317). 57305ac (fix(cli): make --list-versions read-only on fit and retrain paths)
 
+### Security
+- The sidecar's mutating `POST` endpoints now check where a request came from,
+  not just that it carries the token (#388). `snagline serve` defaults to no
+  token ("unset means all endpoints are open"), and authenticating the token
+  never authenticated the *sender*: any page the operator was visiting could
+  issue a cross-site POST to the loopback sidecar as a CORS "simple request"
+  (no preflight), so the write landed. A forged `POST /episodes/end` silently
+  discarded an in-flight episode's detection state, and forged `POST /events`
+  telemetry drove the halt policy and the `/metrics` gauges. `POST` is now
+  gated on two things a forged cross-site request cannot supply together: a
+  JSON content type (the CORS-safelisted types are the only ones a cross-site
+  `fetch` can send without a preflight; a bad one gets 415), and a same-site
+  origin when the client declares one (`Sec-Fetch-Site` / `Origin` are absent
+  from non-browser clients, so a missing header is not an error; a request
+  declaring itself cross-site gets 403). Both refusals log the origin, so an
+  attempt is distinguishable from a mistyped token instead of vanishing into
+  the general 401 noise. Every shipped client already sends JSON.
+
 ## [0.1.0] - 2026-08-27
 
 This is the first tagged release. It comprises 87 merge commits on `origin/master`

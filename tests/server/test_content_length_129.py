@@ -108,8 +108,15 @@ def test_absent_content_length_is_treated_as_zero() -> None:
     try:
         # No Content-Length at all, empty body -> _read_body reads 0 bytes,
         # then the endpoint sees empty JSON and answers 400 invalid JSON,
-        # not 400 invalid Content-Length, and never crashes.
-        raw = b"POST /events HTTP/1.0\r\nHost: localhost\r\n\r\n"
+        # not 400 invalid Content-Length, and never crashes. The JSON content
+        # type is sent because this test is about Content-Length, not about
+        # the origin/content-type gates (issue #388).
+        raw = (
+            b"POST /events HTTP/1.0\r\n"
+            b"Host: localhost\r\n"
+            b"Content-Type: application/json\r\n"
+            b"\r\n"
+        )
         response = _raw_request(port, raw)
         assert response.startswith(b"HTTP/1.0 400"), response[:200]
         assert b"invalid StepEvent JSON" in response
