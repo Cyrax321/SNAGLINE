@@ -294,11 +294,18 @@ class Monitor:
                 "snagline: policy='callback' without an on_risk callable; "
                 "no enforcement action will run"
             )
+        # Both numeric knobs are checked unconditionally: neither range depends
+        # on the policy, so a value that is only invalid when halting is armed
+        # would be accepted under observe and surface exactly when the operator
+        # switches the policy on. Kept here as defense in depth for direct
+        # construction -- the same ranges are checked in Config (issue #353),
+        # which is where the CLI's bad-flag path is caught before a banner
+        # claims the server is starting.
+        if halt_timeout_s <= 0:
+            raise ValueError("halt_timeout_s must be positive")
         if normalized == "halt_webhook":
             if not halt_url:
                 raise ValueError("policy='halt_webhook' requires halt_url")
-            if halt_timeout_s <= 0:
-                raise ValueError("halt_timeout_s must be positive")
             # Control-plane endpoint: restrict to http(s). urllib would happily
             # attempt other schemes (file://, ftp://); a typo or injection in
             # operator config must fail loudly here, not probe odd handlers.

@@ -118,7 +118,7 @@ def _validated_horizon(cfg: Config) -> None:
 
 
 def _validated_token_runaway(cfg: Config) -> None:
-    """Validate the token-budget envelope knobs (issue #84); raise when invalid.
+    """Validate the token-budget envelope knobs (issue #317); raise when invalid.
 
     Same contract as the horizon knobs above (issue #92): an out-of-range
     value is a configuration error and fails loudly at construction/resolve
@@ -149,6 +149,37 @@ def _validated_token_runaway(cfg: Config) -> None:
             "token_budget_warn_fraction must be within (0, 1]; got "
             f"{cfg.token_budget_warn_fraction!r}"
         )
+
+
+def _validated_enforcement(cfg: Config) -> None:
+    """Validate the numeric enforcement knobs (issue #353); raise when invalid.
+
+    Same contract as the horizon / stagnation validators: an out-of-range
+    value is a configuration error and fails loudly at construction and after
+    env/file layering, not deep inside the command that consumes it. Until now
+    these two were checked only in ``Monitor._configure_policy``, which
+    ``snagline serve`` reaches *after* printing its listening banner and inside
+    ``with suppress(KeyboardInterrupt)`` -- so the ValueError escaped as a
+    traceback and exit code 1, and the operator had already been told the
+    server was starting.
+    """
+    # Risk scores live in [0, 1]; a threshold outside that range would silently
+    # disable or permanently enable halting. Unconditional, like the existing
+    # check in _configure_policy -- the range does not depend on the policy.
+    if not 0.0 <= float(cfg.min_severity_for_halt) <= 1.0:
+        raise ValueError(
+            "min_severity_for_halt must be within [0, 1]; got "
+            f"{cfg.min_severity_for_halt!r}"
+        )
+    # A non-positive timeout has no meaningful reading under any policy: it is
+    # a budget for a network round-trip, not a toggle. In _configure_policy this
+    # check is gated on policy == "halt_webhook", so a negative timeout set
+    # while observing only surfaced when the policy was later armed -- and
+    # Monitor.default() then rejects a config the direct constructor accepted
+    # (issue #353, adjacent observation). Checking it here makes both entry
+    # points agree and catches the typo at startup.
+    if float(cfg.halt_timeout_s) <= 0:
+        raise ValueError(f"halt_timeout_s must be positive; got {cfg.halt_timeout_s!r}")
 
 
 def _validated_log_format(value: str) -> str:
@@ -543,6 +574,9 @@ class Config:
         # Issue #317: same policy for the token-budget envelope. Its defaults
         # are valid too, so only a configured value can trip these checks.
         _validated_token_runaway(self)
+        # Issue #353: the enforcement knobs' ranges do not depend on the
+        # policy, so they are checked unconditionally; the defaults are valid.
+        _validated_enforcement(self)
         _validated_max_live_episodes(self)
         # Issue #322: thresholds the detectors divide by; 0 raises
         # ZeroDivisionError at ingest time and fail-open then silently disables
@@ -658,6 +692,10 @@ class Config:
         # SNAGLINE_EPISODE_TOKEN_BUDGET=0 must abort startup with a clear
         # error, not page at critical severity on the first ingested step.
         _validated_token_runaway(cfg)
+        # Same re-validation for the enforcement knobs (issue #353):
+        # SNAGLINE_MIN_SEVERITY_FOR_HALT=5 must exit 2 here, not reach
+        # Monitor._configure_policy and traceback after the serve banner.
+        _validated_enforcement(cfg)
         _validated_max_live_episodes(cfg)
         # Same re-validation for the divisor thresholds set from env/file
         # (issue #322): SNAGLINE_LOOP_REPEAT_THRESHOLD=0 must abort startup

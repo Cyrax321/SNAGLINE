@@ -23,6 +23,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   score-0.8 warning; values above `1.0` made the pre-breach warning
   unreachable. An out-of-range value is now a configuration error naming the
   knob (#317). 57305ac (fix(cli): make --list-versions read-only on fit and retrain paths)
+- `min_severity_for_halt` and `halt_timeout_s` are now range-checked in `Config`
+  at construction and after env/file layering, like every other ranged knob.
+  They were previously validated only inside `Monitor._configure_policy`, which
+  `snagline serve` reaches *after* printing its "listening on" banner and inside
+  `with suppress(KeyboardInterrupt)` -- so an out-of-range
+  `--min-severity-for-halt` (or the same via `SNAGLINE_*` / config file) printed
+  a banner announcing a live server and then died with a traceback and exit code
+  1 instead of the clean exit-2 usage error every other malformed flag produces.
+  The same bad value also silently took down `snagline watch` / `replay`. All
+  three commands now exit 2 with a message naming the knob, before anything is
+  printed. `halt_timeout_s` is also checked unconditionally now, not only when
+  `policy` is already `halt_webhook`: a non-positive timeout has no valid
+  reading under any policy, and gating it let a negative timeout set while
+  observing surface only when the policy was later armed (#353).
 
 ## [0.1.0] - 2026-08-27
 

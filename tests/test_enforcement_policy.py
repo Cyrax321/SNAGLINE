@@ -764,5 +764,126 @@ def test_serve_halt_flags_map_to_config(monkeypatch):
     assert monitor._min_severity_for_halt == 0.6
 
 
+# --- CLI rejects bad enforcement knobs as usage errors (issue #353) ----------
+# An out-of-range --min-severity-for-halt / --halt-timeout used to slip past
+# _build_config, die inside Monitor.default() under `with suppress(
+# KeyboardInterrupt)`, and exit 1 with a traceback -- after the "listening on"
+# banner had told the operator the server was up. The two knobs are now
+# range-checked in Config itself, so the failure is a clean exit 2 with the
+# message, before anything is printed.
+
+
+def test_serve_bad_min_severity_exits_2_without_a_banner(monkeypatch, capsys):
+    from snagline import cli
+
+    # The monitor must never be built: if it were, the banner would already
+    # have printed and a server might be listening.
+    def _no_serve(*a, **kw):
+        raise AssertionError("serve() must not be reached on a bad knob")
+
+    monkeypatch.setattr("snagline.server.http_server.serve", _no_serve)
+    rc = cli.main(["serve", "--port", "0", "--min-severity-for-halt", "5.0"])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "min_severity_for_halt must be within [0, 1]" in err
+    # The failure is reported *before* anything claims the server is up.
+    assert "listening on" not in err
+
+
+def test_serve_bad_halt_timeout_exits_2(monkeypatch, capsys):
+    from snagline import cli
+
+    monkeypatch.setattr(
+        "snagline.server.http_server.serve",
+        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("reached serve()")),
+    )
+    # Not gated on --halt-forward: the range does not depend on the policy.
+    assert cli.main(["serve", "--port", "0", "--halt-timeout", "0"]) == 2
+    assert "halt_timeout_s must be positive" in capsys.readouterr().err
+
+
+def test_serve_bad_knob_via_env_exits_2(monkeypatch, capsys):
+    from snagline import cli
+
+    monkeypatch.setenv("SNAGLINE_MIN_SEVERITY_FOR_HALT", "5")
+    monkeypatch.setattr(
+        "snagline.server.http_server.serve",
+        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("reached serve()")),
+    )
+    rc = cli.main(["serve", "--port", "0"])
+    assert rc == 2
+    assert "min_severity_for_halt must be within [0, 1]" in capsys.readouterr().err
+
+
+def test_watch_bad_knob_via_env_exits_2(monkeypatch, capsys):
+    from snagline import cli
+
+    monkeypatch.setenv("SNAGLINE_MIN_SEVERITY_FOR_HALT", "5")
+    # _cmd_watch reaches Monitor.default(), which would raise on the bad
+    # config; a usage error must short-circuit before it.
+    monkeypatch.setattr(
+        "snagline.monitor.Monitor.default",
+        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("reached default()")),
+    )
+    assert cli.main(["watch", "--sink", "console", "--file", "/dev/null"]) == 2
+    assert "min_severity_for_halt must be within [0, 1]" in capsys.readouterr().err
+
+
+def test_replay_bad_knob_via_env_exits_2(monkeypatch, capsys):
+    from snagline import cli
+
+    monkeypatch.setenv("SNAGLINE_MIN_SEVERITY_FOR_HALT", "5")
+    monkeypatch.setattr(
+        "snagline.cli.replay",
+        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("reached replay()")),
+    )
+    assert cli.main(["replay", "/dev/null"]) == 2
+    assert "min_severity_for_halt must be within [0, 1]" in capsys.readouterr().err
+
+
+def test_config_rejects_enforcement_knobs_at_every_layer():
+    # Construction. The defaults are always in range, so only a configured
+    # value trips these -- same contract as the horizon / token-budget knobs.
+    with pytest.raises(ValueError, match="min_severity_for_halt"):
+        Config(min_severity_for_halt=1.5)
+    for bad in (0.0, -1.0):
+        with pytest.raises(ValueError, match="halt_timeout_s"):
+            Config(halt_timeout_s=bad)
+
+    # Env layering bypasses __post_init__ via setattr, so resolve() must
+    # re-check too -- a typo'd SNAGLINE_HALT_TIMEOUT_S=0 must not start a
+    # server that stalls on its first halt round-trip.
+    with pytest.raises(ValueError, match="min_severity_for_halt"):
+        Config.resolve(environ={"SNAGLINE_MIN_SEVERITY_FOR_HALT": "5"})
+    with pytest.raises(ValueError, match="halt_timeout_s"):
+        Config.resolve(environ={"SNAGLINE_HALT_TIMEOUT_S": "0"})
+
+    # The documented edges are legal.
+    assert Config(min_severity_for_halt=0.0).min_severity_for_halt == 0.0
+    assert Config(min_severity_for_halt=1.0).min_severity_for_halt == 1.0
+    assert Config(halt_timeout_s=0.001).halt_timeout_s == 0.001
+
+
+def test_stock_config_and_documented_defaults_still_construct():
+    # The stock configuration must never raise: every default is in range.
+    cfg = Config()
+    assert cfg.min_severity_for_halt == 0.8
+    assert cfg.halt_timeout_s == 0.25
+    # And the resolve path (env + file layering) agrees.
+    resolved = Config.resolve(environ={})
+    assert resolved.min_severity_for_halt == 0.8
+    assert resolved.halt_timeout_s == 0.25
+
+
+def test_direct_constructor_rejects_bad_timeout_under_observe():
+    # The asymmetry the issue flags as adjacent: halt_timeout_s used to be
+    # checked only when policy was already halt_webhook, so a negative timeout
+    # was accepted under observe and surfaced only when the policy was armed.
+    with pytest.raises(ValueError, match="halt_timeout_s must be positive"):
+        Monitor([], [], halt_timeout_s=-1.0)
+    with pytest.raises(ValueError, match="halt_timeout_s must be positive"):
+        Monitor([], [], policy="halt_webhook", halt_url="http://x/", halt_timeout_s=0)
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))

@@ -109,6 +109,24 @@ def _build_config(args: argparse.Namespace) -> Config:
     return Config.resolve(path=path)
 
 
+def _resolve_config_or_usage(args: argparse.Namespace, prog: str) -> Config | None:
+    """Resolve the config, converting a validation error into exit 2 (issue #353).
+
+    Every ranged or closed-set knob is range-checked in ``Config`` itself, so
+    a bad ``SNAGLINE_*`` value, config-file field, or flag surfaces here as a
+    ``ValueError`` -- before any command has printed a banner or started a
+    server. Reporting it as a usage error (message on stderr, exit 2) matches
+    how the parser rejects an unknown flag; letting it escape printed a
+    traceback and claimed a server was starting first. Returns ``None`` and
+    prints the message when the config is unusable.
+    """
+    try:
+        return _build_config(args)
+    except ValueError as exc:
+        print(f"snagline {prog}: {exc}", file=sys.stderr)
+        return None
+
+
 def _maybe_dedup(sinks: list[AlertSink], cooldown_seconds: float) -> list[AlertSink]:
     """Wrap each sink in a cooldown ``DedupSink`` when ``cooldown_seconds`` > 0.
 
@@ -545,7 +563,9 @@ def _iter_lines(
 def _cmd_watch(args: argparse.Namespace) -> int:
     # Resolve the effective config once (config file -> SNAGLINE_* env) so
     # log_format and every other knob layer identically across subcommands.
-    cfg = _build_config(args)
+    cfg = _resolve_config_or_usage(args, "watch")
+    if cfg is None:
+        return 2
     try:
         sinks = _build_sinks(args, cfg)
     except SystemExit as exc:
@@ -1041,18 +1061,28 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
 def _cmd_serve(args: argparse.Namespace) -> int:
     from snagline.server.http_server import serve
 
-    cfg = _build_config(args)
-    # Enforcement wiring (issue #93): --halt-forward turns the resolved config
-    # into halt_webhook mode. dataclasses.replace re-runs Config.__post_init__,
-    # so an invalid value fails loudly here instead of at first ingest.
-    if args.halt_forward:
-        cfg = dataclasses.replace(
-            cfg, policy="halt_webhook", halt_url=args.halt_forward
-        )
-    if args.halt_timeout is not None:
-        cfg = dataclasses.replace(cfg, halt_timeout_s=args.halt_timeout)
-    if args.min_severity_for_halt is not None:
-        cfg = dataclasses.replace(cfg, min_severity_for_halt=args.min_severity_for_halt)
+    cfg = _resolve_config_or_usage(args, "serve")
+    if cfg is None:
+        return 2
+    try:
+        # Enforcement wiring (issue #93): --halt-forward turns the resolved
+        # config into halt_webhook mode. dataclasses.replace re-runs
+        # Config.__post_init__, so an invalid value fails loudly here instead
+        # of at first ingest -- and, since the ranges are also checked in
+        # Config, before the banner below claims a server is starting.
+        if args.halt_forward:
+            cfg = dataclasses.replace(
+                cfg, policy="halt_webhook", halt_url=args.halt_forward
+            )
+        if args.halt_timeout is not None:
+            cfg = dataclasses.replace(cfg, halt_timeout_s=args.halt_timeout)
+        if args.min_severity_for_halt is not None:
+            cfg = dataclasses.replace(
+                cfg, min_severity_for_halt=args.min_severity_for_halt
+            )
+    except ValueError as exc:
+        print(f"snagline serve: {exc}", file=sys.stderr)
+        return 2
     try:
         sinks = _build_sinks(args, cfg)
     except SystemExit as exc:
@@ -1239,7 +1269,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "replay":
         counter = _CountingSink()
-        cfg = _build_config(args)
+        cfg = _resolve_config_or_usage(args, "replay")
+        if cfg is None:
+            return 2
         sinks: list[AlertSink] = []
         if not args.quiet:
             # Same composition as Monitor.default(): console plus, for

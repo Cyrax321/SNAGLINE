@@ -300,8 +300,8 @@ the path variant below.
 | `SNAGLINE_METRICS_FORMAT` | `metrics_format` | prometheus | Sidecar GET /metrics body: prometheus or classic |
 | `SNAGLINE_POLICY` | `policy` | observe | Enforcement layer: observe, callback (needs a code-supplied `on_risk`), or halt_webhook |
 | `SNAGLINE_HALT_URL` | `halt_url` | *(unset)* | Halt webhook endpoint; required when policy is halt_webhook |
-| `SNAGLINE_HALT_TIMEOUT_S` | `halt_timeout_s` | 0.25 | Halt webhook round-trip budget in seconds; timeout fails open to continue |
-| `SNAGLINE_MIN_SEVERITY_FOR_HALT` | `min_severity_for_halt` | 0.8 | Minimum risk score that pays the halt-webhook cost |
+| `SNAGLINE_HALT_TIMEOUT_S` | `halt_timeout_s` | 0.25 | Halt webhook round-trip budget in seconds; must be positive, timeout fails open to continue |
+| `SNAGLINE_MIN_SEVERITY_FOR_HALT` | `min_severity_for_halt` | 0.8 | Minimum risk score that pays the halt-webhook cost; must be within [0, 1] |
 | `SNAGLINE_SERVER_READ_TIMEOUT` | `server_read_timeout` | 30.0 | Sidecar read timeout in seconds for stalled senders |
 | `SNAGLINE_EPISODE_TTL_SECONDS` | `episode_ttl_seconds` | *(unset)* | TTL for episodes-active gauge; when set, ids not seen for this many wall-clock seconds expire (None or 0 disables) |
 | `SNAGLINE_MAX_LIVE_EPISODES` | `max_live_episodes` | 10000 | Per-episode LRU cap; when exceeded the least-recently-seen episode is evicted silently (no finalize). Explicit `end_episode` still frees immediately |
