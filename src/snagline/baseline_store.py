@@ -13,8 +13,10 @@ later; the core stays stdlib-only.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
+import threading
 import time
 from pathlib import Path
 from typing import IO
@@ -181,6 +183,16 @@ class BaselineCollector:
     it decides the run is a good reference (a cadence it owns -- e.g. nightly,
     or after N steps), it calls ``commit()`` to persist a versioned baseline.
 
+    ``snapshot()`` returns an independent copy, not the live accumulator: the
+    name promises a point-in-time view, but returning the profile itself meant
+    a caller that inspected *and mutated* the result (``p.tools.clear()`` while
+    deciding whether to ``commit()``) corrupted the profile a later
+    ``commit()`` persisted, and a reader iterating it raced ``observe()`` with
+    no lock on either side (issue #357). ``observe`` / ``snapshot`` / ``commit``
+    share a leaf lock held only over local work -- never across the fsyncing
+    save -- so a concurrent ingest cannot reshape a profile mid-copy or
+    mid-serialization either.
+
     Fail-open: a ``commit`` with no store configured is a no-op rather than an
     error, so the collector is safe to drop into any pipeline.
     """
@@ -197,20 +209,32 @@ class BaselineCollector:
         self._deployment = deployment
         self._max_versions = max_versions
         self._profile = BaselineProfile()
+        self._lock = threading.Lock()
 
     def observe(self, event) -> None:
-        self._profile.add_event(event)
+        with self._lock:
+            self._profile.add_event(event)
 
     def snapshot(self) -> BaselineProfile:
-        return self._profile
+        # deepcopy, not the live object: every other snapshot-style accessor in
+        # the codebase (SidecarMetricsCollector.snapshot, Monitor.snapshot, the
+        # detectors' dump_state) copies, and this one used to hand out the very
+        # object observe() keeps mutating (issue #357).
+        with self._lock:
+            return copy.deepcopy(self._profile)
 
     def commit(self, version: str | None = None) -> str | None:
         if self._store is None:
             return None
-        # Record fit time so --max-age works even with custom version ids.
-        self._profile.fitted_at = time.time()
+        with self._lock:
+            # Record fit time so --max-age works even with custom version ids.
+            self._profile.fitted_at = time.time()
+            # Copy before the (slow, fsyncing) save: the lock is not held
+            # across disk I/O, and a concurrent observe() must not be able to
+            # reshape the profile while save() serializes it.
+            to_save = copy.deepcopy(self._profile)
         return self._store.save(
-            self._profile,
+            to_save,
             tenant=self._tenant,
             deployment=self._deployment,
             version=version,
