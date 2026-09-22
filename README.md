@@ -38,7 +38,7 @@ Existing monitoring approaches have gaps:
 
 SNAGLINE asks a narrower question: can a zero-dependency, O(1) per-step monitor catch the most common failure modes (loops, error cascades, latency drift) in any agent, running on any framework, at microsecond-scale overhead?
 
-The answer is yes. SNAGLINE's tier-1 detectors are deterministic, O(1) amortized per step, run with no network calls and no LLM calls, and cost a few microseconds per `ingest()` call (measured median 1.7--2.4 us/step on Apple silicon; see [Empirical Verification](#empirical-verification) and run `snagline bench` for your own hardware). They run cheaply enough to instrument every step of a production agent.
+The answer is yes. SNAGLINE's tier-1 detectors are deterministic, O(1) amortized per step, run with no network calls and no LLM calls, and cost a few microseconds per `ingest()` call (measured median 1.53 us/step on Apple M1 and 1.70 us/step on M4, ~2.4 us/step with window auto-scaling enabled; see [Empirical Verification](#empirical-verification) and run `snagline bench` for your own hardware). They run cheaply enough to instrument every step of a production agent.
 
 ## Quick Start
 
@@ -140,8 +140,8 @@ baseline = load_baseline("baseline.json")
 config = Config(
     goal_drift_enabled=True,
     goal_drift_baseline=baseline,
-    ml_ensemble_enabled=True,   # combine all base detectors into one signal
-    stagnation_enabled=True,    # novelty-collapse detection, no baseline needed
+    ml_ensemble_enabled=True,  # combine all base detectors into one signal
+    stagnation_enabled=True,  # novelty-collapse detection, no baseline needed
 )
 monitor = Monitor.default(config=config)
 ```
@@ -161,7 +161,7 @@ in [docs/RETRAIN_CADENCE.md](docs/RETRAIN_CADENCE.md)).
 |:--|:--|
 | **Zero dependencies** | The core needs nothing but Python 3.10+ -- `dependencies = []` in `pyproject.toml`, non-negotiable. Published to PyPI as `snagline` (`pip install snagline`, or `pip install .` from a clone, see [Quick Start](#quick-start)). Every framework adapter is an optional extra. |
 | **Fail-open guarantee** | Detector/sink exceptions are caught, logged, and never propagated into the host agent. A monitoring library that can crash the thing it monitors is a non-starter. |
-| **Microsecond-scale overhead** | Median 2.43 us/step, p99 27.71 us/step over 200,000 synthetic steps. Cheap enough to run on every step of a week-long run. Numbers and provenance in [Empirical Verification](#automated-test-suite-and-benchmarks); reproduce with `snagline bench`. |
+| **Microsecond-scale overhead** | Median 1.53 us/step, p99 1.66 us/step over 200,000 synthetic steps. Cheap enough to run on every step of a week-long run. Numbers and provenance in [Empirical Verification](#automated-test-suite-and-benchmarks); reproduce with `snagline bench`. |
 | **Framework-agnostic core** | All detector and sink logic operates only on the canonical `StepEvent` schema. Framework-specific code lives in isolated adapter modules and nowhere else. |
 | **No content retention** | Detectors reason about hashes, timings, counts, and booleans -- never prompt or response content. Adoption blocker if left ambiguous. |
 | **Streaming-first, batch-capable** | Primary use is live monitoring of a running agent. The same event schema and detectors also work over an exported trajectory file for offline analysis. |
@@ -180,23 +180,20 @@ from snagline import Monitor, Config
 
 config = Config(
     # Loop detector
-    loop_window_size=12,          # sliding window size (steps)
-    loop_repeat_threshold=3,      # repeats needed to fire
-
+    loop_window_size=12,  # sliding window size (steps)
+    loop_repeat_threshold=3,  # repeats needed to fire
     # Error cascade detector
-    cascade_window_size=10,       # window for slow-burn detection
-    cascade_error_threshold=3,    # errors in window to fire
+    cascade_window_size=10,  # window for slow-burn detection
+    cascade_error_threshold=3,  # errors in window to fire
     cascade_consecutive_threshold=3,  # consecutive errors to fire
-
     # Latency anomaly (CUSUM) detector
-    cusum_k=0.5,                  # slack parameter (sensitivity)
-    cusum_h=5.0,                  # alarm threshold
-    cusum_min_samples=5,          # warm-up before alarming (issue #9 lowered it from 20)
-    cusum_sigma_floor_abs=1.0,    # minimum sigma (ms) for constant baselines
-    cusum_sigma_floor_rel=0.05,   # minimum sigma as fraction of mean
-
+    cusum_k=0.5,  # slack parameter (sensitivity)
+    cusum_h=5.0,  # alarm threshold
+    cusum_min_samples=5,  # warm-up before alarming (issue #9 lowered it from 20)
+    cusum_sigma_floor_abs=1.0,  # minimum sigma (ms) for constant baselines
+    cusum_sigma_floor_rel=0.05,  # minimum sigma as fraction of mean
     # Global
-    fail_open=True,               # False propagates detector/sink exceptions
+    fail_open=True,  # False propagates detector/sink exceptions
 )
 
 monitor = Monitor.default(config=config)
@@ -333,11 +330,15 @@ tests : run `python -m pytest tests/ -q` and trust your own output.
         so no fixed number is quoted here. The CI matrix is Python
         3.10--3.13 on ubuntu/windows; see the ci.yml workflow runs for
         each leg's totals.
-bench : median 2.43 us/step, p99 27.71 us/step over 200,000 synthetic steps
-        (measured 2026-08-26 on Apple M1, arm64, CPython 3.14.5;
-         earlier 1.91 / 33.90 on same hardware 2026-08-15;
-         independently reproduced at commit f7857d1 on Apple M4 /
-         CPython 3.13.5: median 1.70 us/step, p99 1.77 us/step)
+bench : median 1.53 us/step, p99 1.66 us/step over 200,000 synthetic steps
+        (measured 2026-09-20 on Apple M1, arm64, CPython 3.13.5, commit
+         b667169; reflects the ingest hot-path work of PRs #307 and #311;
+         2.43 / 27.71 on the same hardware 2026-08-26, and 1.91 / 33.90
+         2026-08-15; independently reproduced at commit f7857d1 on Apple
+         M4: median 1.70 us/step, p99 1.77 us/step)
+        With window auto-scaling enabled (max_window 512 and 2048): median
+        2.39 / 2.40 us/step -- flat across a 4x window range, the O(1)
+        amortized claim measured rather than asserted.
 enforcement (issue #93): added latency per halting step, halt_timeout_s=250ms,
         Apple M1 / CPython 3.14 / 2026-08-26: responding localhost endpoint
         median 264 us/step, refused (dead) endpoint median 57 us/step,
@@ -471,10 +472,12 @@ genuinely are loops, so the loop detector (and the meltdown detector for
 labels. The gate the harness exists for -- `healthy controls that fired: 0`,
 exit code 0 -- still holds.
 
-Ingest overhead on commit `22faeae`'s parent-line hardware: median 2.43 us/step,
-p99 27.71 us/step over 200,000 synthetic steps
+Ingest overhead on commit `b667169` (the hardware below): median 1.53 us/step,
+p99 1.66 us/step over 200,000 synthetic steps
 (`python benchmarks/overhead_benchmark.py` or `snagline bench`; Apple M1,
-arm64, CPython 3.14.5).
+arm64, CPython 3.13.5). With window auto-scaling enabled the median stays
+2.39-2.40 us/step across max_window 512 and 2048, so the O(1) amortized
+contract holds as windows grow.
 
 ## Framework Integration
 
@@ -547,6 +550,7 @@ Custom sinks implement the `AlertSink` protocol:
 ```python
 from snagline.sinks.base import AlertSink
 from snagline.risk import FailureRisk
+
 
 class MySink:
     def emit(self, risk: FailureRisk) -> None:
