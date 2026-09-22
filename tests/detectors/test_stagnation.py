@@ -397,3 +397,43 @@ def test_scaling_off_behavior_unchanged():
     d = _scaled_detector(0, base=50, max_window=512)
     risks = _collapse_feed(d, 50, 500)
     assert len(risks) == 1
+
+
+# --- load_state is atomic: a rejected snapshot leaves the detector untouched ---
+# restore_dict catches the exception and moves on (issue #384), so a snapshot
+# applied attribute-by-attribute could leave _counts from the snapshot paired
+# with _windows cleared of every live episode -- the scaler then believes
+# episodes have history their windows no longer carry (issue #417).
+
+
+def test_load_state_is_atomic_when_an_entry_is_malformed():
+    d = StagnationDetector(window_size=4)
+    for i in range(4):
+        d.observe(_event(i, _sig(i)))
+    assert "ep" in d._windows, "there must be a live window to lose"
+    live_flags = {k: list(w.flags) for k, w in d._windows.items()}
+    live_counts = dict(d._counts)
+
+    # A snapshot that mentions a *different*, malformed episode. Pre-fix
+    # load_state cleared _windows and overwrote _counts before building, so
+    # the live episode is gone before the bad entry raises.
+    bad = {"counts": {"ep-bad": 2}, "windows": {"ep-bad": "not-a-dict"}}
+    with pytest.raises(Exception):
+        d.load_state(bad)
+
+    assert {k: list(w.flags) for k, w in d._windows.items()} == live_flags, (
+        "a rejected snapshot must not discard live windows"
+    )
+    assert d._counts == live_counts, "counts must not advance past the windows"
+
+
+def test_load_state_applies_when_the_snapshot_is_good():
+    d1 = StagnationDetector(window_size=4)
+    for i in range(4):
+        d1.observe(_event(i, _sig(i)))
+    d2 = StagnationDetector(window_size=4)
+    d2.load_state(d1.dump_state())
+    assert {k: list(w.flags) for k, w in d2._windows.items()} == {
+        k: list(w.flags) for k, w in d1._windows.items()
+    }
+    assert d2._counts == d1._counts

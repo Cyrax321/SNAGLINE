@@ -147,3 +147,106 @@ def test_none_budget_still_disables_the_envelope():
     d = TokenRunawayDetector(budget_total_tokens=None, min_samples=5)
     _run(d, [_event(i, 100) for i in range(10)])
     assert d._totals == {}, "no budget means the envelope tracks nothing"
+
+
+# --- load_state is atomic: a rejected snapshot leaves the detector untouched --
+# restore_dict catches the exception and moves on (issue #384), so a snapshot
+# applied attribute-by-attribute would silently pair restored episodes with the
+# live totals/warned/breached that none of them describe, after the live state
+# was already discarded (issue #417).
+
+
+def test_load_state_is_atomic_when_an_entry_is_malformed():
+    d = TokenRunawayDetector(min_samples=3, budget_total_tokens=2000)
+    _run(d, [_event(i, 500) for i in range(4)])  # live "ep": 4*500 == budget
+    assert "ep" in d._states and d._breached.get("ep"), "there must be state to lose"
+    live_totals = dict(d._totals)
+    live_breached = dict(d._breached)
+
+    # A snapshot that mentions a *different*, malformed episode. Pre-fix
+    # load_state cleared _states before repopulating, so the live episode is
+    # discarded before the bad entry ever raises -- and _warned/_breached are
+    # left describing episodes that no longer exist.
+    bad = {
+        "states": {"ep-bad": {"n": "not-an-int"}},
+        "totals": {},
+        "warned": {},
+        "breached": {},
+    }
+    with pytest.raises(Exception):
+        d.load_state(bad)
+
+    assert "ep" in d._states, "a rejected snapshot must not discard live episodes"
+    assert d._totals == live_totals, "totals must not be replaced by the snapshot"
+    assert d._breached == live_breached
+
+
+def test_load_state_applies_when_the_snapshot_is_good():
+    d1 = TokenRunawayDetector(min_samples=3, budget_total_tokens=2000)
+    _run(d1, [_event(i, 500) for i in range(4)])
+    d2 = TokenRunawayDetector(min_samples=3, budget_total_tokens=2000)
+    d2.load_state(d1.dump_state())
+    assert set(d2._states) == set(d1._states)
+    assert d2._warned == d1._warned
+
+
+def test_load_state_rejects_a_non_numeric_counter():
+    # ``dump_state`` copies the seven Welford/CUSUM counters out as-is, and a
+    # snapshot is only JSON: a hand edit, a torn write, or a version skew can
+    # hand back an entry where every key is present but a value is not a
+    # number. That entry is structurally complete, so it cleared the guards
+    # above and was published -- and the failure then moved out of restore and
+    # into the next event, where ``learn_only``'s ``self.n += 1`` is
+    # ``'not-a-number' + 1`` (issue #424).
+    d = TokenRunawayDetector(min_samples=3, budget_total_tokens=2000)
+    _run(d, [_event(i, 500) for i in range(4)])
+    live = d.dump_state()
+
+    bad = {
+        "states": {
+            "ep": {
+                "n": "not-a-number",
+                "mean": 5.0,
+                "m2": 4.0,
+                "cusum": 0.0,
+                "mu0": 5.0,
+                "sigma0": 2.0,
+                "frozen": False,
+            }
+        },
+        "totals": {},
+        "warned": {},
+        "breached": {},
+    }
+    with pytest.raises(Exception):
+        d.load_state(bad)
+
+    # Rejected at restore, so the live state survives (issue #417) rather than
+    # being replaced by the poisoned one.
+    assert d.dump_state() == live
+
+    # ...and the episode is still scorable, not wedged. This is the observable
+    # difference between "snapshot rejected" and "snapshot accepted and
+    # broken": the old behaviour raised a TypeError here and on every event
+    # after it, with the count left as a string.
+    d.observe(_event(4, 500))
+    assert isinstance(d._states["ep"].n, int)
+
+
+def test_load_state_accepts_a_mid_warmup_snapshot():
+    # ``mu0`` is the one field that may legitimately be absent: a state
+    # captured before ``freeze`` has no baseline yet. Validating it with a bare
+    # ``float()`` would reject exactly the snapshots ``dump_state`` writes, so
+    # ``None`` has to round-trip (issue #424).
+    d1 = TokenRunawayDetector(min_samples=5, budget_total_tokens=2_000_000)
+    _run(d1, [_event(i, 500) for i in range(2)])  # under min_samples: unfrozen
+    assert not d1._states["ep"].frozen, "this test needs a warm-up state"
+    assert d1._states["ep"].mu0 is None
+
+    d2 = TokenRunawayDetector(min_samples=5, budget_total_tokens=2_000_000)
+    d2.load_state(d1.dump_state())
+    assert d2._states["ep"].mu0 is None
+    # The detector still warms up from the restored position rather than
+    # starting over.
+    _run(d2, [_event(i, 500) for i in range(2, 5)])
+    assert d2._states["ep"].frozen

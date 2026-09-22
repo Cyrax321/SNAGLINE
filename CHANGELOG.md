@@ -16,6 +16,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fitting, writing `baseline.json`, or storing a new version. Without
   `--store-dir` it now fails closed with `--list-versions requires --store-dir`
   (exit 2) instead of silently writing a file or bumping the store (#293).
+- `TokenRunawayDetector` and `StagnationDetector` now build their restored
+  state into locals and publish it in one assignment. A malformed snapshot
+  entry raised halfway through `load_state` after live state had already been
+  cleared or partially overwritten, so a rejected snapshot left the detector
+  half-restored -- some episodes rebuilt and the rest gone, `_totals` /
+  `_breached` still describing the live episodes that no longer existed, or
+  `_counts` from the snapshot paired with windows emptied of every live
+  episode, so the scaler believed episodes had history their windows no longer
+  carried. `restore_dict` reports such a detector as keeping its live state,
+  which was not true for these two. A rejected snapshot now leaves them
+  exactly as they were (#417; `MeltdownDetector` was already fixed in #406).
+- the Welford/CUSUM counters restored by `TokenRunawayDetector` and
+  `LatencyAnomalyDetector` are now coerced to their real types. A snapshot
+  whose entries are all present but whose values are not numbers -- a hand
+  edit, a torn write, or a version skew -- used to be accepted silently and
+  then poison the detector: the next event made `learn_only`'s `self.n += 1`
+  a `TypeError`, which `ingest` swallows fail-open, so the episode scored
+  nothing for the rest of its life and the fault was logged only once. Such an
+  entry is now rejected at restore, where the #417 containment already handles
+  it (#424).
 - `episode_token_budget` and `token_budget_warn_fraction` are now range-checked
   at construction and after env/file layering, like the horizon and stagnation
   knobs. A zero or negative budget used to fire a score-1.0 `budget_breach` on

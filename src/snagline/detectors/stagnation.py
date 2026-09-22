@@ -194,10 +194,20 @@ class StagnationDetector:
         }
 
     def load_state(self, state: dict[str, Any]) -> None:
-        self._windows = {}
+        # Everything is built into locals and published only once the whole
+        # snapshot has parsed. ``Monitor.restore_dict`` catches the exception
+        # a malformed entry raises and moves on, so assigning attribute-by-
+        # attribute would leave the detector half-restored: ``_counts`` set
+        # from the snapshot while ``_windows`` still holds the live ones, so
+        # the scaler believes episodes have N steps of history their windows
+        # no longer carry -- or, with the loop partway through, windows from
+        # two different runs paired with counts that describe neither, and
+        # nothing reporting the mismatch (issue #417). A rejected snapshot now
+        # leaves the detector exactly as it was.
         # Read the scaler positions first: they decide how large the restored
         # window is allowed to be when auto-scaling is on (issue #92).
-        self._counts = {ep: int(n) for ep, n in state.get("counts", {}).items()}
+        counts = {ep: int(n) for ep, n in state.get("counts", {}).items()}
+        windows: dict[str, _EpisodeWindow] = {}
         for ep, raw in state.get("windows", {}).items():
             w = _EpisodeWindow()
             # Clamp to the window this detector will actually evaluate against:
@@ -213,7 +223,7 @@ class StagnationDetector:
             # a fixed maxlen would blind it again once the target grows past it.
             target = effective_window_size(
                 self.window_size,
-                self._counts.get(str(ep), 0),
+                counts.get(str(ep), 0),
                 self._scale_steps,
                 self._max_window,
             )
@@ -227,4 +237,6 @@ class StagnationDetector:
             w.novel_in_window = sum(flags)
             w.stale_windows = int(raw.get("stale_windows", 0))
             w.seen_all_time = set(raw.get("seen_all_time", []))
-            self._windows[str(ep)] = w
+            windows[str(ep)] = w
+        self._counts = counts
+        self._windows = windows

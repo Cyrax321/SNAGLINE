@@ -163,17 +163,23 @@ class TokenRunawayDetector:
         }
 
     def load_state(self, state: dict[str, Any]) -> None:
-        self._states = {}
+        # Everything is built into locals and published only once the whole
+        # snapshot has parsed. ``Monitor.restore_dict`` catches the exception
+        # a malformed entry raises and moves on, so assigning attribute-by-
+        # attribute -- or clearing ``_states`` and repopulating it per episode
+        # -- would leave the detector half-restored: some episodes rebuilt,
+        # the rest gone, and ``_totals`` / ``_warned`` / ``_breached`` still
+        # holding live values that no longer describe any of them, with the
+        # live state already discarded and nothing reporting the mismatch
+        # (issue #417). A rejected snapshot now leaves the detector exactly as
+        # it was.
+        restored: dict[str, _WelfordCUSUM] = {}
         for ep, raw in state.get("states", {}).items():
-            s = _WelfordCUSUM(self.k, self.h)
-            s.n = raw["n"]
-            s.mean = raw["mean"]
-            s._m2 = raw["m2"]
-            s.cusum = raw["cusum"]
-            s.mu0 = raw["mu0"]
-            s.sigma0 = raw["sigma0"]
-            s.frozen = raw["frozen"]
-            self._states[ep] = s
-        self._totals = {ep: int(v) for ep, v in state.get("totals", {}).items()}
-        self._warned = {ep: bool(v) for ep, v in state.get("warned", {}).items()}
-        self._breached = {ep: bool(v) for ep, v in state.get("breached", {}).items()}
+            restored[ep] = _WelfordCUSUM.from_snapshot(self.k, self.h, raw)
+        totals = {ep: int(v) for ep, v in state.get("totals", {}).items()}
+        warned = {ep: bool(v) for ep, v in state.get("warned", {}).items()}
+        breached = {ep: bool(v) for ep, v in state.get("breached", {}).items()}
+        self._states = restored
+        self._totals = totals
+        self._warned = warned
+        self._breached = breached

@@ -77,6 +77,45 @@ class _WelfordCUSUM:
         self.pending_shift = 0.0
         self.pending_old_mu = 0.0
 
+    @classmethod
+    def from_snapshot(
+        cls,
+        k: float,
+        h: float,
+        raw: dict[str, Any],
+        sigma_floor_abs: float = 1.0,
+        sigma_floor_rel: float = 0.05,
+    ) -> _WelfordCUSUM:
+        """Rebuild one state from a persisted snapshot, validating every field.
+
+        ``dump_state`` copies the Welford/CUSUM counters out as-is, and a
+        snapshot is only JSON: a hand edit, a partially overwritten file, or a
+        version skew can hand back a field that is *present* but not a number.
+        A plain assignment accepts it, and the state then poisons the detector
+        instead of being rejected -- the next sample makes ``learn_only``'s
+        ``self.n += 1`` raise ``TypeError`` where the count came back as a
+        string, and that raise escapes ``observe`` into the host agent's step,
+        on every event from that episode until the state is reset (issue #424).
+        Coerce each field to its real type so a structurally complete but
+        semantically broken entry is rejected *here*, where
+        ``Monitor.restore_dict`` catches it and the detector keeps its live
+        state (issue #417), rather than midway through the next episode.
+
+        ``mu0`` is the one field that may legitimately be ``None``: a state
+        captured mid warm-up has no baseline yet, because ``freeze`` is what
+        sets it.
+        """
+        s = cls(k, h, sigma_floor_abs, sigma_floor_rel)
+        s.n = int(raw["n"])
+        s.mean = float(raw["mean"])
+        s._m2 = float(raw["m2"])
+        s.cusum = float(raw["cusum"])
+        mu0 = raw["mu0"]
+        s.mu0 = None if mu0 is None else float(mu0)
+        s.sigma0 = float(raw["sigma0"])
+        s.frozen = bool(raw["frozen"])
+        return s
+
     def learn_only(self, x: float) -> None:
         """Welford update of the running baseline statistics (no CUSUM)."""
         self.n += 1
@@ -384,8 +423,8 @@ class LatencyAnomalyDetector:
         restored: dict[tuple[str, str], _WelfordCUSUM] = {}
         for key_pair, raw in state.get("states", []):
             ep, tool = key_pair[0], key_pair[1]
-            s = _WelfordCUSUM(
-                self.k, self.h, self.sigma_floor_abs, self.sigma_floor_rel
+            s = _WelfordCUSUM.from_snapshot(
+                self.k, self.h, raw, self.sigma_floor_abs, self.sigma_floor_rel
             )
             self._state_from_dict(s, raw)
             # The live config owns the refit cadence; the snapshot only
