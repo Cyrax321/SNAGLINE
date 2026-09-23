@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nothing yet.
 
 ### Fixed
+- Near-duplicate loop mode (`loop_near_duplicate_enabled`) now re-arms a
+  decayed normalized key from the sliding window on every step, matching the
+  plain loop path. Previously it only re-armed the key observed on the current
+  step, so a key that fired and then aged below `repeat_threshold` while other
+  actions were observed stayed latched forever and its next genuine loop was
+  suppressed — near-duplicate mode silently missed every loop after the first.
+  Because the raw signatures in this mode are distinct by construction, it is
+  often the only detector that can see such loops, so the miss was total (#450).
 - `snagline baseline --list-versions` is now honored on both the fit and
   `retrain` paths and is read-only everywhere: it lists and exits 0 without
   fitting, writing `baseline.json`, or storing a new version. Without

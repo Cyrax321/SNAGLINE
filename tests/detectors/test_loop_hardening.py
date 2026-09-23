@@ -204,6 +204,43 @@ def test_normalizer_hook_is_replaceable():
     assert [r.trigger for _, r in fires] == ["near_duplicate_loop"]
 
 
+def test_near_duplicate_rearms_after_a_decayed_key_like_the_plain_path():
+    """Issue #450: a normalized key that fires, then decays below threshold
+    while *other* keys are observed, must re-arm so a second genuine loop of
+    it fires again -- exactly as the plain path does. Before the fix only the
+    currently-observed key was re-armed, so the decayed key stayed in ``fired``
+    forever and every loop after the first was silently missed."""
+    d = LoopDetector(
+        window_size=4,
+        repeat_threshold=3,
+        config=Config(loop_near_duplicate_enabled=True),
+        normalizer=lambda s: s.split("#")[0],
+    )
+    # normalized: a b a a b a -- "a" loops, is interrupted by "b", loops again.
+    fires = _feed(d, ["a#1", "b#1", "a#2", "a#3", "b#2", "a#4"])
+    steps = [i for i, _ in fires]
+    assert steps == [3, 5], f"expected both loops of 'a' to fire, got {fires}"
+    assert all(r.trigger == "near_duplicate_loop" for _, r in fires)
+
+
+def test_near_duplicate_matches_plain_path_on_the_same_normalized_stream():
+    """The near-duplicate path must fire on the same steps the plain path does
+    when fed an identity normalizer over an already-normalized stream -- the
+    two re-arm identically. This is the invariant issue #450 broke."""
+    stream = ["a", "b", "a", "a", "b", "a", "a", "a"]
+    plain = _feed(LoopDetector(window_size=4, repeat_threshold=3), stream)
+    near = _feed(
+        LoopDetector(
+            window_size=4,
+            repeat_threshold=3,
+            config=Config(loop_near_duplicate_enabled=True),
+            normalizer=lambda s: s,
+        ),
+        stream,
+    )
+    assert [i for i, _ in near] == [i for i, _ in plain]
+
+
 # --- stall mode ---------------------------------------------------------------
 
 

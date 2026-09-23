@@ -294,17 +294,41 @@ class LoopDetector:
             w.append(key)
             count = w.count(key)
         fired = self._near_fired.get(event.episode_id)
+        if fired:
+            # Re-arm from the WINDOW, re-scanning every escalated key on every
+            # step -- exactly as _observe_plain does (issue #94 re-arm
+            # semantics). The previous code only re-armed the key observed on
+            # *this* step, inside the sub-threshold branch. A key that fired,
+            # then decayed below threshold while *other* keys were observed,
+            # therefore stayed in ``fired`` forever, and the ``key in fired``
+            # guard suppressed its next genuine loop -- so near-duplicate mode
+            # silently missed every loop after the first (issue #450). Near
+            # mode is often the only detector that can see these loops (the raw
+            # signatures are distinct by construction), so the miss is total.
+            fired_counts: Counter[str] | None = (
+                self._near_counts_map.get(event.episode_id)
+                if self._scale_steps > 0
+                else None
+            )
+            for k in tuple(fired):
+                if k == key:
+                    seen = count
+                elif fired_counts is not None:
+                    seen = fired_counts[k]
+                else:
+                    seen = w.count(k)
+                if seen < self.repeat_threshold:
+                    fired.discard(k)
+            if not fired:
+                del self._near_fired[event.episode_id]
+                fired = None
         if count < self.repeat_threshold:
-            if fired is not None:
-                # The normalized variant dropped below threshold or aged out:
-                # re-arm so a later recurrence escalates again.
-                fired.discard(key)
-                if not fired:
-                    del self._near_fired[event.episode_id]
             return None
-        if fired is not None and key in fired:
+        if fired is None:
+            fired = self._near_fired.setdefault(event.episode_id, set())
+        elif key in fired:
             return None
-        self._near_fired.setdefault(event.episode_id, set()).add(key)
+        fired.add(key)
         score = min(1.0, count / max(self.repeat_threshold, 1) * 0.5)
         return FailureRisk(
             event.episode_id,
