@@ -105,6 +105,63 @@ jobs:
           . .venv/bin/activate
           python -m pytest tests/ -q
 
+  test-continuum:
+    # The CONTINUUM sink's only live test (test_real_actionledger_flags_review)
+    # skips unless continuum is importable, and no other leg installs it, so the
+    # sink's hand-rolled MiniStorage double could rot in silence -- exactly how
+    # the real ActionLedger's ``source=`` kwarg reached SNAGLINE as an
+    # in-the-wild TypeError in issue #296. This leg installs CONTINUUM from
+    # source so that test actually runs on every PR instead of skipping.
+    #
+    # It tracks CONTINUUM's default branch deliberately: upstream signature
+    # drift is meant to land as a loud red job here, not slip past a pinned ref.
+    # Coverage is reported but not gated, mirroring the Windows legs: a
+    # single-file run cannot meet the suite-wide 80% gate the Linux legs
+    # enforce over the whole tree.
+    name: Test (py3.12, continuum extra)
+    runs-on: ubuntu-latest
+    steps:
+      # persist-credentials is off on both checkouts: the job pip-installs from
+      # two repositories, and leaving the SNAGLINE token in the local git
+      # config would let the other repo's build hooks spend it (issue noted in
+      # PR review).
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Check out CONTINUUM alongside SNAGLINE
+        uses: actions/checkout@v7
+        with:
+          repository: Cyrax321/CONTINUUM
+          path: continuum-src
+          ref: main
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install (SNAGLINE + CONTINUUM from source + dev tooling)
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install -e . --no-deps
+          # Install CONTINUUM from the checked-out source rather than PyPI: the
+          # published wheel lags the branch SNAGLINE integrates against, so a
+          # pinned/PyPI install would defeat the point of the leg.
+          pip install -e ./continuum-src --no-deps
+          # CONTINUUM's only runtime surface is pydantic, which SNAGLINE does
+          # not depend on, so pull it in explicitly for this leg.
+          pip install "pydantic>=2.7"
+          pip install "pytest" "pytest-cov==7.1.0" "mypy"
+
+      - name: Run CONTINUUM sink tests against the real package
+        run: |
+          . .venv/bin/activate
+          python -m pytest tests/sinks/test_continuum_sink.py -q --cov-fail-under=0
+
   benchmark-accuracy:
     # False-positive gate (issue #148): replays the committed deterministic
     # 76-episode corpus through benchmarks/detection_accuracy.py on every
