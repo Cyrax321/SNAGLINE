@@ -137,6 +137,11 @@ def test_real_actionledger_flags_review() -> None:
         def read_archived_events(self, run_id: str) -> list[Any]:
             return []  # fake holds no compacted prefix
 
+        def read_all_events(self, run_id: str) -> list[Any]:
+            # Real Storage merges the archived prefix with the live tail; this
+            # fake archives nothing, so full history is just the live log.
+            return list(self.events)
+
         def last_sequence(self, run_id: str) -> int:
             return len(self.events)
 
