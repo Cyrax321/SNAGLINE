@@ -178,6 +178,32 @@ class SemanticGoalDriftDetector:
             vec = raw.get("sum")
             if isinstance(vec, list):
                 st.sum = [float(v) for v in vec]
+            # A restored running sum fitted under a different embedder than
+            # the live baseline centroid is a wedge, not a head start
+            # (issue #435): the live path's dimension check compares the
+            # embedder against the centroid and passes when the operator
+            # refit both together, then indexes the stale shorter sum out of
+            # range on every subsequent step -- IndexError, swallowed by the
+            # fail-open wrapper, zero risks and a traceback per step forever.
+            # The live path handles a mismatch by latching inert; restore
+            # instead drops only the affected episode, which re-accumulates
+            # from scratch exactly as it would after a reset.
+            if (
+                st.sum is not None
+                and self._baseline_centroid is not None
+                and len(st.sum) != len(self._baseline_centroid)
+            ):
+                logger.warning(
+                    "snagline: semantic goal-drift dropped restored state for "
+                    "episode %r; snapshot dimension %d does not match baseline "
+                    "centroid dimension %d (refit the baseline with the current "
+                    "embedder)",
+                    ep,
+                    len(st.sum),
+                    len(self._baseline_centroid),
+                )
+                episodes[str(ep)] = _LiveState()  # sum=None: re-accumulate
+                continue
             st.n = int(raw.get("n", 0))
             st.debt = float(raw.get("debt", 0.0))
             episodes[str(ep)] = st

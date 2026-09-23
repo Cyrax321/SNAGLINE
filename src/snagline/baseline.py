@@ -14,11 +14,32 @@ the same persisted profile later.
 from __future__ import annotations
 
 import json
+import math
 import time
 from dataclasses import dataclass, field
 from typing import IO
 
 from snagline.events import StepEvent
+
+
+def _usable_latency(latency_ms: float) -> bool:
+    """Whether a latency sample is fit to enter the running moments (#438).
+
+    A non-finite sample is not a measurement: NaN poisons the running sum
+    (``mean_latency`` becomes NaN, ``std_latency`` collapses to 0.0 because
+    ``max(0.0, NaN)`` is 0.0 in CPython) and the corrupted profile is then
+    *persisted*, shared by every monitor and detector that loads it. A
+    negative latency is not physical either. Both are dropped from the
+    latency statistics while still counting the call and its error, so a
+    single bad line in a healthy trajectory costs one sample, not the whole
+    profile -- the fail-soft handling ``fit_baseline_from_jsonl``'s docstring
+    already promises for malformed lines.
+    """
+    return (
+        isinstance(latency_ms, (int, float))
+        and math.isfinite(latency_ms)
+        and latency_ms >= 0.0
+    )
 
 
 @dataclass
@@ -42,7 +63,7 @@ class ToolBaseline:
 
     def add(self, latency_ms: float | None, error: bool) -> None:
         self.count += 1
-        if latency_ms is not None:
+        if latency_ms is not None and _usable_latency(latency_ms):
             self.latency_count += 1
             self.latency_sum += latency_ms
             self.latency_sum_sq += latency_ms * latency_ms

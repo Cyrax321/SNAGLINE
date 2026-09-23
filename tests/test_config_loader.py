@@ -87,14 +87,17 @@ def test_load_file_toml(tmp_path):
 
 
 def test_resolve_layers_file_then_env(tmp_path):
+    # Both values stay inside loop_window_size: since #436 a threshold wider
+    # than its window is rejected as unreachable, and precedence is what this
+    # test exercises, not the detector's range.
     path = tmp_path / "cfg.json"
-    path.write_text(json.dumps({"cusum_k": 1.2, "loop_repeat_threshold": 9}))
-    env = {"SNAGLINE_LOOP_REPEAT_THRESHOLD": "15"}
+    path.write_text(json.dumps({"cusum_k": 1.2, "loop_repeat_threshold": 5}))
+    env = {"SNAGLINE_LOOP_REPEAT_THRESHOLD": "8"}
     cfg = Config.resolve(path=str(path), environ=env)
     # From file:
     assert cfg.cusum_k == 1.2
     # From env, overriding the file:
-    assert cfg.loop_repeat_threshold == 15
+    assert cfg.loop_repeat_threshold == 8
     # Untouched default:
     assert cfg.fail_open is True
 
@@ -113,7 +116,10 @@ def test_resolve_env_equal_to_default_still_beats_the_file(tmp_path):
     # inverting the documented env > file > defaults precedence.
     defaults = Config()
     path = tmp_path / "cfg.json"
-    path.write_text(json.dumps({"cascade_error_threshold": 99, "fail_open": False}))
+    # A valid, non-default file value (since #436 a threshold wider than its
+    # window is rejected as unreachable); the point is that env still wins
+    # even when it merely restores the default.
+    path.write_text(json.dumps({"cascade_error_threshold": 5, "fail_open": False}))
     env = {
         # Deliberately the built-in default value: an operator resetting a
         # shared config file back to stock behaviour from the environment.
