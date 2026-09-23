@@ -62,6 +62,10 @@ class PagerDutySink:
         if self._min is not None and _order(risk.severity) < _order(self._min):
             return
         pd_sev = _PD_SEVERITY.get(risk.severity, "warning")
+        # ``custom_details`` is a member of the ``payload`` object in the
+        # Events API v2, not a top-level field: PagerDuty ignores unknown
+        # top-level keys, so nesting it here is what carries episode_id/step_id
+        # into the incident instead of silently dropping them.
         payload: dict[str, Any] = {
             "routing_key": self._key,
             "event_action": "trigger",
@@ -69,12 +73,12 @@ class PagerDutySink:
                 "summary": f"[{risk.severity}] {risk.trigger}: {risk.detail}",
                 "source": self._source,
                 "severity": pd_sev,
-            },
-            "custom_details": {
-                "episode_id": risk.episode_id,
-                "step_id": risk.step_id,
-                "score": risk.score,
-                "trigger": risk.trigger,
+                "custom_details": {
+                    "episode_id": risk.episode_id,
+                    "step_id": risk.step_id,
+                    "score": risk.score,
+                    "trigger": risk.trigger,
+                },
             },
         }
         data = json.dumps(payload).encode("utf-8")

@@ -34,7 +34,25 @@ def test_pagerduty_posts_trigger_event():
     assert body["event_action"] == "trigger"
     assert body["payload"]["severity"] == "critical"
     assert "loop" in body["payload"]["summary"]
-    assert body["custom_details"]["episode_id"] == "ep"
+    assert body["payload"]["custom_details"]["episode_id"] == "ep"
+
+
+def test_custom_details_is_nested_in_payload_not_top_level():
+    # Events API v2 defines custom_details as a member of the payload object;
+    # PagerDuty ignores unknown top-level keys, so a top-level custom_details
+    # silently drops episode_id/step_id/score/trigger from the incident.
+    sink = PagerDutySink("RKEY")
+    with mock.patch("urllib.request.urlopen") as urlopen:
+        sink.emit(_risk(SEVERITY_CRITICAL))
+    body = json.loads(urlopen.call_args[0][0].data.decode())
+    assert "custom_details" not in body  # never at the top level
+    details = body["payload"]["custom_details"]
+    assert details == {
+        "episode_id": "ep",
+        "step_id": "s1",
+        "score": 0.9,
+        "trigger": "loop",
+    }
 
 
 def test_pagerduty_maps_info_severity():
