@@ -49,32 +49,74 @@ class JsonRiskFormatter(logging.Formatter):
     def render(self, risk: FailureRisk) -> str:
         """Serialize one risk to a compact JSON line (fail-open)."""
         try:
-            payload: dict[str, object] = {
-                "ts": risk.timestamp,
-                "episode_id": risk.episode_id,
-                "step_id": risk.step_id,
-                "trigger": risk.trigger,
-                "severity": risk.severity,
-                "score": risk.score,
-                "detail": risk.detail,
-            }
-            return json.dumps(
-                payload,
-                sort_keys=True,
-                separators=_COMPACT_SEPARATORS,
-                ensure_ascii=False,
-            )
+            return self._serialize(risk, ensure_ascii=False)
         except Exception:
-            # Fail-open: never propagate a serialization failure into the host
-            # agent. The fallback is plain text and ids only; ``detail`` is
-            # deliberately excluded since it is the field most likely to have
-            # broken encoding.
-            return (
-                "snagline risk (json encoding failed) "
-                f"episode_id={risk.episode_id!r} step_id={risk.step_id!r} "
-                f"trigger={risk.trigger!r} severity={risk.severity!r} "
-                f"score={risk.score!r} ts={risk.timestamp!r}"
-            )
+            return self._fallback(risk)
+
+    def render_ascii(self, risk: FailureRisk) -> str:
+        """ASCII-escaped variant of :meth:`render`, for streams that cannot hold
+        non-ASCII text (issue #431).
+
+        ``render`` keeps the common UTF-8 case readable by emitting non-ASCII
+        raw, but a handler whose stream targets a narrower codepage fails
+        inside ``StreamHandler.emit`` -- and ``logging``'s own ``handleError``
+        absorbs that failure, printing a traceback and *dropping the record*.
+        The sink never sees an exception to catch, so the alert vanishes and
+        the per-alert traceback reads as a fault of the instrumentation. Every
+        codepoint is escaped here instead, which any byte stream can carry;
+        ``json.loads`` yields the identical string, so no pipeline loses data.
+        """
+        try:
+            return self._serialize(risk, ensure_ascii=True)
+        except Exception:
+            return self._fallback(risk)
+
+    def _serialize(self, risk: FailureRisk, *, ensure_ascii: bool) -> str:
+        payload: dict[str, object] = {
+            "ts": risk.timestamp,
+            "episode_id": risk.episode_id,
+            "step_id": risk.step_id,
+            "trigger": risk.trigger,
+            "severity": risk.severity,
+            "score": risk.score,
+            "detail": risk.detail,
+        }
+        return json.dumps(
+            payload,
+            sort_keys=True,
+            separators=_COMPACT_SEPARATORS,
+            ensure_ascii=ensure_ascii,
+        )
+
+    def _fallback(self, risk: FailureRisk) -> str:
+        # Fail-open: never propagate a serialization failure into the host
+        # agent. The fallback is plain text and ids only; ``detail`` is
+        # deliberately excluded since it is the field most likely to have
+        # broken encoding.
+        return (
+            "snagline risk (json encoding failed) "
+            f"episode_id={risk.episode_id!r} step_id={risk.step_id!r} "
+            f"trigger={risk.trigger!r} severity={risk.severity!r} "
+            f"score={risk.score!r} ts={risk.timestamp!r}"
+        )
+
+
+def _stream_encodings(logger: logging.Logger) -> list[str]:
+    """Encodings declared by the stream handlers on ``logger`` and its ancestors.
+
+    ``logging`` propagates to ancestor loggers by default, so the root logger's
+    stderr handler counts too -- on a host whose locale is a narrow ANSI codepage
+    that is the handler that drops the record (issue #431).
+    """
+    found: list[str] = []
+    node: logging.Logger | None = logger
+    while node is not None:
+        for handler in node.handlers:
+            enc = getattr(getattr(handler, "stream", None), "encoding", None)
+            if isinstance(enc, str):
+                found.append(enc)
+        node = node.parent
+    return found
 
 
 class LoggingSink:
@@ -109,5 +151,18 @@ class LoggingSink:
             return
         # Fire-and-forget like every other AlertSink: a misconfigured logging
         # pipeline must never raise out of emit() (issue #19).
+        # A stream that cannot encode the raw line would drop the record inside
+        # logging's own handleError -- silently, since no exception escapes
+        # Logger.log to land in the suppress below -- so fall back to the
+        # ASCII-escaped variant first, when any attached stream needs it
+        # (#431).
+        for enc in _stream_encodings(self._logger):
+            try:
+                line.encode(enc)
+            except (UnicodeEncodeError, LookupError):
+                render_ascii = getattr(self._formatter, "render_ascii", None)
+                if callable(render_ascii):
+                    line = render_ascii(risk)
+                break
         with suppress(Exception):  # pragma: no cover - host logger failure
             self._logger.log(self._level, "%s", line, extra={"snagline_risk": risk})

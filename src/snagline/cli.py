@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import math
 import os
 import sys
 import time
@@ -116,7 +117,21 @@ def _maybe_dedup(sinks: list[AlertSink], cooldown_seconds: float) -> list[AlertS
     cooldown window instead of on every step.
     """
     if not cooldown_seconds or cooldown_seconds <= 0:
+        # Documented disable: a non-positive cooldown means no wrapper.
         return sinks
+    if not math.isfinite(cooldown_seconds):
+        # inf makes the suppression test always true, so the first alert per
+        # key silences every repeat forever -- the indefinite silence the
+        # module docstring says this wrapper must never produce -- and the
+        # sweep guard can never fire either, so the cooldown table grows
+        # without bound. nan disables the sink outright. Both are operator
+        # errors, not a cooldown (issue #432).
+        print(
+            f"snagline: --cooldown-seconds must be a finite number (got "
+            f"{cooldown_seconds}); pass 0 to disable the cooldown",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     from snagline.sinks.dedup import DedupSink
 
     return [DedupSink(s, cooldown_seconds=cooldown_seconds) for s in sinks]
