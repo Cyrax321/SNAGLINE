@@ -8,9 +8,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Nothing yet.
+- `RedisStateBackend` now takes `lock_renew_interval` and reads the TTL from
+  `SNAGLINE_STATE_REDIS_LOCK_TIMEOUT`. A held episode lock is renewed on a
+  cadence while its critical section is still running, so the TTL bounds a
+  stuck section rather than merely a slow one. Renewal is on by default (pass
+  `lock_renew_interval=0` to keep the old expire-and-lose behaviour) (#326).
+- A section held past one full `lock_timeout` is now named in a warning. With
+  renewal the TTL no longer bounds a *live* holder, so a detector hung inside
+  `observe` otherwise kept the distributed lock for the process lifetime in
+  silence; renewal still keeps mutual exclusion intact, but the hold is now
+  visible (#326).
+- A lock the renewer finds already lost is reported when the renewer sees it,
+  not only at the section's exit. A still-running or hung holder reaches its
+  own release late or never, and by then a second worker may already be inside
+  the same episode (#326).
+- `RedisStateBackend.close()` stops the background renewer thread, for
+  backends discarded ahead of process exit (#326).
 
 ### Fixed
+- The lock renewer no longer treats a transient Redis failure as a lost lock.
+  `extend` can raise a connection error or timeout as well as `LockError`, and
+  the old bare `except Exception` ended renewal on either -- so a lock the
+  worker still held expired at the next TTL boundary and a second worker
+  could acquire it, the exact mutual-exclusion break the renewer exists to
+  prevent. Only ownership failures stop renewal now; other errors are retried
+  on the next pass (#326).
+- A renewal pass can no longer drop a *later* holder's registration for the
+  same episode. The pass snapshots the table while exit proceeds, so it can
+  be carrying an entry whose holder has already exited while another worker
+  re-registered the same episode id; removal is now identity-checked against
+  the entry instead of keyed by episode id alone (#326).
+- `lock_timeout`, `lock_renew_interval`, and `SNAGLINE_STATE_REDIS_LOCK_TIMEOUT`
+  now reject `inf`/`nan`, which passed the old positivity check and only
+  failed later inside `acquire()`. A positive `lock_renew_interval` must be at
+  least 0.1s (below that the renewer is a busy loop hammering Redis) and less
+  than `lock_timeout` (at or above it the lock expires before its first
+  renewal, so renewal buys nothing) (#326).
 - `snagline baseline --list-versions` is now honored on both the fit and
   `retrain` paths and is read-only everywhere: it lists and exits 0 without
   fitting, writing `baseline.json`, or storing a new version. Without
