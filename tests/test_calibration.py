@@ -303,6 +303,33 @@ class TestMonitorWiring:
         manual, _ = _monitor(Config())
         assert _detector_params(weird) == _detector_params(manual)
 
+    def test_unknown_calibration_value_warns_once(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # Issue #448: fail-open to manual is intentional (see the test above),
+        # but a typo'd "auto" ("automatic", "atuo") must not vanish without a
+        # trace -- _auto_calibration_plan's docstring promises the unknown-value
+        # path logs, yet it returned silently. Surface it at WARNING while still
+        # behaving as manual, unlike log_format/policy which abort startup.
+        with caplog.at_level(logging.WARNING, logger="snagline"):
+            weird, _ = _monitor(Config(calibration="automatic"))
+        warnings = [r for r in caplog.records if "unknown calibration" in r.message]
+        assert len(warnings) == 1
+        assert "automatic" in warnings[0].message
+        manual, _ = _monitor(Config())
+        assert _detector_params(weird) == _detector_params(manual)
+
+    def test_manual_and_default_calibration_do_not_warn(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # The legitimate "manual"/"" cases are not typos and must stay silent,
+        # so the warning only ever fires on a genuine misconfiguration.
+        with caplog.at_level(logging.WARNING, logger="snagline"):
+            _monitor(Config(calibration="manual"))
+            _monitor(Config())
+            _monitor(Config(calibration="  Manual  "))
+        assert not any("unknown calibration" in r.message for r in caplog.records)
+
     def test_value_is_case_insensitive(self) -> None:
         # Whitespace/case tolerated; activation observable via the derived
         # (2, 2) cascade thresholds of a spotless 500-call baseline.

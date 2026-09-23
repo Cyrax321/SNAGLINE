@@ -135,8 +135,22 @@ def _auto_calibration_plan(cfg: Config) -> CalibrationPlan | None:
     resolves; every failure mode (unknown value, missing baseline, unreadable
     file, derivation error) logs and falls back to the hand-tuned defaults so
     monitoring can never become worse than today because of calibration.
+
+    Falling back to manual on an unknown value is deliberate (fail-open, never
+    worse than today), but a typo'd "auto" -- "automatic", "atuo" -- would
+    otherwise be invisible: the operator asked for auto-calibration and
+    silently got the hand-tuned defaults. The docstring above lists the
+    unknown-value path as one that logs; this makes that true, warning once
+    without aborting startup the way log_format/policy do (issue #448).
     """
-    if str(getattr(cfg, "calibration", "") or "").strip().lower() != "auto":
+    mode = str(getattr(cfg, "calibration", "") or "").strip().lower()
+    if mode != "auto":
+        if mode not in ("", "manual"):
+            logger.warning(
+                "snagline: unknown calibration=%r; expected 'auto' or 'manual', "
+                "using hand-tuned thresholds",
+                getattr(cfg, "calibration", None),
+            )
         return None
     try:
         profile = resolve_baseline_profile(cfg)

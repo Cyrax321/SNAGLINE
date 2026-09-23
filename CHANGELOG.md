@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nothing yet.
 
 ### Fixed
+- Auto-calibration now warns on an unknown `calibration` value instead of
+  falling back to the hand-tuned thresholds silently. Folding an unrecognized
+  mode to manual is deliberate (fail-open: never worse than today), but a
+  typo'd `"auto"` (`"automatic"`, `"atuo"`) left an operator who opted into
+  auto-calibration running the generic defaults with no signal —
+  `_auto_calibration_plan`'s docstring listed the unknown-value path as one
+  that logs, yet it returned silently. It now emits one WARNING naming the
+  value while still behaving as manual; `"manual"` and the default stay silent
+  (#448).
 - `snagline baseline --list-versions` is now honored on both the fit and
   `retrain` paths and is read-only everywhere: it lists and exits 0 without
   fitting, writing `baseline.json`, or storing a new version. Without
