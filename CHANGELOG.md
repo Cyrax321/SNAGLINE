@@ -11,6 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nothing yet.
 
 ### Fixed
+- `snagline replay`, `snagline watch --file` and `snagline baseline <file>` now
+  report a missing input file as one line on stderr and exit 2 instead of
+  raising an uncaught `FileNotFoundError` traceback. The sibling `baseline
+  retrain` path already caught `OSError`; these three were the outliers, and a
+  mistyped path read as a crash of the tool itself (#428).
+- `snagline baseline retrain --semantic` is now rejected with exit 2 instead of
+  being accepted and silently discarded. The retrain contract fits a structural
+  profile only, so an operator who asked for a semantic baseline discovered
+  only when goal-drift stayed inert that they had stored a structural one
+  (#429).
+- `snagline serve` now range-checks `--port` (0-65535) and verifies that
+  `--certfile`, `--keyfile` and `--client-ca` are readable *before* printing
+  the listening banner. A bad port or a missing cert file used to be announced
+  as a live listener and then die in a traceback inside the bind or the SSL
+  handshake, so a supervisor reading the banner believed the sidecar was up
+  while it had already died (#430).
 - `snagline baseline --list-versions` is now honored on both the fit and
   `retrain` paths and is read-only everywhere: it lists and exits 0 without
   fitting, writing `baseline.json`, or storing a new version. Without

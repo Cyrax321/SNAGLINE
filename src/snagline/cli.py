@@ -23,6 +23,7 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import suppress
 from pathlib import Path
+from typing import IO
 
 from snagline.config import Config
 from snagline.events import StepEvent
@@ -55,6 +56,28 @@ class _CountingSink:
         self.risks.append(risk)
 
 
+class _BadInputFile(OSError):
+    """A user-named input file could not be opened (issue #428).
+
+    Subclasses ``OSError`` so library callers that already catch ``OSError``
+    from ``replay()`` keep working; the CLI catches this subclass to turn the
+    failure into a one-line diagnostic instead of a traceback.
+    """
+
+
+def _open_input(path: str) -> IO[str]:
+    """Open a named input file, or fail naming it (issue #428).
+
+    ``open()``'s own message already names the path, but the CLI wants the
+    command in the diagnostic too, and a raw ``FileNotFoundError`` surfacing
+    out of ``main()`` reads as a crash of the tool itself.
+    """
+    try:
+        return open(path, encoding="utf-8")
+    except OSError as exc:
+        raise _BadInputFile(f"cannot open {path}: {exc}") from exc
+
+
 def replay(path: str, monitor: Monitor | None = None) -> int:
     """Replay a JSONL trajectory file through ``monitor`` (live offline analysis).
 
@@ -72,7 +95,7 @@ def replay(path: str, monitor: Monitor | None = None) -> int:
     # Without this, reusing the same monitor across replay() calls leaks state
     # from one trajectory into the next (issue #18).
     episodes: set = set()
-    with open(path, encoding="utf-8") as fh:
+    with _open_input(path) as fh:
         for lineno, line in enumerate(fh, start=1):
             line = line.strip()
             if not line:
@@ -529,7 +552,7 @@ def _iter_lines(
     if path is None:
         yield from sys.stdin
         return
-    with open(path, encoding="utf-8") as fh:
+    with _open_input(path) as fh:
         while True:
             line = fh.readline()
             if line:
@@ -598,6 +621,12 @@ def _cmd_watch(args: argparse.Namespace) -> int:
                 steps += 1
                 if heartbeat is not None:
                     heartbeat.touch()
+    except _BadInputFile as exc:
+        # A named input file that cannot be opened is a usage error, not a
+        # crash: the teardown still runs, and the operator gets one line
+        # naming the path instead of a traceback (issue #428).
+        print(f"snagline watch: {exc}", file=sys.stderr)
+        return 2
     finally:
         # Fail-open teardown (issue #225): finalize every episode that was
         # actually ingested; ``episode`` (the override, the filename or
@@ -753,6 +782,18 @@ def _cmd_baseline_retrain(args: argparse.Namespace) -> int:
     if not args.store_dir:
         print(
             "snagline baseline retrain: --store-dir is required (versioned store root)",
+            file=sys.stderr,
+        )
+        return 2
+    if getattr(args, "semantic", False):
+        # The retrain contract fits a structural profile only; --semantic is a
+        # fit-path option and used to be accepted here and then discarded, so
+        # an operator asking for a semantic baseline silently got a structural
+        # one (issue #429). Fail closed instead of dropping the flag.
+        print(
+            "snagline baseline retrain: --semantic is not supported on the "
+            "retrain path; fit one with "
+            "'snagline baseline <trajectory> --semantic --store-dir <root>'",
             file=sys.stderr,
         )
         return 2
@@ -1022,7 +1063,14 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
         print(f"snagline baseline: wrote {args.output}")
         return 0
 
-    profile = fit_baseline_from_jsonl(args.trajectory)
+    try:
+        profile = fit_baseline_from_jsonl(args.trajectory)
+    except OSError as exc:
+        print(
+            f"snagline baseline: cannot open {args.trajectory}: {exc}",
+            file=sys.stderr,
+        )
+        return 2
     save_baseline(profile, args.output)
 
     tools = profile.tools
@@ -1075,6 +1123,32 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+    # Everything that can fail at bind or handshake time is validated before
+    # the banner promises a listener: a supervisor reading the banner believes
+    # the sidecar is up, so a banner followed by a traceback is worse than a
+    # clean refusal (issue #430).
+    if not 0 <= args.port <= 65535:
+        print(
+            f"snagline serve: --port must be between 0 and 65535 (got {args.port})",
+            file=sys.stderr,
+        )
+        return 2
+    for flag, candidate in (
+        ("--certfile", args.certfile),
+        ("--keyfile", args.keyfile),
+        ("--client-ca", args.client_ca),
+    ):
+        if not candidate:
+            continue
+        try:
+            with open(candidate, "rb"):
+                pass
+        except OSError as exc:
+            print(
+                f"snagline serve: cannot read {flag} {candidate}: {exc}",
+                file=sys.stderr,
+            )
+            return 2
     scheme = "https" if (args.certfile or args.keyfile or args.client_ca) else "http"
     print(
         f"snagline serve: listening on {scheme}://{args.host}:{args.port} "
@@ -1247,7 +1321,11 @@ def main(argv: list[str] | None = None) -> int:
             sinks.extend(_console_sinks(cfg))
         sinks.append(counter)
         monitor = Monitor.default(config=cfg, sinks=sinks)
-        steps = replay(args.trajectory, monitor=monitor)
+        try:
+            steps = replay(args.trajectory, monitor=monitor)
+        except _BadInputFile as exc:
+            print(f"snagline replay: {exc}", file=sys.stderr)
+            return 2
         if args.summary:
             print(
                 f"replayed {steps} steps; {counter.count} risk(s) emitted",

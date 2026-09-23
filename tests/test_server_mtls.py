@@ -221,8 +221,16 @@ def test_plain_and_server_tls_modes_unchanged_without_client_ca(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_cli_serve_forwards_client_ca(monkeypatch):
+def test_cli_serve_forwards_client_ca(monkeypatch, tmp_path):
     from snagline.cli import main
+
+    # The CLI now verifies the cert/key are readable before the banner (#430),
+    # so the paths must exist even though serve() is faked.
+    cert = tmp_path / "c.pem"
+    key = tmp_path / "k.pem"
+    ca = tmp_path / "ca.pem"
+    for p in (cert, key, ca):
+        p.write_text("material", encoding="utf-8")
 
     captured: dict = {}
 
@@ -237,22 +245,27 @@ def test_cli_serve_forwards_client_ca(monkeypatch):
                 "--port",
                 "0",
                 "--certfile",
-                "/t/c.pem",
+                str(cert),
                 "--keyfile",
-                "/t/k.pem",
+                str(key),
                 "--client-ca",
-                "/t/ca.pem",
+                str(ca),
             ]
         )
         == 0
     )
-    assert captured["certfile"] == "/t/c.pem"
-    assert captured["keyfile"] == "/t/k.pem"
-    assert captured["client_ca"] == "/t/ca.pem"
+    assert captured["certfile"] == str(cert)
+    assert captured["keyfile"] == str(key)
+    assert captured["client_ca"] == str(ca)
 
 
-def test_cli_serve_without_client_ca_passes_none_or_absent(monkeypatch):
+def test_cli_serve_without_client_ca_passes_none_or_absent(monkeypatch, tmp_path):
     from snagline.cli import main
+
+    cert = tmp_path / "c.pem"
+    key = tmp_path / "k.pem"
+    cert.write_text("cert", encoding="utf-8")
+    key.write_text("key", encoding="utf-8")
 
     captured: dict = {}
 
@@ -261,9 +274,7 @@ def test_cli_serve_without_client_ca_passes_none_or_absent(monkeypatch):
 
     monkeypatch.setattr("snagline.server.http_server.serve", _fake_serve)
     assert (
-        main(
-            ["serve", "--port", "0", "--certfile", "/t/c.pem", "--keyfile", "/t/k.pem"]
-        )
+        main(["serve", "--port", "0", "--certfile", str(cert), "--keyfile", str(key)])
         == 0
     )
     # When not given, client_ca is None (explicit) or absent; both are plain server-TLS

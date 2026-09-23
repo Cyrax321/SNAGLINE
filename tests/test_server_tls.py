@@ -272,8 +272,17 @@ def test_unloadable_certfile_raises_at_startup(tmp_path) -> None:
         make_server(Monitor.default(), host="127.0.0.1", port=0, certfile=str(bad))
 
 
-def test_cli_serve_forwards_tls_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cli_serve_forwards_tls_flags(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     from snagline.cli import main
+
+    # The CLI now verifies the cert/key are readable before the banner (#430),
+    # so the paths must exist even though serve() is faked.
+    cert = tmp_path / "c.pem"
+    key = tmp_path / "k.pem"
+    cert.write_text("cert", encoding="utf-8")
+    key.write_text("key", encoding="utf-8")
 
     captured: dict[str, Any] = {}
 
@@ -283,12 +292,20 @@ def test_cli_serve_forwards_tls_flags(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("snagline.server.http_server.serve", _fake_serve)
     assert (
         main(
-            ["serve", "--port", "0", "--certfile", "/t/c.pem", "--keyfile", "/t/k.pem"]
+            [
+                "serve",
+                "--port",
+                "0",
+                "--certfile",
+                str(cert),
+                "--keyfile",
+                str(key),
+            ]
         )
         == 0
     )
-    assert captured["certfile"] == "/t/c.pem"
-    assert captured["keyfile"] == "/t/k.pem"
+    assert captured["certfile"] == str(cert)
+    assert captured["keyfile"] == str(key)
 
 
 def test_cli_serve_without_tls_flags_passes_none(
