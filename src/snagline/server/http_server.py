@@ -107,6 +107,10 @@ _MAX_TRACKED_EPISODES = 10_000
 # dying on EPIPE/reset. Beyond that window the 413 is sent immediately so one
 # hostile sender cannot tie up a handler thread indefinitely.
 _MAX_OVERCAP_DRAIN_EXCESS = 65_536
+# Upper bound on a chunk-size / trailer line read while framing a chunked
+# body (issue #434): the size line is a short hex token plus optional
+# extensions, so anything longer is a broken or hostile frame.
+_MAX_FRAME_LINE_BYTES = 8_192
 # Drain reads happen in fixed chunks, so peak memory stays at one chunk no
 # matter what Content-Length claims.
 _DRAIN_CHUNK_BYTES = 16_384
@@ -627,7 +631,7 @@ def make_handler(
                 declared = self._parse_content_length()
                 if declared is None:
                     return
-                self._discard_overcap_body(declared)
+                self._drain_request_body()
                 self._respond(401, {"error": "unauthorized"})
                 return
             length = self._parse_content_length()
@@ -654,7 +658,7 @@ def make_handler(
             elif route == "/risks":
                 self._post_risks()
             else:
-                self._discard_overcap_body(length)
+                self._drain_request_body()
                 self._respond(404, {"error": "not found"})
 
         def _post_risks(self) -> None:
@@ -826,9 +830,10 @@ def make_handler(
         def _parse_content_length(self) -> int | None:
             """Parse Content-Length, or None if malformed (already answered 400).
 
-            An absent Content-Length header is treated as length 0: the body
-            is silently empty, which is acceptable for these telemetry-only
-            endpoints. A present but non-numeric or negative value is answered
+            An absent Content-Length header is treated as length 0 -- the body
+            is bodyless unless it is framed as ``Transfer-Encoding: chunked``,
+            which ``_read_body`` decodes separately (issue #434). A present
+            but non-numeric or negative value is answered
             with 400 {"error": "invalid Content-Length"} and the caller
             must return without reading any body bytes. Shared by ``do_POST``
             and ``_read_body`` so every entry point fails the same way.
@@ -878,17 +883,121 @@ def make_handler(
                 remaining -= len(chunk)
 
         def _read_body(self) -> bytes | None:
-            """Read the request body, or None if Content-Length was malformed.
+            """Read the request body, or None if the framing was malformed.
 
             On malformed Content-Length the helper has already sent the 400
             response; the caller must return immediately without sending
             another response, otherwise the connection would see two status
             lines.
+
+            An absent Content-Length no longer means an empty body
+            (issue #434): a client streaming a body it cannot pre-size sends
+            ``Transfer-Encoding: chunked``, which is framed and decoded here
+            so the telemetry is ingested instead of rejected with a misleading
+            "invalid StepEvent JSON" and a connection reset on close.
             """
             length = self._parse_content_length()
             if length is None:
                 return None
+            if length == 0 and self._is_chunked():
+                return self._read_chunked_body()
             return self.rfile.read(length)
+
+        def _is_chunked(self) -> bool:
+            """Whether the request body uses Transfer-Encoding: chunked."""
+            raw = self.headers.get("Transfer-Encoding")
+            if not raw:
+                return False
+            return "chunked" in raw.strip().lower()
+
+        def _read_chunked_body(self) -> bytes | None:
+            """Decode a ``Transfer-Encoding: chunked`` body (issue #434).
+
+            The framed body is capped at the same ``max_body_bytes`` a
+            Content-Length request is rejected above, so a chunked client
+            cannot stream around the body cap: anything larger is drained
+            best-effort (bounded by the same excess the declared path allows
+            its drain) and answered 413 exactly like it, returning None
+            afterwards so the caller returns at once instead of sending a
+            second status line.
+            """
+            limit = self.snagline_max_body
+            parts: list[bytes] = []
+            while True:
+                line = self.rfile.readline(_MAX_FRAME_LINE_BYTES)
+                if not line:
+                    return b"".join(parts)  # client hung up; keep what arrived
+                try:
+                    size = int(line.strip().split(b";", 1)[0], 16)
+                except ValueError:
+                    self._respond(400, {"error": "invalid chunk size"})
+                    return None
+                if size == 0:
+                    self._drain_chunked_trailer()
+                    return b"".join(parts)
+                if size < 0:
+                    self._respond(400, {"error": "invalid chunk size"})
+                    return None
+                if len(parts) + size > limit:
+                    self._drain_chunked_rest()
+                    self._respond(413, {"error": "payload too large"})
+                    return None
+                chunk = self.rfile.read(size)
+                if not chunk:
+                    return b"".join(parts)
+                parts.append(chunk)
+                self.rfile.read(2)  # trailing CRLF after each chunk
+
+        def _drain_chunked_trailer(self) -> None:
+            """Consume the optional trailer section after the final 0 chunk."""
+            for _ in range(_MAX_FRAME_LINE_BYTES):
+                line = self.rfile.readline(_MAX_FRAME_LINE_BYTES)
+                if not line or line in (b"\r\n", b"\n"):
+                    return
+
+        def _drain_chunked_rest(self) -> None:
+            """Best-effort drain of an over-cap chunked body before replying.
+
+            Consumes *frames* rather than a raw byte count, so the drain ends
+            at the client's terminating chunk as soon as the stream is
+            exhausted instead of blocking on a read the framing cannot
+            satisfy. The total discarded is bounded by the same excess the
+            declared path allows its own drain (issue #121), so a client that
+            never terminates cannot hold the reply past that budget; the
+            handler's read timeout bounds the rest.
+            """
+            budget = _MAX_OVERCAP_DRAIN_EXCESS
+            while budget > 0:
+                line = self.rfile.readline(_MAX_FRAME_LINE_BYTES)
+                if not line:
+                    return
+                try:
+                    size = int(line.strip().split(b";", 1)[0], 16)
+                except ValueError:
+                    return  # broken framing: nothing more to drain usefully
+                if size <= 0:
+                    return  # terminating (or malformed) chunk: stream is done
+                remaining = min(size, budget)
+                while remaining > 0:
+                    chunk = self.rfile.read(min(remaining, _DRAIN_CHUNK_BYTES))
+                    if not chunk:
+                        return
+                    remaining -= len(chunk)
+                budget -= size
+                self.rfile.read(2)  # trailing CRLF
+
+        def _drain_request_body(self) -> None:
+            """Consume an unread body before replying so close does not RST.
+
+            A chunked body carries no Content-Length, so its remainder is
+            drained best-effort instead of by declared length (issue #434).
+            """
+            declared = self._parse_content_length()
+            if declared is None:
+                return
+            self._discard_overcap_body(declared)
+            if declared == 0 and self._is_chunked():
+                self._drain_chunked_rest()
 
         def _respond(self, code: int, payload: dict) -> None:
             data = (json.dumps(payload) + "\n").encode("utf-8")

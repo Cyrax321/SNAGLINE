@@ -66,6 +66,48 @@ def _coerce(hint: type, value: str) -> Any:
     return value
 
 
+def _coerce_file_value(name: str, hint: Any, value: Any) -> Any:
+    """Type-check one value from a config file (issue #437).
+
+    Env values are strings and go through ``_coerce``; file values arrive as
+    native JSON/TOML types and were used verbatim, so ``{"fail_open": "false"}``
+    stayed a truthy string (fail-open silently *on*) and
+    ``{"max_live_episodes": "5000"}`` blew up with an off-point ``TypeError``
+    deep inside a range validator. A file is a configured artifact, not a
+    Python API call: the value is coerced to the declared scalar type when the
+    text carries one unambiguously, and anything that does not is rejected
+    here with the field name and both types, before a downstream comparison
+    fails with no context.
+
+    Non-scalar fields (``BaselineProfile`` and friends) are passed through
+    unchanged: a file cannot construct them, and the env path keeps them out
+    of reach for the same reason.
+    """
+    scalar = _coercible_hint(hint)
+    if scalar not in (bool, int, float, str):
+        return value  # non-scalar: unchanged behaviour
+    if type(value) is scalar:
+        return value
+    if scalar is bool and isinstance(value, int):
+        return bool(value)
+    if scalar is float and isinstance(value, int) and not isinstance(value, bool):
+        return float(value)
+    if scalar is int and isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return _coerce(scalar, value)
+        except ValueError:
+            raise ValueError(
+                f"config field {name!r} expects a {scalar.__name__}; the file "
+                f"value {value!r} does not parse as one"
+            ) from None
+    raise TypeError(
+        f"config field {name!r} expects a {scalar.__name__}; the file value "
+        f"{value!r} is {type(value).__name__}"
+    )
+
+
 def _load_toml(text: str) -> dict[str, Any]:
     try:
         import tomllib
@@ -222,6 +264,51 @@ def _validated_stagnation(cfg: Config) -> None:
     if cfg.stagnation_patience < 1:
         raise ValueError(
             f"stagnation_patience must be >= 1; got {cfg.stagnation_patience!r}"
+        )
+
+
+def _validated_window_thresholds(cfg: Config) -> None:
+    """Reject a count threshold the window can never hold (issue #436).
+
+    A repeat/cascade rule fires when a signature's count *inside the sliding
+    window* reaches the threshold, and that count can never exceed the window
+    length. With auto-scaling off the window is fixed at its nominal size, so
+    a threshold above it is mathematically unreachable: the detector never
+    fires on any input, with no error or warning -- a silently disabled safety
+    net, the same shape ``_validated_stagnation`` rejects ``min_novelty=0.0``
+    for. Both knobs individually pass every other validator, which is exactly
+    how the combination slips through.
+
+    With scaling on the window grows toward ``max_window``, so the reachable
+    bound is the cap rather than the nominal size. Cycle mode needs two full
+    periods to fit in its scan window (``[A,B,A,B]``), so a window below
+    ``2 * loop_cycle_min_period`` is dead the same way.
+    """
+    scaled = cfg.window_scale_steps > 0
+    loop_limit = max(cfg.loop_window_size, cfg.max_window if scaled else 0)
+    if cfg.loop_repeat_threshold > loop_limit:
+        raise ValueError(
+            f"loop_repeat_threshold must fit inside the loop window (<= "
+            f"{loop_limit}, the {'scaled cap' if scaled else 'window size'}; "
+            f"got {cfg.loop_repeat_threshold!r}. A count inside a window of "
+            f"{loop_limit} can never reach it, so the detector would never "
+            "fire on any input"
+        )
+    cascade_limit = max(cfg.cascade_window_size, cfg.max_window if scaled else 0)
+    if cfg.cascade_error_threshold > cascade_limit:
+        raise ValueError(
+            f"cascade_error_threshold must fit inside the cascade window (<= "
+            f"{cascade_limit}, the {'scaled cap' if scaled else 'window size'}; "
+            f"got {cfg.cascade_error_threshold!r}. The density rule needs that "
+            f"many flagged steps inside a window of {cascade_limit}, which can "
+            "never hold, so the detector would never fire on any input"
+        )
+    if cfg.loop_cycle_window_size < 2 * cfg.loop_cycle_min_period:
+        raise ValueError(
+            f"loop_cycle_window_size must be at least 2 * "
+            f"loop_cycle_min_period ({2 * cfg.loop_cycle_min_period}) to hold "
+            f"two full periods; got {cfg.loop_cycle_window_size!r}. A shorter "
+            "window can never contain a repeat, so cycle mode would never fire"
         )
 
 
@@ -548,6 +635,9 @@ class Config:
         # ZeroDivisionError at ingest time and fail-open then silently disables
         # the detector for the rest of the run.
         _validated_divisor_thresholds(self)
+        # Issue #436: a count threshold wider than its window is unreachable on
+        # every input, which silently disables the detector the same way.
+        _validated_window_thresholds(self)
 
     # --- 12-factor configuration (project.md §5.4, ATTACH_ANY_SYSTEM P0) -----
     @classmethod
@@ -612,7 +702,19 @@ class Config:
         else:
             data = json.loads(text)
         valid = {f.name for f in fields(cls)}
-        return cls(**{k: v for k, v in data.items() if k in valid})
+        # ``f.type`` is a raw string under ``from __future__ import
+        # annotations``; resolve the real annotations once so the scalar
+        # hints unwrap Optional[X] correctly.
+        hints = get_type_hints(cls)
+        # Type-check each accepted value (issue #437): env values are coerced
+        # from text by from_env_overrides, file values were used verbatim, so
+        # a quoted scalar silently changed behaviour instead of erroring here.
+        coerced: dict[str, Any] = {}
+        for name, value in data.items():
+            if name not in valid:
+                continue
+            coerced[name] = _coerce_file_value(name, hints[name], value)
+        return cls(**coerced)
 
     @classmethod
     def resolve(
@@ -663,4 +765,8 @@ class Config:
         # (issue #322): SNAGLINE_LOOP_REPEAT_THRESHOLD=0 must abort startup
         # with a clear error, not ZeroDivisionError inside the detector.
         _validated_divisor_thresholds(cfg)
+        # Same re-validation for the count-vs-window pairs (issue #436):
+        # loop_repeat_threshold=99 must abort startup with a clear error, not
+        # install a loop detector that can never fire on any input.
+        _validated_window_thresholds(cfg)
         return cfg

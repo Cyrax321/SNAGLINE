@@ -23,6 +23,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   score-0.8 warning; values above `1.0` made the pre-breach warning
   unreachable. An out-of-range value is now a configuration error naming the
   knob (#317). 57305ac (fix(cli): make --list-versions read-only on fit and retrain paths)
+- The sidecar now decodes a `Transfer-Encoding: chunked` POST body instead of
+  reading it as empty and answering 400 "invalid StepEvent JSON": the JSON was
+  fine, and the real body was left unread in the socket, resetting the
+  connection on close. The framed body is capped at `max_body_bytes` exactly
+  like a Content-Length request, malformed framing is a 400, and the
+  401/404/413 paths still drain a chunked body before replying so the response
+  is not lost to RST (#434).
+- `SemanticGoalDriftDetector.load_state` now rejects a restored running sum
+  whose embedding dimension does not match the live baseline centroid: the
+  live path's dimension check compares the embedder against the centroid and
+  passes when the operator refit both together, so a snapshot fitted under an
+  older embedder was indexed out of range on every step -- IndexError,
+  swallowed by the fail-open wrapper, zero risks and a traceback per step for
+  the rest of the run. Only the affected episode is dropped and it
+  re-accumulates from scratch (#435).
+- `loop_repeat_threshold`, `cascade_error_threshold` and the cycle-window
+  pair are now range-checked against the window that holds the count. A
+  threshold wider than its sliding window is unreachable on every input, so
+  the detector never fired and reported healthy traffic forever, with no error
+  or warning; with window scaling on the reachable bound is the scaled cap.
+  A bad combination is now a configuration error at construction and after
+  env/file layering (#436).
+- Values from a JSON/TOML config file are now type-checked. Env values were
+  coerced from text but file values were used verbatim, so `{"fail_open":
+  "false"}` stayed a truthy string and kept fail-open on, `{"fail_open": 0}`
+  silently turned it off, and `{"max_live_episodes": "5000"}` blew up with an
+  off-point `TypeError` inside a range validator. A quoted scalar is now
+  coerced to the declared type and anything unparseable or of the wrong shape
+  is rejected at load with the field name and both types (#437).
+- A non-finite or negative `latency_ms` is no longer absorbed into a
+  `ToolBaseline`'s running moments: a single NaN sample made `mean_latency`
+  NaN, collapsed `std_latency` to 0.0 (`max(0.0, NaN)` is 0.0 in CPython), and
+  the corrupted profile was then *persisted*, poisoning every monitor and
+  detector that loads it. The call and its error are still counted; only the
+  timing sample is dropped, which is the fail-soft handling
+  `fit_baseline_from_jsonl`'s docstring already promised (#438).
 
 ## [0.1.0] - 2026-08-27
 
