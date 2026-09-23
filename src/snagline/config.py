@@ -225,6 +225,37 @@ def _validated_stagnation(cfg: Config) -> None:
         )
 
 
+def _validated_side_effect_guard(cfg: Config) -> None:
+    """Validate the side-effect guard's repeat tolerance (issue #328).
+
+    ``allowed_repeats`` is compared against a per-episode occurrence count
+    (line 92) with the edge-triggered equality ``count != allowed_repeats +
+    1``. The count is always an integer, so a *fractional* tolerance is
+    never equal to ``count + 1`` and the guard never fires -- the duplicate
+    send/payment/deploy detector is completely and silently blinded for the
+    whole run. ``1.5`` reads as "one and a half retries" but means "never
+    alert"; ``2.0`` is fine because an int-equal float compares equal, which
+    is why only the fractional case is a defect.
+
+    The same layering problem the other validators cover (issue #322): a
+    JSON config file hands the field straight through as a float, so
+    ``SNAGLINE_SIDE_EFFECT_ALLOWED_REPEATS=1.5`` is ignored by the env
+    coercioner (it asks for an int) while the file path silently accepts
+    it, and ``Config(...)`` itself accepted any value until now.
+    """
+    value = cfg.side_effect_allowed_repeats
+    if value < 1:
+        raise ValueError(f"side_effect_allowed_repeats must be >= 1; got {value!r}")
+    if value != int(value):
+        raise ValueError(
+            "side_effect_allowed_repeats must be a whole number; the guard "
+            "compares it against an integer occurrence count, so a "
+            "fractional value can never be equal and silently disables the "
+            "duplicate non-idempotent action detector for the whole run; "
+            f"got {value!r}"
+        )
+
+
 def _validated_divisor_thresholds(cfg: Config) -> None:
     """Validate the threshold knobs the detectors divide by (issue #322).
 
@@ -548,6 +579,10 @@ class Config:
         # ZeroDivisionError at ingest time and fail-open then silently disables
         # the detector for the rest of the run.
         _validated_divisor_thresholds(self)
+        # Issue #328: a fractional side-effect tolerance can never equal the
+        # integer occurrence count it is compared against, so the duplicate
+        # non-idempotent action detector never fires at all.
+        _validated_side_effect_guard(self)
 
     # --- 12-factor configuration (project.md §5.4, ATTACH_ANY_SYSTEM P0) -----
     @classmethod
@@ -663,4 +698,8 @@ class Config:
         # (issue #322): SNAGLINE_LOOP_REPEAT_THRESHOLD=0 must abort startup
         # with a clear error, not ZeroDivisionError inside the detector.
         _validated_divisor_thresholds(cfg)
+        # Same re-validation for the side-effect tolerance (issue #328): a
+        # fractional value in a config file must abort startup with a clear
+        # error, not silently blind the duplicate-action guard for the run.
+        _validated_side_effect_guard(cfg)
         return cfg

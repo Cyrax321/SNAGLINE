@@ -11,6 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nothing yet.
 
 ### Fixed
+- `side_effect_allowed_repeats` is now range-checked and required to be a whole
+  number at construction and after env/file layering, like the other detector
+  knobs (#322, #317). The guard fires on
+  `count == side_effect_allowed_repeats + 1` and the occurrence count is always
+  an integer, so a fractional value such as `1.5` could never be equal and the
+  duplicate non-idempotent action detector was silently blind for the entire
+  run -- repeated sends/payments/deploys never alerted. (`2.0` was never
+  affected: an int-equal float compares equal.) The file layer handed the
+  field straight through as a float, so `Config(...)` and a JSON config file
+  both accepted `1.5` while the env coercioner dropped the token; an
+  out-of-range or fractional value is now a configuration error naming the
+  knob (#439).
 - `snagline baseline --list-versions` is now honored on both the fit and
   `retrain` paths and is read-only everywhere: it lists and exits 0 without
   fitting, writing `baseline.json`, or storing a new version. Without

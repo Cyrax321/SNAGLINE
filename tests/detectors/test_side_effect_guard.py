@@ -294,3 +294,44 @@ def test_invalid_constructor_arguments_raise():
         SideEffectGuardDetector(allowed_repeats=0)
     with pytest.raises(ValueError):
         SideEffectGuardDetector(score=1.5)
+
+
+def test_fractional_allowed_repeats_blinds_the_guard():
+    """A fractional tolerance can never equal the integer count (issue #328).
+
+    The guard fires on ``count == allowed_repeats + 1`` and ``count`` is
+    always an integer, so ``1.5`` and ``2.5`` never match: repeated
+    non-idempotent actions would be silently tolerated forever. The field is
+    annotated ``int``; the values are passed untyped on purpose because a
+    config file hands the field straight through as a float.
+    """
+    for bad in (1.5, 2.5):
+        with pytest.raises(ValueError, match="whole number"):
+            Config(side_effect_allowed_repeats=bad)  # type: ignore[arg-type]
+
+
+def test_int_equal_float_tolerance_still_works():
+    """``2.0`` compares equal to ``2``, so it stays a valid configuration."""
+    cfg = Config(side_effect_allowed_repeats=2.0)  # type: ignore[arg-type]
+    assert cfg.side_effect_allowed_repeats == 2
+
+
+def test_fractional_tolerance_from_config_file_is_rejected(tmp_path):
+    """The file layer hands the field straight through as a float (issue #328)."""
+    path = tmp_path / "snagline.json"
+    path.write_text(json.dumps({"side_effect_allowed_repeats": 1.5}))
+    with pytest.raises(ValueError, match="side_effect_allowed_repeats"):
+        Config.load_file(str(path))
+
+
+def test_fractional_tolerance_revalidated_after_full_layering(tmp_path):
+    """``Config.resolve`` re-validates the file value at the end (issue #328).
+
+    The env coercioner asks for an int, so an env token of ``1.5`` is dropped
+    on its own; the file layer is the one that injects the float, and
+    ``resolve`` must still reject it after every layer has been folded in.
+    """
+    path = tmp_path / "snagline.json"
+    path.write_text(json.dumps({"side_effect_allowed_repeats": 1.5}))
+    with pytest.raises(ValueError, match="side_effect_allowed_repeats"):
+        Config.resolve(str(path))
