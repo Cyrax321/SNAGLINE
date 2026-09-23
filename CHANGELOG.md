@@ -11,6 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nothing yet.
 
 ### Fixed
+- `LoggingSink` no longer drops every alert whose detail cannot be encoded on
+  the operator's log stream. The JSON line is rendered with `ensure_ascii=False`
+  so the common UTF-8 case stays readable, but a handler whose stream targets a
+  narrower codepage used to fail inside `StreamHandler.emit` -- and `logging`'s
+  own `handleError` absorbed that failure, dropping the record and printing a
+  per-alert traceback to stderr while the sink's fail-open guard never saw an
+  exception. When any attached stream handler (including an ancestor logger's,
+  since `logging` propagates) declares an encoding that cannot hold the line,
+  the sink now emits the ASCII-escaped variant instead; `json.loads` yields the
+  identical string, so no pipeline loses data (#431).
+- `--cooldown-seconds` is now rejected when it is not finite. `inf` made the
+  suppression test always true, so the first alert per key silenced every
+  repeat forever -- the indefinite silence the dedup wrapper exists to prevent
+  -- and the sweep guard could never fire, so the cooldown table grew without
+  bound; `nan` silently disabled the cooldown an operator asked for. Both now
+  exit 2 with a message. A non-positive value remains the documented way to
+  disable the wrapper (#432).
 - `snagline baseline --list-versions` is now honored on both the fit and
   `retrain` paths and is read-only everywhere: it lists and exits 0 without
   fitting, writing `baseline.json`, or storing a new version. Without
