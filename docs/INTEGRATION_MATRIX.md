@@ -96,7 +96,21 @@ built-in defaults -> config file -> `SNAGLINE_*` env vars. The CLI reads
 
 `Monitor` locks per `episode_id` via a `StateBackend`. `MemoryStateBackend`
 is the default; `RedisStateBackend` (optional, behind the `redis` extra)
-coordinates across workers.
+coordinates across workers. It holds each lock for a whole episode's ingest
+work, so the TTL defaults to 300s (`SNAGLINE_STATE_REDIS_LOCK_TIMEOUT`) and is
+renewed in the background while a section is still running; a lock lost to
+expiry is logged against its episode rather than raised into the ingest path
+(#326).
+
+The renewal knobs are range-checked at construction: `lock_timeout` must be a
+positive, finite number of seconds, and a positive `lock_renew_interval` must
+be at least 0.1s and less than `lock_timeout` (below the floor the renewer is a
+busy loop; at or above the TTL the lock expires before its first renewal).
+Renewal distinguishes a lost lock from a transient Redis failure -- only the
+former stops renewal -- and a section held past one full `lock_timeout` is
+named in a warning, since renewal keeps a hung-but-alive holder's lock alive.
+`RedisStateBackend.close()` stops the renewer thread for a backend discarded
+ahead of process exit.
 
 ## Baselines
 
