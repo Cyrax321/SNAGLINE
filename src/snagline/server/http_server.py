@@ -114,6 +114,19 @@ _DRAIN_CHUNK_BYTES = 16_384
 # handler class via ``StreamRequestHandler.timeout``; stdlib converts a
 # stalled ``rfile.read(n)`` into a logged timeout and a closed connection.
 _DEFAULT_READ_TIMEOUT = 30.0
+# Every route the sidecar serves, across GET and POST. Distinguishes "this
+# method is not allowed on this route" (405, naming what is allowed) from "no
+# such route" (404) for methods other than GET/POST/HEAD (issue #433).
+_ROUTES = (
+    "/health",
+    "/metrics",
+    "/risks",
+    "/directive",
+    "/events",
+    "/hooks/claude-code",
+    "/episodes/end",
+)
+_ALLOWED_METHODS = "GET, HEAD, POST"
 
 
 def _escape_label(value: str) -> str:
@@ -550,6 +563,16 @@ def make_handler(
             return self.headers.get("X-Snagline-Token") == token
 
         def do_GET(self) -> None:  # noqa: N802 - http.server naming
+            self._route_get(head_only=False)
+
+        def do_HEAD(self) -> None:  # noqa: N802 - http.server naming
+            # ELB/HAProxy-style liveness probes use HEAD, and the module
+            # docstring markets /health as the endpoint for exactly those
+            # probes. HEAD answers the same status and headers as GET with no
+            # body (issue #433).
+            self._route_get(head_only=True)
+
+        def _route_get(self, *, head_only: bool) -> None:
             # /health is deliberately open: a liveness probe (k8s, ELB, docker
             # healthcheck) generally cannot be taught to carry a shared secret,
             # and it reveals nothing but reachability.
@@ -559,24 +582,26 @@ def make_handler(
             # the auth gate -- 401 from an endpoint meant to answer 200
             # for anything that can reach it.
             if urlsplit(self.path).path == "/health":
-                self._respond(200, {"status": "ok"})
+                self._respond(200, {"status": "ok"}, head_only=head_only)
                 return
             # Everything else is behind the token, including the 404 fallthrough
             # so an unauthenticated caller cannot probe which paths exist.
             if not self._authorized():
-                self._respond(401, {"error": "unauthorized"})
+                self._respond(401, {"error": "unauthorized"}, head_only=head_only)
                 return
             split = urlsplit(self.path)
             if split.path == "/metrics":
-                self._serve_metrics(parse_qs(split.query))
+                self._serve_metrics(parse_qs(split.query), head_only=head_only)
             elif split.path == "/risks":
-                self._respond(200, {"risks": list(self.snagline_risks)})
+                self._respond(
+                    200, {"risks": list(self.snagline_risks)}, head_only=head_only
+                )
             elif split.path == "/directive":
-                self._serve_directive()
+                self._serve_directive(head_only=head_only)
             else:
-                self._respond(404, {"error": "not found"})
+                self._respond(404, {"error": "not found"}, head_only=head_only)
 
-        def _serve_directive(self) -> None:
+        def _serve_directive(self, *, head_only: bool = False) -> None:
             """Serve the newest halt-webhook directive (issue #169).
 
             Read-only: the Monitor owns the directive and its lock, so this
@@ -593,9 +618,11 @@ def make_handler(
                     "snagline: directive unreadable, reporting continue", exc_info=True
                 )
                 payload = _directive_payload(HaltDirective())
-            self._respond(200, payload)
+            self._respond(200, payload, head_only=head_only)
 
-        def _serve_metrics(self, query: dict[str, list[str]]) -> None:
+        def _serve_metrics(
+            self, query: dict[str, list[str]], *, head_only: bool = False
+        ) -> None:
             """Serve either exposition format, failing open to an empty body.
 
             Rendering happens under try/except because a scrape endpoint that
@@ -606,7 +633,7 @@ def make_handler(
                 query, self.headers.get("Accept"), self.snagline_metrics_format
             )
             if fmt == "classic":
-                self._respond(200, self.snagline_monitor.metrics())
+                self._respond(200, self.snagline_monitor.metrics(), head_only=head_only)
                 return
             try:
                 body = self.snagline_collector.render_prometheus(
@@ -615,7 +642,7 @@ def make_handler(
             except Exception:
                 logger.exception("snagline: prometheus render failed")
                 body = ""
-            self._respond_text(200, body, PROMETHEUS_CONTENT_TYPE)
+            self._respond_text(200, body, PROMETHEUS_CONTENT_TYPE, head_only=head_only)
 
         def do_POST(self) -> None:  # noqa: N802 - http.server naming
             if not self._authorized():
@@ -890,21 +917,74 @@ def make_handler(
                 return None
             return self.rfile.read(length)
 
-        def _respond(self, code: int, payload: dict) -> None:
+        def _respond(
+            self, code: int, payload: dict, *, head_only: bool = False
+        ) -> None:
             data = (json.dumps(payload) + "\n").encode("utf-8")
             self.send_response(code)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
-            self.wfile.write(data)
+            if not head_only:
+                self.wfile.write(data)
 
-        def _respond_text(self, code: int, text: str, content_type: str) -> None:
+        def _respond_text(
+            self, code: int, text: str, content_type: str, *, head_only: bool = False
+        ) -> None:
             data = text.encode("utf-8")
             self.send_response(code)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
-            self.wfile.write(data)
+            if not head_only:
+                self.wfile.write(data)
+
+        def send_error(
+            self, code: int, message: Any = None, explain: Any = None
+        ) -> None:  # noqa: A002
+            # BaseHTTPRequestHandler dispatches ``do_<METHOD>`` and answers 501
+            # when no such method exists. The route does exist, so 405 naming
+            # what it accepts is the honest answer -- 501 reads as a broken
+            # sidecar rather than a usage error, and the built-in path never
+            # drains the body either, so a PUT/DELETE carrying a payload leaves
+            # megabytes unread and the kernel RSTs the connection before the
+            # client reads the status (issue #433).
+            if code == 501 and getattr(self, "path", None) is not None:
+                self._method_not_allowed()
+                return
+            return super().send_error(code, message, explain)
+
+        def _method_not_allowed(self) -> None:
+            """Answer a route that exists but does not accept this method."""
+            self._drain_body()
+            path = urlsplit(self.path).path
+            # Same auth-first ordering as the GET path: /health stays open, and
+            # an unauthenticated caller gets the same answer for every path so
+            # the 405 cannot be used to probe which routes exist.
+            if path != "/health" and not self._authorized():
+                self._respond(401, {"error": "unauthorized"})
+                return
+            if path in _ROUTES:
+                self.send_response(405)
+                self.send_header("Allow", _ALLOWED_METHODS)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            else:
+                self._respond(404, {"error": "not found"})
+
+        def _drain_body(self) -> None:
+            """Read and discard a declared request body before answering.
+
+            Used on the paths that do not read a body themselves: leaving it
+            unread makes the peer see EPIPE/reset instead of the status line
+            (the same hazard the 401/413 paths already drain for, #121).
+            """
+            declared = self._parse_content_length()
+            if not declared:
+                # None: a malformed Content-Length was already answered 400.
+                # 0: no body declared.
+                return
+            self._discard_overcap_body(declared)
 
     _Handler.snagline_monitor = monitor
     _Handler.snagline_tracker = tracker

@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nothing yet.
 
 ### Fixed
+- The sidecar now answers `HEAD` on `/health` and `/metrics` with the same
+  status and headers as `GET` and an empty body. `_Handler` defined only
+  `do_GET` and `do_POST`, so every other method fell through to
+  `BaseHTTPRequestHandler`'s built-in 501 -- and the module docstring markets
+  `/health` as the liveness endpoint for "k8s, ELB, docker healthcheck", so
+  ELB/HAProxy-style probes that use HEAD could never go green. A method that a
+  route does not accept is now answered 405 with an `Allow: GET, HEAD, POST`
+  header instead of 501, and the request body is drained before either
+  responds: an unread body made the kernel RST the connection before the
+  client read the status, exactly the hazard the 401/413 paths already drain
+  for (#433).
 - `snagline baseline --list-versions` is now honored on both the fit and
   `retrain` paths and is read-only everywhere: it lists and exits 0 without
   fitting, writing `baseline.json`, or storing a new version. Without
