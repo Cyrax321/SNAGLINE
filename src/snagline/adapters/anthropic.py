@@ -22,7 +22,7 @@ import contextlib
 import inspect
 import itertools
 import time
-from typing import Any
+from typing import Any, Literal
 
 from snagline.events import StepEvent, make_signature
 
@@ -148,6 +148,19 @@ class _SyncStreamWrapper:
             with contextlib.suppress(Exception):
                 close()
 
+    def __enter__(self) -> _SyncStreamWrapper:
+        return self
+
+    def __exit__(self, *exc_info: object) -> Literal[False]:
+        # An exception escaping the body is the observed call's visible
+        # outcome; close() alone would record it as a clean success, and
+        # failures surfaced through proxied stream methods (``s.text()``)
+        # are invisible to __next__. See openai.py for the full rationale.
+        if exc_info[1] is not None:
+            self._emit(error=True, error_type=type(exc_info[1]).__name__)
+        self.close()
+        return False
+
     def __getattr__(self, name: str) -> Any:
         return getattr(self._stream, name)
 
@@ -238,6 +251,16 @@ class _AsyncStreamWrapper:
                 res = close()
                 if inspect.isawaitable(res):
                     await res
+
+    async def __aenter__(self) -> _AsyncStreamWrapper:
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> Literal[False]:
+        # Same treatment as the sync twin (see openai.py).
+        if exc_info[1] is not None:
+            self._emit(error=True, error_type=type(exc_info[1]).__name__)
+        await self.aclose()
+        return False
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._stream, name)
@@ -399,7 +422,13 @@ def wrap_anthropic_client(
     method = getattr(cur, "create", None)
     if method is None or not callable(method):
         return client
-    cur.create = _wrap_one(monitor, method, episode_id, counter)
+    if getattr(method, "__snagline_wrapped__", False):
+        # Already instrumented by a previous wrap of this instance; wrapping
+        # the wrapper would ingest every host call twice.
+        return client
+    wrapper = _wrap_one(monitor, method, episode_id, counter)
+    wrapper.__snagline_wrapped__ = True  # type: ignore[attr-defined]
+    cur.create = wrapper
     return client
 
 
