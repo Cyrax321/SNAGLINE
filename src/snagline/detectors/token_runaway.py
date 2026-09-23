@@ -166,13 +166,7 @@ class TokenRunawayDetector:
         self._states = {}
         for ep, raw in state.get("states", {}).items():
             s = _WelfordCUSUM(self.k, self.h)
-            s.n = raw["n"]
-            s.mean = raw["mean"]
-            s._m2 = raw["m2"]
-            s.cusum = raw["cusum"]
-            s.mu0 = raw["mu0"]
-            s.sigma0 = raw["sigma0"]
-            s.frozen = raw["frozen"]
+            s.apply_core_state(raw)
             self._states[ep] = s
         self._totals = {ep: int(v) for ep, v in state.get("totals", {}).items()}
         self._warned = {ep: bool(v) for ep, v in state.get("warned", {}).items()}

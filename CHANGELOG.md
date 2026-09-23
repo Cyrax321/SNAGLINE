@@ -11,6 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nothing yet.
 
 ### Fixed
+- The seven `_WelfordCUSUM` counters restored by `TokenRunawayDetector.load_state`
+  and `LatencyAnomalyDetector._state_from_dict` are now coerced to their real
+  types. `dump_state` copies them off a live object and a snapshot is only JSON,
+  so a hand edit, a torn write, or a schema change between two versions can hand
+  back an entry whose keys are all present but whose values are not numbers.
+  Such an entry is structurally complete -- it clears every guard and is
+  published -- and the failure then moved out of restore and into the next
+  event: `int("x") + 1` raised inside `learn_only`, `Monitor.ingest` swallowed
+  it fail-open, and the corrupted state stayed put so every later event from
+  that episode scored nothing for the rest of its life. A non-numeric field is
+  now rejected at restore, where the restore containment already handles it.
+  `mu0` is still accepted as `None`, which is legitimate for a state snapshotted
+  mid warm-up (#424).
 - `snagline baseline --list-versions` is now honored on both the fit and
   `retrain` paths and is read-only everywhere: it lists and exits 0 without
   fitting, writing `baseline.json`, or storing a new version. Without
