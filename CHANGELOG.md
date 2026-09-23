@@ -11,6 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nothing yet.
 
 ### Fixed
+- The explicit `wrap_openai_client` / `wrap_anthropic_client` stream wrappers
+  now support the documented `with stream as s:` and `async with stream as s:`
+  forms. Implicit special-method lookup goes through the type slots and
+  bypasses `__getattr__`, so the wrappers' delegation never ran and a host
+  using the context-manager form against a wrapped client got a `TypeError`
+  out of the instrumentation layer -- breaking the host's streaming call, not
+  just the telemetry (#426).
+- `wrap_openai_client` / `wrap_anthropic_client` are now idempotent: wrapping
+  an already-wrapped client is a no-op instead of installing a wrapper around
+  the wrapper, which double-counted every host call into the monitor. A host
+  that wired both global and per-client instrumentation silently inflated
+  every per-step metric and tripped detectors on phantom repeats (#427).
 - `snagline baseline --list-versions` is now honored on both the fit and
   `retrain` paths and is read-only everywhere: it lists and exits 0 without
   fitting, writing `baseline.json`, or storing a new version. Without

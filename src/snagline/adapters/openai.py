@@ -34,7 +34,7 @@ import contextlib
 import inspect
 import itertools
 import time
-from typing import Any
+from typing import Any, Literal
 
 from snagline.events import StepEvent, make_signature
 
@@ -170,6 +170,24 @@ class _SyncStreamWrapper:
             with contextlib.suppress(Exception):
                 close()
 
+    def __enter__(self) -> _SyncStreamWrapper:
+        return self
+
+    def __exit__(self, *exc_info: object) -> Literal[False]:
+        # An exception escaping the body is the observed call's visible
+        # outcome: the caller's block died before the stream finished, and
+        # close() alone would record it as a clean success. This also covers
+        # failures surfaced through proxied stream methods (``s.text()`` and
+        # friends go through __getattr__, so the wrapper's __next__ never sees
+        # them) -- without it a mid-stream error inside a ``with`` block is a
+        # silent false negative. _emit is guarded, so when the stream already
+        # emitted at exhaustion this is a no-op and close() only closes the
+        # underlying stream.
+        if exc_info[1] is not None:
+            self._emit(error=True, error_type=type(exc_info[1]).__name__)
+        self.close()
+        return False
+
     def __getattr__(self, name: str) -> Any:
         return getattr(self._stream, name)
 
@@ -263,6 +281,18 @@ class _AsyncStreamWrapper:
                 res = close()
                 if inspect.isawaitable(res):
                     await res
+
+    async def __aenter__(self) -> _AsyncStreamWrapper:
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> Literal[False]:
+        # Same treatment as the sync twin: an exception escaping the body is
+        # the call's visible outcome, and proxied async stream methods (an
+        # ``await s.text()`` failure) never pass through __anext__.
+        if exc_info[1] is not None:
+            self._emit(error=True, error_type=type(exc_info[1]).__name__)
+        await self.aclose()
+        return False
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._stream, name)
@@ -433,7 +463,13 @@ def wrap_openai_client(monitor: Any, client: Any, episode_id: str = "openai") ->
         method = getattr(cur, parts[-1], None)
         if method is None or not callable(method):
             continue
-        setattr(cur, parts[-1], _wrap_one(monitor, method, episode_id, counter))
+        if getattr(method, "__snagline_wrapped__", False):
+            # Already instrumented by a previous wrap of this instance;
+            # wrapping the wrapper would ingest every host call twice.
+            continue
+        wrapper = _wrap_one(monitor, method, episode_id, counter)
+        wrapper.__snagline_wrapped__ = True  # type: ignore[attr-defined]
+        setattr(cur, parts[-1], wrapper)
     return client
 
 
