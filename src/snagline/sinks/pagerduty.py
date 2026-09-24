@@ -1,7 +1,10 @@
 """PagerDuty sink -- trigger PagerDuty Events API v2 incidents.
 
 Zero dependency (stdlib ``urllib.request``). Posts a ``trigger`` event with a
-mapped severity so on-call gets paged. Optional ``min_severity`` filter.
+mapped severity so on-call gets paged. Optional ``min_severity`` filter. The
+``timeout`` is a wall-clock deadline on the whole POST (see
+``bounded_post``), not just a per-socket-operation hint, so a stuck endpoint
+pages nothing but also stalls nothing.
 
 Privacy: only ``FailureRisk`` fields are transmitted, never raw content
 (project.md §11).
@@ -20,6 +23,7 @@ from snagline.risk import (
     SEVERITY_WARNING,
     FailureRisk,
 )
+from snagline.sinks.base import bounded_post
 
 logger = logging.getLogger("snagline")
 
@@ -85,8 +89,7 @@ class PagerDutySink:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
-                resp.read()
+            bounded_post(req, self._timeout)
         except Exception:
             logger.exception(
                 "snagline PagerDuty sink POST failed; ignoring (fail-open)"
