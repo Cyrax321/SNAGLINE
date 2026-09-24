@@ -44,7 +44,7 @@ from collections.abc import Callable
 from typing import Any
 
 from snagline.risk import FailureRisk
-from snagline.sinks.base import AlertSink
+from snagline.sinks.base import AlertSink, format_sink_repr
 
 logger = logging.getLogger("snagline")
 
@@ -85,6 +85,11 @@ class DedupSink:
         self._last: dict[Any, float] = {}
         self._lock = threading.Lock()
         self._swept = time.monotonic()
+
+    def __repr__(self) -> str:
+        return format_sink_repr(
+            "DedupSink", inner=self._sink, cooldown_seconds=self._cooldown
+        )
 
     def emit(self, risk: FailureRisk) -> None:
         # The whole suppression decision is inlined here rather than delegated to

@@ -39,6 +39,7 @@ from collections.abc import Callable
 from typing import Any
 
 from snagline.risk import FailureRisk
+from snagline.sinks.base import format_sink_repr
 
 logger = logging.getLogger("snagline")
 
@@ -76,6 +77,10 @@ class ContinuumSink:
         # Resolve the ledger eagerly so a missing extra fails loudly during
         # host setup instead of silently swallowing every future alert.
         self._ledger = self._ledger_factory(storage, run_id)
+
+    def __repr__(self) -> str:
+        # storage is an arbitrary host object; only our own config is salient.
+        return format_sink_repr("ContinuumSink", run_id=self._run_id)
 
     def emit(self, risk: FailureRisk) -> None:
         """Escalate one risk. Fire-and-forget; never raises into the Monitor."""

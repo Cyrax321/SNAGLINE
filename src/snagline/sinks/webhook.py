@@ -23,6 +23,7 @@ from snagline.risk import (
     SEVERITY_WARNING,
     FailureRisk,
 )
+from snagline.sinks.base import format_sink_repr
 
 logger = logging.getLogger("snagline")
 
@@ -49,6 +50,12 @@ class WebhookSink:
         self._url = url
         self._timeout = timeout
         self._min = min_severity
+
+    def __repr__(self) -> str:
+        """Repr without the destination URL, which is a credential (#390)."""
+        return format_sink_repr(
+            "WebhookSink", timeout=self._timeout, min_severity=self._min
+        )
 
     def emit(self, risk: FailureRisk) -> None:
         # A webhook is typically an escalation endpoint; unfiltered it fires

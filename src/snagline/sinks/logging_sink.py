@@ -22,6 +22,7 @@ import logging
 from contextlib import suppress
 
 from snagline.risk import FailureRisk
+from snagline.sinks.base import format_sink_repr
 
 logger = logging.getLogger("snagline")
 
@@ -95,6 +96,11 @@ class LoggingSink:
         self._logger = logger if logger is not None else logging.getLogger("snagline")
         self._level = level
         self._formatter = formatter if formatter is not None else JsonRiskFormatter()
+
+    def __repr__(self) -> str:
+        return format_sink_repr(
+            "LoggingSink", logger=self._logger.name, level=self._level
+        )
 
     def emit(self, risk: FailureRisk) -> None:
         try:

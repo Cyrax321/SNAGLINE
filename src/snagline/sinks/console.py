@@ -19,6 +19,7 @@ from contextlib import suppress
 from typing import IO, Any
 
 from snagline.risk import FailureRisk
+from snagline.sinks.base import format_sink_repr
 
 logger = logging.getLogger("snagline")
 
@@ -44,6 +45,10 @@ class ConsoleSink:
         self._logger = logger
         self._level = level
         self._fault_logged = False
+
+    def __repr__(self) -> str:
+        """Compact, secret-free repr (the stream/logger are runtime objects)."""
+        return format_sink_repr("ConsoleSink", level=logging.getLevelName(self._level))
 
     def emit(self, risk: FailureRisk) -> None:
         payload: dict[str, Any] = {
