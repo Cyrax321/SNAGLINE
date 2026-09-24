@@ -96,6 +96,12 @@ class LoggingSink:
         self._level = level
         self._formatter = formatter if formatter is not None else JsonRiskFormatter()
 
+    def __repr__(self) -> str:
+        return (
+            f"LoggingSink(logger={self._logger.name!r}, "
+            f"level={logging.getLevelName(self._level)!r})"
+        )
+
     def emit(self, risk: FailureRisk) -> None:
         try:
             line = self._formatter.render(risk)

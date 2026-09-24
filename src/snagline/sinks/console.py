@@ -45,6 +45,12 @@ class ConsoleSink:
         self._level = level
         self._fault_logged = False
 
+    def __repr__(self) -> str:
+        dest = "stderr" if self._stream is sys.stderr else "stream"
+        return (
+            f"ConsoleSink(dest={dest!r}, level={logging.getLevelName(self._level)!r})"
+        )
+
     def emit(self, risk: FailureRisk) -> None:
         payload: dict[str, Any] = {
             "episode_id": risk.episode_id,

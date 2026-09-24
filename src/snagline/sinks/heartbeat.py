@@ -37,6 +37,9 @@ class HeartbeatSink:
         self._path = path
         self._fault_logged = False
 
+    def __repr__(self) -> str:
+        return f"HeartbeatSink(path={self._path!r})"
+
     def touch(self) -> None:
         """Best-effort mtime bump; fail-open, logged once until it recovers."""
         try:

@@ -86,6 +86,9 @@ class DedupSink:
         self._lock = threading.Lock()
         self._swept = time.monotonic()
 
+    def __repr__(self) -> str:
+        return f"DedupSink(inner={self._sink!r}, cooldown_seconds={self._cooldown!r})"
+
     def emit(self, risk: FailureRisk) -> None:
         # The whole suppression decision is inlined here rather than delegated to
         # a helper: this is the per-alert hot path, and an extra Python call

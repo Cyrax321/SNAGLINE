@@ -77,6 +77,10 @@ class ContinuumSink:
         # host setup instead of silently swallowing every future alert.
         self._ledger = self._ledger_factory(storage, run_id)
 
+    def __repr__(self) -> str:
+        # storage is an opaque host handle; run_id is the salient, non-secret id.
+        return f"ContinuumSink(run_id={self._run_id!r})"
+
     def emit(self, risk: FailureRisk) -> None:
         """Escalate one risk. Fire-and-forget; never raises into the Monitor."""
         try:

@@ -8,7 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Nothing yet.
+- User-facing sinks now define a compact, secret-free `__repr__` instead of
+  falling back to `<...object at 0x...>`, so a Monitor's sink list is legible
+  when inspected or logged: `ConsoleSink`, `LoggingSink`, `HeartbeatSink`,
+  `ContinuumSink`, `DedupSink` (nests its inner sink), `BatchingSink` (nests
+  its inner sink), and `PagerDutySink`. `PagerDutySink`'s repr deliberately
+  omits its routing key, following the credential-in-logs rule (#463).
 
 ### Fixed
 - `snagline baseline --list-versions` is now honored on both the fit and

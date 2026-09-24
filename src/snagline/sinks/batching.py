@@ -56,6 +56,12 @@ class BatchingSink:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
+    def __repr__(self) -> str:
+        return (
+            f"BatchingSink(inner={self._sink!r}, max_batch={self._max_batch!r}, "
+            f"flush_interval={self._flush_interval!r})"
+        )
+
     def emit(self, risk: FailureRisk) -> None:
         # Non-blocking enqueue; the background thread does the actual delivery.
         with self._lock:

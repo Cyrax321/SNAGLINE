@@ -58,6 +58,13 @@ class PagerDutySink:
         self._source = source
         self._min = min_severity
 
+    def __repr__(self) -> str:
+        # The routing key is a credential (cf. #390/#404) -- never surface it.
+        return (
+            f"PagerDutySink(source={self._source!r}, "
+            f"min_severity={self._min!r}, timeout={self._timeout!r})"
+        )
+
     def emit(self, risk: FailureRisk) -> None:
         if self._min is not None and _order(risk.severity) < _order(self._min):
             return
