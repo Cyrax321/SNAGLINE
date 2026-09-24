@@ -258,8 +258,9 @@ class LatencyAnomalyDetector:
                         0.8,
                         "latency_anomaly",
                         f"latency baseline shifted {old_mu:.0f}ms -> "
-                        f"{state.mu0:.0f}ms ({shift:.0f}ms move, beyond the "
-                        f"{self.h}x-sigma alarm bar); baseline re-fitted",
+                        f"{state.mu0:.0f}ms ({shift:.0f}ms move, past the "
+                        f"{self.k}x-sigma sustained-shift band the CUSUM "
+                        f"accumulates on); baseline re-fitted",
                         event.timestamp,
                     )
         if alarm:
@@ -282,11 +283,18 @@ class LatencyAnomalyDetector:
         """Advance periodic baseline re-fit bookkeeping (issue #92).
 
         Returns ``(shifted, old_mu, shift)``: ``shifted`` is True when the
-        frozen baseline itself moved beyond the same ``h * sigma`` alarm bar
-        the CUSUM uses, so "baseline drifted" is exactly as hard to claim as
-        "a step deviated". The candidate baseline is adopted either way once
-        measured -- keeping a stale baseline would fight reality -- and the
-        CUSUM accumulator restarts from zero against the new reference.
+        frozen baseline moved past the CUSUM's *sustained-shift* band --
+        ``k * sigma0``, the dead-band the accumulator has to clear before a
+        level shift starts building toward an alarm -- so any drift the frozen
+        CUSUM would eventually have flagged is reported rather than silently
+        folded into the new baseline (issue #482). This is deliberately NOT the
+        single-step ``h * sigma`` alarm bar: a sustained shift below ``h`` still
+        alarms once the CUSUM accumulates past ``h`` over several steps, so
+        gating the report on ``h * sigma`` hid real regressions in the band
+        ``k*sigma < shift <= h*sigma``. The candidate baseline is adopted
+        either way once measured -- keeping a stale baseline would fight
+        reality -- and the CUSUM accumulator restarts from zero against the new
+        reference.
 
         Coverage never pauses: the frozen baseline keeps scoring every sample
         while the parallel Welford learner accumulates.
@@ -304,7 +312,20 @@ class LatencyAnomalyDetector:
                 assert state.mu0 is not None
                 old_mu = state.mu0
                 shift = abs(state.learner_mean - old_mu)
-                bar = self.h * state.sigma0
+                # The reporting bar is the CUSUM's *sustained-shift* threshold,
+                # not its single-step alarm bar. A frozen CUSUM eventually
+                # alarms on any sustained level shift whose per-step
+                # contribution ``shift/sigma0 - k`` is positive, i.e. any
+                # ``shift > k * sigma0`` -- accumulation past the dead-band k,
+                # not a single step clearing ``h * sigma0``. Using ``h * sigma``
+                # here (issue #482) let a sustained regression in the band
+                # ``k*sigma < shift <= h*sigma`` be adopted into the new
+                # baseline with NO risk emitted, silently absorbing exactly the
+                # drift the frozen-baseline promise says must keep alerting. The
+                # candidate is still adopted either way (keeping a stale
+                # baseline would fight reality), but a move the CUSUM would have
+                # flagged is now always reported.
+                bar = self.k * state.sigma0
                 state.adopt_candidate()
                 if shift > bar:
                     state.pending_old_mu = old_mu

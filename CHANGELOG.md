@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nothing yet.
 
 ### Fixed
+- Latency CUSUM periodic re-fit (`cusum_refit_every > 0`, opt-in) no longer
+  silently absorbs a sustained regression. Re-fit adopted the learner's
+  baseline unconditionally but only emitted a "baseline shifted" risk when the
+  move cleared the single-step `h * sigma` alarm bar, so a sustained shift in
+  the band `k*sigma < shift <= h*sigma` — one the CUSUM's *sustained-shift*
+  sensitivity (accumulation past the dead-band `k`) would eventually flag — was
+  folded into the new baseline with no risk at all, defeating the module's
+  frozen-baseline promise. The report is now gated on the CUSUM's actual
+  sustained-shift threshold `k * sigma`; the candidate is still adopted either
+  way. Default behavior (refits disabled) is unchanged (#482).
 - `snagline baseline --list-versions` is now honored on both the fit and
   `retrain` paths and is read-only everywhere: it lists and exits 0 without
   fitting, writing `baseline.json`, or storing a new version. Without

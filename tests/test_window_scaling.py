@@ -185,6 +185,37 @@ def test_cusum_refit_surfaces_baseline_drift() -> None:
     assert all(r is None for r in risks[-5:])
 
 
+def test_cusum_refit_reports_sustained_shift_below_single_step_bar() -> None:
+    """Regression for #482: periodic re-fit adopted the learner's baseline
+    *unconditionally* but only emitted a drift risk when the move exceeded the
+    single-step ``h * sigma`` alarm bar. A sustained regression in the band
+    ``k*sigma < shift <= h*sigma`` -- one the CUSUM's *sustained-shift*
+    sensitivity (accumulation past the dead-band ``k``) would eventually flag
+    -- was therefore folded into the new baseline with NO risk, defeating the
+    module's frozen-baseline promise.
+
+    Defaults k=0.5, h=5.0. Warm-up at a constant 100ms floors sigma0 at 5ms
+    (5% of the mean), so the dead-band edge is k*sigma0 = 2.5ms and the old bar
+    was h*sigma0 = 25ms. A +3ms sustained shift sits between them: the CUSUM
+    accumulates only 0.1/step (never reaching h before the refit adopts), so
+    pre-fix the whole run is silent. The re-fit must now report it once."""
+    cfg = Config(cusum_min_samples=5, cusum_refit_every=5)
+    det = LatencyAnomalyDetector(config=cfg)
+    risks = []
+    ts = 0.0
+    for i in range(5):  # constant warm-up -> mu0=100, sigma0 floored to 5ms
+        risks.append(det.observe(_event(f"w{i}", ts, "s", latency_ms=100.0)))
+        ts += 1.0
+    for i in range(15):  # sustained +3ms: past the dead-band, below the old bar
+        risks.append(det.observe(_event(f"x{i}", ts, "s", latency_ms=103.0)))
+        ts += 1.0
+    fired = [r for r in risks if r is not None]
+    assert len(fired) == 1, f"the absorbed shift must surface exactly once: {fired}"
+    assert fired[0].trigger == "latency_anomaly"
+    assert fired[0].score == 0.8
+    assert "baseline shifted" in fired[0].detail
+
+
 def test_cusum_alarm_coincident_with_adoption_keeps_severity_and_detail() -> None:
     """Issue #244: the alarm was scored *after* the periodic re-fit advanced.
     When adoption landed on the same step as an alarm, adopt_candidate() had
