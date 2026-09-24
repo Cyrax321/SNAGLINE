@@ -114,6 +114,35 @@ def test_inverted_thresholds_rejected():
         MeltdownDetector(low_entropy=2.0, high_entropy=1.0)
 
 
+def test_identity_uses_full_signature_when_tool_name_absent():
+    """Regression for #493: the ``tool_name``-absent fallback used
+    ``action_signature[:16]``, reintroducing the issue-#15 truncation
+    collision. Two DISTINCT actions sharing a 16-char prefix (structured,
+    endpoint-style signatures with no discrete tool name) collapsed to one
+    identity, deflating entropy to a false 'collapse' alarm on what is
+    actually healthy 1-bit alternation. The full signature is the identity,
+    matching make_signature's full-digest invariant."""
+
+    def _endpoint(i: int, sig: str) -> StepEvent:
+        return StepEvent(
+            step_id=str(i),
+            episode_id="ep",
+            timestamp=float(i),
+            action_type="tool_call",
+            action_signature=sig,
+            tool_name=None,  # no discrete tool name -> signature fallback
+        )
+
+    d = MeltdownDetector(window_size=6)
+    risks = []
+    for i in range(12):
+        # "search:database:alpha"[:16] == "search:database:omega"[:16]
+        # == "search:database:" -- distinct actions, identical 16-char prefix.
+        sig = "search:database:alpha" if i % 2 == 0 else "search:database:omega"
+        risks.extend(_run(d, [_endpoint(i, sig)]))
+    assert risks == [], f"prefix-colliding alternation false-positive: {risks}"
+
+
 def test_state_round_trip():
     d1 = MeltdownDetector(window_size=4)
     _run(d1, [_event(i, "search") for i in range(3)])  # partial window

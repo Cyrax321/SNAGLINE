@@ -6,8 +6,9 @@ sequences): coherent behavior degrades into either rote repetition or chaotic
 churn. This detector computes exactly that statistic per episode.
 
 Per episode, maintain a sliding window of the last ``meltdown_window_size``
-**tool-call identities** (``tool_name``, falling back to a signature prefix).
-Each full window yields Shannon entropy H over the identity distribution:
+**tool-call identities** (``tool_name``, falling back to the full
+``action_signature``). Each full window yields Shannon entropy H over the
+identity distribution:
 
 * ``H < meltdown_low_entropy``  -> the window collapsed onto essentially one
   repeated tool. Rote looping that exact-signature matching misses whenever
@@ -111,7 +112,14 @@ class MeltdownDetector:
 
     @staticmethod
     def _identity(event: StepEvent) -> str:
-        return event.tool_name or event.action_signature[:16]
+        # Full signature, never a prefix: truncating to 16 hex chars invited
+        # collisions between distinct actions (the issue-#15 anti-pattern that
+        # make_signature exists to avoid). The identity is only ever compared
+        # for equality and counted, never displayed or stored per-character,
+        # so truncation buys nothing while deflating entropy toward a false
+        # collapse alarm when two distinct actions share a 16-char prefix
+        # (issue #493).
+        return event.tool_name or event.action_signature
 
     def observe(self, event: StepEvent) -> FailureRisk | None:
         if event.action_type != "tool_call":

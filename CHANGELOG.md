@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nothing yet.
 
 ### Fixed
+- Meltdown detector no longer truncates the action signature when deriving a
+  tool-call identity. For `tool_call` events without a discrete `tool_name`
+  (generic HTTP/endpoint instrumentation), the identity fallback used
+  `action_signature[:16]`, reintroducing the issue-#15 truncation collision:
+  two distinct structured signatures sharing a 16-char prefix
+  (`search:database:alpha` vs `search:database:omega`) collapsed to one
+  identity, deflating window entropy to a false `meltdown` collapse alarm on
+  healthy alternation. The full signature is now the identity (#493).
 - `snagline baseline --list-versions` is now honored on both the fit and
   `retrain` paths and is read-only everywhere: it lists and exits 0 without
   fitting, writing `baseline.json`, or storing a new version. Without
