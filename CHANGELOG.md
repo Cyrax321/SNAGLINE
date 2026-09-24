@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nothing yet.
 
 ### Fixed
+- `GoalDriftDetector`'s minimum-samples gate now counts tool-call observations
+  instead of `total_steps`. `add_event` bumps `total_steps` for every event
+  (messages, plan steps, observations) while the drift score reads only
+  per-tool `tool_call` statistics, so a handful of non-tool steps plus a single
+  errored tool call cleared the gate and scored that tool's error rate on one
+  sample — firing `goal_drift` at score 1.00 on ordinary traffic. The gate now
+  counts the samples the score actually consumes (#478).
 - `snagline baseline --list-versions` is now honored on both the fit and
   `retrain` paths and is read-only everywhere: it lists and exits 0 without
   fitting, writing `baseline.json`, or storing a new version. Without

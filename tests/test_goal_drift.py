@@ -120,3 +120,48 @@ def test_goal_drift_still_dedupes_while_drift_persists():
     det = GoalDriftDetector(baseline=_healthy_baseline(), config=cfg)
     risks = [det.observe(_ev("search", 5000.0, error=True)) for _ in range(10)]
     assert sum(1 for r in risks if r is not None) == 1
+
+
+def _msg(episode="ep"):
+    # A non-tool step (message / plan_step / observation). It bumps
+    # total_steps but contributes nothing the drift score reads.
+    return StepEvent(
+        step_id="m",
+        episode_id=episode,
+        timestamp=1.0,
+        action_type="message",
+        action_signature="sig",
+    )
+
+
+def test_goal_drift_gate_counts_tool_samples_not_all_events():
+    """Issue #478: the min-samples gate counted every event (total_steps), but
+    the drift score reads only per-tool tool_call stats. A few non-tool steps
+    (messages / plan_steps) plus a single errored tool call therefore cleared
+    the gate and scored a tool's error_rate on one sample, firing at 1.00. The
+    gate now counts tool-call observations, so one errored call among filler
+    messages stays silent."""
+    cfg = Config()
+    cfg.goal_drift_min_samples = 10
+    det = GoalDriftDetector(baseline=_healthy_baseline(), config=cfg)
+
+    for _ in range(9):
+        assert det.observe(_msg()) is None
+    # Only one tool-call sample so far -- far below min_samples=10 -- so a lone
+    # errored call must not manufacture a max-severity drift.
+    assert det.observe(_ev("search", 100.0, error=True)) is None
+
+
+def test_goal_drift_fires_once_enough_tool_samples_arrive():
+    """The gate must still open on real tool-call volume, even interleaved with
+    non-tool steps: messages neither block nor accelerate detection."""
+    cfg = Config()
+    cfg.goal_drift_min_samples = 5
+    det = GoalDriftDetector(baseline=_healthy_baseline(), config=cfg)
+
+    fired = None
+    for _ in range(5):
+        det.observe(_msg())  # filler: does not count toward the gate
+        fired = fired or det.observe(_ev("search", 100.0, error=True))
+    assert fired is not None, "5 errored tool calls must fire once the gate opens"
+    assert fired.trigger == "goal_drift"
