@@ -90,6 +90,14 @@ def test_baseline_save_and_load_roundtrip(tmp_path):
     )
 
 
+def test_public_persistence_helpers_are_documented():
+    # Issue #459: save_baseline / load_baseline are part of the documented
+    # public API (re-exported in __all__) but shipped without docstrings while
+    # their sibling fitter had one. Guard that they stay documented.
+    for fn in (save_baseline, load_baseline):
+        assert fn.__doc__ and fn.__doc__.strip(), f"{fn.__name__} lost its docstring"
+
+
 def test_cli_baseline_command(tmp_path, capsys):
     traj = tmp_path / "healthy.jsonl"
     traj.write_text(

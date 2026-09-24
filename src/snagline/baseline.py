@@ -190,11 +190,16 @@ def fit_baseline_from_jsonl(path: str) -> BaselineProfile:
 
 
 def save_baseline(profile: BaselineProfile, path: str) -> None:
+    """Persist a ``BaselineProfile`` to ``path`` as JSON (round-trips with
+    ``load_baseline`` via ``BaselineProfile.to_dict``). The written profile is
+    content-free -- only aggregate per-tool statistics, never event payloads."""
     with open(path, "w", encoding="utf-8") as fh:
         _write_json(fh, profile.to_dict())
 
 
 def load_baseline(path: str) -> BaselineProfile:
+    """Load a ``BaselineProfile`` previously written by ``save_baseline``
+    (the inverse of ``save_baseline``, via ``BaselineProfile.from_dict``)."""
     with open(path, encoding="utf-8") as fh:
         return BaselineProfile.from_dict(json.load(fh))
 
