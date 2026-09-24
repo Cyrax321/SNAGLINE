@@ -57,6 +57,27 @@ def test_py_typed_is_declared_as_package_data() -> None:
     assert (REPO_ROOT / "src" / "snagline" / "py.typed").is_file()
 
 
+def test_typed_classifier_matches_the_shipped_py_typed_marker() -> None:
+    """A package that ships ``py.typed`` should advertise ``Typing :: Typed``.
+
+    The marker tells a *downstream type checker* the package is typed; the
+    trove classifier tells *PyPI* (and anyone browsing it). They drifted:
+    #306 added the marker but never touched ``classifiers`` (issue #456). This
+    guard fails if the marker ships without the classifier, so they can't
+    diverge again.
+    """
+    tomllib = pytest.importorskip("tomllib")  # 3.11+; CI's oldest leg is 3.10
+    with PYPROJECT.open("rb") as fh:
+        classifiers = tomllib.load(fh)["project"]["classifiers"]
+
+    ships_marker = (REPO_ROOT / "src" / "snagline" / "py.typed").is_file()
+    assert ships_marker, "precondition: py.typed must ship (see the marker test)"
+    assert "Typing :: Typed" in classifiers, (
+        "src/snagline/py.typed ships but pyproject.toml classifiers omit "
+        "'Typing :: Typed' -- PyPI will not surface the package as typed"
+    )
+
+
 def test_dev_extra_tool_pins_match_ci() -> None:
     """``pyproject.toml``'s dev pins must agree with the CI install line.
 

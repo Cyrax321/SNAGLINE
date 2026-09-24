@@ -8,7 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Nothing yet.
+- `pyproject.toml` now advertises the shipped inline type information with the
+  `Typing :: Typed` trove classifier (the `py.typed` marker was already
+  shipped, but PyPI never surfaced the package as typed), plus
+  `Environment :: Console` given the `snagline` console script. A packaging
+  test now fails if the marker ships without the classifier (#456).
 
 ### Fixed
 - `snagline baseline --list-versions` is now honored on both the fit and
