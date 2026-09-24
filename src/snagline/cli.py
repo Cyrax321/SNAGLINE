@@ -150,21 +150,29 @@ def _build_sinks(args: argparse.Namespace, cfg: Config) -> list[AlertSink]:
     sinks: list[AlertSink] = []
     if args.sink == "webhook":
         if not args.webhook_url:
-            print("--webhook-url is required with --sink webhook", file=sys.stderr)
+            print(
+                "snagline: --webhook-url is required with --sink webhook",
+                file=sys.stderr,
+            )
             raise SystemExit(2)
         from snagline.sinks.webhook import WebhookSink
 
         sinks.append(WebhookSink(args.webhook_url, min_severity=args.min_severity))
     elif args.sink == "slack":
         if not args.slack_url:
-            print("--slack-url is required with --sink slack", file=sys.stderr)
+            print(
+                "snagline: --slack-url is required with --sink slack", file=sys.stderr
+            )
             raise SystemExit(2)
         from snagline.sinks.slack import SlackSink
 
         sinks.append(SlackSink(args.slack_url, min_severity=args.min_severity))
     elif args.sink == "pagerduty":
         if not args.pagerduty_key:
-            print("--pagerduty-key is required with --sink pagerduty", file=sys.stderr)
+            print(
+                "snagline: --pagerduty-key is required with --sink pagerduty",
+                file=sys.stderr,
+            )
             raise SystemExit(2)
         from snagline.sinks.pagerduty import PagerDutySink
 

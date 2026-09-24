@@ -63,6 +63,23 @@ def test_build_sinks_requires_url():
     assert exc.value.code == 2
 
 
+def test_build_sinks_required_arg_errors_carry_the_house_prefix(capsys):
+    """The three --sink required-arg errors must match the `snagline:` house
+    style used by every other CLI error, not print a bare, source-less line
+    (#458)."""
+    import pytest
+
+    from snagline.cli import _build_sinks
+
+    for sink in ("webhook", "slack", "pagerduty"):
+        with pytest.raises(SystemExit):
+            _build_sinks(_args(sink=sink), Config())
+        err = capsys.readouterr().err
+        assert err.startswith("snagline:"), (
+            f"--sink {sink} error is unprefixed, unlike the rest of the CLI: {err!r}"
+        )
+
+
 def test_build_sinks_cooldown_wraps():
     from snagline.cli import _build_sinks
 

@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nothing yet.
 
 ### Fixed
+- The three `--sink` required-argument errors (`--webhook-url` / `--slack-url`
+  / `--pagerduty-key` missing) now carry the standard `snagline:` prefix like
+  every other CLI error, instead of printing a bare, source-less line. Exit
+  code is unchanged (2) (#458).
 - `snagline baseline --list-versions` is now honored on both the fit and
   `retrain` paths and is read-only everywhere: it lists and exits 0 without
   fitting, writing `baseline.json`, or storing a new version. Without
