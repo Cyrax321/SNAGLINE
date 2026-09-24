@@ -24,6 +24,7 @@ from collections.abc import Callable, Iterator
 from contextlib import suppress
 from pathlib import Path
 
+from snagline import __version__
 from snagline.config import Config
 from snagline.events import StepEvent
 from snagline.monitor import Monitor
@@ -183,7 +184,15 @@ def _build_sinks(args: argparse.Namespace, cfg: Config) -> list[AlertSink]:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="snagline",
-        description="Real-time failure detection for AI agents (v0.1).",
+        description="Real-time failure detection for AI agents.",
+    )
+    # A first-class --version so users (and the bug-report template, which asks
+    # for the installed version) can print it without a Python one-liner. The
+    # value is the real package version, so it never drifts (issue #452).
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"snagline {__version__}",
     )
     sub = parser.add_subparsers(dest="command")
 

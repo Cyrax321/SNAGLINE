@@ -8,7 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Nothing yet.
+- `snagline --version` now prints the installed package version
+  (`snagline <__version__>`) and exits 0, so users and the bug-report template
+  no longer need a Python one-liner to report it. The `--help` description also
+  no longer hardcodes a stale `(v0.1)` literal that drifted from the real
+  `__version__` (#452).
 
 ### Fixed
 - `snagline baseline --list-versions` is now honored on both the fit and

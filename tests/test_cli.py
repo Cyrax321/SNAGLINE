@@ -354,3 +354,32 @@ def test_min_severity_typo_exits_2(capsys):
     assert exc.value.code == 2
     err = capsys.readouterr().err
     assert "invalid choice" in err, f"argparse should reject the typo, got: {err}"
+
+
+def test_version_flag_prints_installed_version_and_exits_0(capsys):
+    """`snagline --version` prints the real package version and exits 0.
+
+    The value must be `snagline.__version__`, not a hardcoded literal, so it
+    can never drift the way the old `--help` "(v0.1)" description did (#452).
+    """
+    import pytest
+
+    import snagline
+
+    with pytest.raises(SystemExit) as exc:
+        main(["--version"])
+    assert exc.value.code == 0
+    # argparse's version action writes to stdout.
+    out = capsys.readouterr().out
+    assert out.strip() == f"snagline {snagline.__version__}"
+
+
+def test_help_description_has_no_hardcoded_version(capsys):
+    """The old description embedded a stale "(v0.1)"; --version replaces it."""
+    import pytest
+
+    with pytest.raises(SystemExit) as exc:
+        main(["--help"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "v0.1" not in out, f"--help must not hardcode a version, got: {out}"
