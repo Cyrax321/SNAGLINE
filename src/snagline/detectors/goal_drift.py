@@ -115,8 +115,15 @@ class GoalDriftDetector:
         }
 
     def load_state(self, state: dict[str, Any]) -> None:
-        self._live = {
+        # Build both maps into locals before publishing either: a malformed
+        # payload (e.g. a non-dict "fired") must leave the prior live state
+        # intact so Monitor.restore_dict's "malformed ... ignored" containment
+        # is truthful (issue #417). Assigning self._live first would strand it
+        # against a stale self._fired if the second comprehension raised.
+        live = {
             ep: BaselineProfile.from_dict(raw)
             for ep, raw in state.get("live", {}).items()
         }
-        self._fired = {ep: bool(v) for ep, v in state.get("fired", {}).items()}
+        fired = {ep: bool(v) for ep, v in state.get("fired", {}).items()}
+        self._live = live
+        self._fired = fired

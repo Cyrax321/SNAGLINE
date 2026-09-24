@@ -14,8 +14,15 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
+from snagline.baseline import BaselineProfile
 from snagline.config import Config
-from snagline.detectors.compaction_tripwire import CompactionTripwireDetector
+from snagline.detectors.compaction_tripwire import (
+    CompactionTripwireDetector,
+    _EpisodeState,
+)
+from snagline.detectors.goal_drift import GoalDriftDetector
 from snagline.detectors.side_effect_guard import SideEffectGuardDetector
 from snagline.detectors.stagnation import StagnationDetector
 from snagline.detectors.windowing import effective_window_size
@@ -412,3 +419,45 @@ def test_monitor_snapshot_restore_matches_never_restarted_twin(tmp_path):
     assert {"side_effect_duplicate", "stagnation", "governance_decay"} <= triggers, (
         "the tail must exercise all three restored detectors"
     )
+
+
+# --- restore atomicity: the two detectors #417 missed ------------------------
+# Monitor.restore_dict catches a per-detector load_state exception and logs
+# "malformed ... ignored", asserting the detector kept its prior live state.
+# A load_state that mutates self before it can fail breaks that promise: the
+# in-flight episodes are discarded and only a prefix of the bad snapshot lands.
+
+
+def test_compaction_tripwire_load_state_is_atomic_on_a_malformed_entry():
+    d = CompactionTripwireDetector()
+    live = _EpisodeState()
+    live.ordinal = 7
+    d._episodes = {"ep-live": live}
+    # ep-b's non-int ordinal raises mid-payload. Pre-fix (clear-then-loop) this
+    # left ep-live discarded and ep-a half-restored; the fix publishes only
+    # after the whole payload parses, so the live state must survive intact.
+    bad = {
+        "episodes": {
+            "ep-a": {"ordinal": 3, "pending": None},
+            "ep-b": {"ordinal": "not-an-int", "pending": None},
+        }
+    }
+    with pytest.raises(ValueError):
+        d.load_state(bad)
+    assert list(d._episodes) == ["ep-live"]
+    assert d._episodes["ep-live"].ordinal == 7
+
+
+def test_goal_drift_load_state_is_atomic_on_a_malformed_fired_map():
+    d = GoalDriftDetector(BaselineProfile())
+    live_profile = BaselineProfile()
+    d._live = {"ep-live": live_profile}
+    d._fired = {"ep-live": True}
+    # A non-dict "fired" makes .items() raise after _live would have been
+    # republished. Pre-fix this stranded a wiped _live against a stale _fired
+    # (lost dedupe -> a fired drift could re-alarm); the fix builds both maps
+    # in locals and publishes together, so the live state is untouched.
+    with pytest.raises((AttributeError, TypeError)):
+        d.load_state({"live": {}, "fired": [1, 2, 3]})
+    assert d._live == {"ep-live": live_profile}
+    assert d._fired == {"ep-live": True}

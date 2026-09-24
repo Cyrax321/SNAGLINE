@@ -181,7 +181,13 @@ class CompactionTripwireDetector:
         return {"episodes": episodes}
 
     def load_state(self, state: dict[str, Any]) -> None:
-        self._episodes = {}
+        # Populate a local dict and publish it in one assignment: a malformed
+        # entry mid-payload (e.g. a non-int ordinal) must not leave the
+        # detector with the prior live episodes cleared and only a prefix of
+        # the snapshot restored. Monitor.restore_dict catches the exception and
+        # logs "malformed ... ignored", asserting the detector kept its live
+        # state -- untrue if we clear self._episodes up front (issue #417).
+        episodes: dict[str, _EpisodeState] = {}
         for ep, entry in state.get("episodes", {}).items():
             st = _EpisodeState()
             st.ordinal = int(entry.get("ordinal", 0))
@@ -193,7 +199,8 @@ class CompactionTripwireDetector:
                 )
                 pending.fired = bool(raw_pending.get("fired", False))
                 st.pending = pending
-            self._episodes[str(ep)] = st
+            episodes[str(ep)] = st
+        self._episodes = episodes
 
     def _open_window(self, metadata: dict, ordinal: int) -> _PendingPins | None:
         """Build the pending window for a compaction event, or None when the
