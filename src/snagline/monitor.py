@@ -176,6 +176,10 @@ class MonitorMetrics:
         self.risks_emitted = 0
         self.detector_errors = 0
         self.sink_errors = 0
+        # Events rejected before detection: a non-string episode_id that would
+        # otherwise crash ingest (issue #479). Counted so a silent drop stays
+        # observable rather than inferred.
+        self.events_dropped = 0
         # Enforcement faults (issue #93): callback raises and halt-webhook
         # timeouts/errors, counted separately from sink errors.
         self.policy_errors = 0
@@ -187,6 +191,7 @@ class MonitorMetrics:
             "detector_errors": self.detector_errors,
             "sink_errors": self.sink_errors,
             "policy_errors": self.policy_errors,
+            "events_dropped": self.events_dropped,
         }
 
 
@@ -357,6 +362,26 @@ class Monitor:
         wall clock, so replay stays deterministic. The dispatch tail belongs to
         the sinks/policy layer and is left untouched by time-axis logic.
         """
+        # episode_id keys the per-episode LRU below and the episode lock; an
+        # unhashable value (a list/dict decoded from an untrusted POST /events
+        # body -- StepEvent is an unvalidated dataclass) would raise TypeError
+        # right here, before the detector loop's fail-open guard, breaking this
+        # method's documented "never raises under fail_open=True" contract and
+        # taking down the sidecar handler thread. Reject a non-string id up
+        # front: drop the event and log once under fail-open, surface loudly
+        # under fail_open=False.
+        if not isinstance(event.episode_id, str):
+            self._incr("events_dropped")
+            self._log_fault_once(
+                "ingest received a non-string episode_id "
+                f"({type(event.episode_id).__name__}); dropping event (fail-open)"
+            )
+            if not self._fail_open:
+                raise TypeError(
+                    "StepEvent.episode_id must be a str, got "
+                    f"{type(event.episode_id).__name__}"
+                )
+            return
         # Per-episode retention cap (issue #184): touch LRU and evict if over
         # cap. Done outside the episode lock so eviction of a different id
         # does not deadlock. LRU by last-seen is safe: an active episode is

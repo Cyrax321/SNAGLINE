@@ -438,3 +438,82 @@ def test_received_risks_are_bounded() -> None:
     finally:
         server.shutdown()
         server.server_close()
+
+
+def _start_server_with_monitor(
+    sink: _RecordingSink,
+) -> tuple[Any, str, Monitor]:
+    monitor = Monitor.default(sinks=[sink])
+    server = make_server(monitor, host="127.0.0.1", port=0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, f"http://127.0.0.1:{server.server_address[1]}", monitor
+
+
+def _post_json(base: str, body: object) -> int:
+    req = urllib.request.Request(
+        base + "/events",
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return int(resp.status)
+    except urllib.error.HTTPError as exc:
+        return int(exc.code)
+
+
+def test_events_endpoint_rejects_a_nonstring_episode_id_without_crashing() -> None:
+    """A wrong-typed episode_id (issue #479) must get a clean 400, not drop the
+    handler thread: pre-fix the unhashable id crashed Monitor.ingest before its
+    fail-open guard, closing the connection with no status line."""
+    sink = _RecordingSink()
+    server, base, monitor = _start_server_with_monitor(sink)
+    try:
+        bad = {
+            "step_id": "0",
+            "episode_id": [],  # unhashable -> would crash the LRU keying
+            "timestamp": 1718300000.0,
+            "action_type": "tool_call",
+            "action_signature": "aaaa1111bbbb2222",
+        }
+        assert _post_json(base, bad) == 400
+        assert monitor.metrics()["events_ingested"] == 0
+        # The server is still alive and serves the next valid request.
+        good = {**bad, "episode_id": "ep-ok"}
+        assert _post_json(base, good) == 202
+        assert monitor.metrics()["events_ingested"] == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_events_batch_with_a_bad_id_ingests_nothing() -> None:
+    """#239 two-pass atomicity must hold for a bad id too: a batch whose second
+    item has a non-string episode_id is rejected whole, with the valid first
+    item NOT ingested (else a retrying client re-feeds the accepted prefix)."""
+    sink = _RecordingSink()
+    server, base, monitor = _start_server_with_monitor(sink)
+    try:
+        batch = [
+            {
+                "step_id": "0",
+                "episode_id": "ep-batch",
+                "timestamp": 1718300000.0,
+                "action_type": "tool_call",
+                "action_signature": "sig-0",
+            },
+            {
+                "step_id": "1",
+                "episode_id": {},  # non-string -> whole batch invalid
+                "timestamp": 1718300001.0,
+                "action_type": "tool_call",
+                "action_signature": "sig-1",
+            },
+        ]
+        assert _post_json(base, batch) == 400
+        assert monitor.metrics()["events_ingested"] == 0
+    finally:
+        server.shutdown()
+        server.server_close()

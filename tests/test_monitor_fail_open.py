@@ -146,5 +146,42 @@ def test_fail_open_logs_the_exception(caplog):
     assert any("fail-open" in r.message for r in caplog.records)
 
 
+def test_ingest_does_not_raise_on_a_nonstring_episode_id(caplog):
+    """Issue #479: episode_id keys the per-episode LRU/lock before the detector
+    fail-open guard, so an unhashable id (a list/dict from an untrusted POST
+    body, since StepEvent is unvalidated) raised TypeError right out of ingest
+    -- violating the "never raises under fail_open=True" contract and dropping
+    the sidecar handler thread. It must now be dropped, logged, and counted."""
+    monitor = Monitor(detectors=[RaisingDetector()], sinks=[RecordingSink()])
+    bad = StepEvent(
+        step_id="s1",
+        episode_id=[],  # type: ignore[arg-type]
+        timestamp=1.0,
+        action_type="tool_call",
+        action_signature="deadbeef",
+    )
+    with caplog.at_level(logging.ERROR, logger="snagline"):
+        monitor.ingest(bad)  # must not raise
+    assert monitor.metrics()["events_dropped"] == 1
+    assert monitor.metrics()["events_ingested"] == 0
+    assert any("episode_id" in r.message for r in caplog.records)
+
+
+def test_ingest_raises_on_a_nonstring_episode_id_under_strict():
+    """fail_open=False must still surface the malformed id loudly."""
+    monitor = Monitor(
+        detectors=[QuietDetector()], sinks=[RecordingSink()], fail_open=False
+    )
+    bad = StepEvent(
+        step_id="s1",
+        episode_id={},  # type: ignore[arg-type]
+        timestamp=1.0,
+        action_type="tool_call",
+        action_signature="deadbeef",
+    )
+    with pytest.raises(TypeError):
+        monitor.ingest(bad)
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))

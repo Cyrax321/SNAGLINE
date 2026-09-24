@@ -92,6 +92,19 @@ from snagline.monitor import HaltDirective, Monitor
 
 logger = logging.getLogger("snagline")
 
+
+def _has_string_ids(event: StepEvent) -> bool:
+    """Return True only if the event's episode_id/step_id are both strings.
+
+    These fields key the Monitor's per-episode LRU and lock. StepEvent is an
+    unvalidated dataclass, so a POST body like ``{"episode_id": []}`` builds a
+    perfectly good StepEvent whose id then crashes ``Monitor.ingest`` before
+    its fail-open guard (issue #479). Checking here lets the endpoint answer a
+    clean 400 instead of dropping the handler thread.
+    """
+    return isinstance(event.episode_id, str) and isinstance(event.step_id, str)
+
+
 # Content type required for Prometheus text exposition format 0.0.4.
 PROMETHEUS_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
 # Supported values of the metrics_format config/env/request toggle.
@@ -711,10 +724,18 @@ def make_handler(
                         self._respond(400, {"error": "invalid StepEvent in batch"})
                         return
                     try:
-                        events.append(StepEvent(**item))
+                        event = StepEvent(**item)
                     except (ValueError, TypeError):
                         self._respond(400, {"error": "invalid StepEvent in batch"})
                         return
+                    # episode_id/step_id key the Monitor's per-episode maps; a
+                    # non-string (e.g. a JSON list) would crash ingest, so
+                    # reject the whole batch now -- before ingesting any item,
+                    # preserving the #239 two-pass atomicity (issue #479).
+                    if not _has_string_ids(event):
+                        self._respond(400, {"error": "invalid StepEvent in batch"})
+                        return
+                    events.append(event)
                 for event in events:
                     self._ingest_recorded(event)
                 self._respond(202, {"status": "ingested", "count": len(events)})
@@ -727,6 +748,12 @@ def make_handler(
             try:
                 event = StepEvent(**obj)
             except (ValueError, TypeError):
+                self._respond(400, {"error": "invalid StepEvent JSON"})
+                return
+            # episode_id/step_id must be strings: a non-string id crashes the
+            # Monitor's per-episode keying (issue #479). Reject with a clean
+            # 400 rather than letting ingest take down the handler thread.
+            if not _has_string_ids(event):
                 self._respond(400, {"error": "invalid StepEvent JSON"})
                 return
             # Ingest itself is fail-open inside the Monitor; a bad event shape
