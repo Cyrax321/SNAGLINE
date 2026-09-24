@@ -8,7 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Nothing yet.
+- `python -m snagline` now works as a package entry point (new
+  `snagline/__main__.py` delegating to `snagline.cli:main`). Previously only
+  the `snagline` console script and `python -m snagline.cli` ran; `python -m
+  snagline` failed with "No module named snagline.__main__" despite `cli.py`
+  already carrying an `if __name__ == "__main__"` guard (#487).
 
 ### Fixed
 - `snagline baseline --list-versions` is now honored on both the fit and

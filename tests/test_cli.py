@@ -354,3 +354,46 @@ def test_min_severity_typo_exits_2(capsys):
     assert exc.value.code == 2
     err = capsys.readouterr().err
     assert "invalid choice" in err, f"argparse should reject the typo, got: {err}"
+
+
+# --- ``python -m snagline`` package entry point (issue #487) --------------------
+
+
+def _run_module(*argv: str):
+    """Run ``python -m snagline`` in a subprocess with ``snagline`` importable.
+
+    This is the only faithful test of the ``__main__`` submodule: importing it
+    in-process would not exercise the ``python -m`` package-execution path.
+    """
+    import os
+    import pathlib
+    import subprocess
+    import sys
+
+    import snagline
+
+    src_dir = str(pathlib.Path(snagline.__file__).resolve().parent.parent)
+    env = dict(os.environ)
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = src_dir + (os.pathsep + existing if existing else "")
+    return subprocess.run(
+        [sys.executable, "-m", "snagline", *argv],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def test_python_dash_m_snagline_help_exits_0():
+    """``python -m snagline --help`` must work like the console script, not die
+    with "No module named snagline.__main__" (issue #487)."""
+    proc = _run_module("--help")
+    assert proc.returncode == 0, proc.stderr
+    assert "No module named" not in proc.stderr
+    assert "usage:" in proc.stdout.lower()
+
+
+def test_python_dash_m_snagline_no_args_prints_help_and_exits_0():
+    proc = _run_module()
+    assert proc.returncode == 0, proc.stderr
+    assert "usage:" in proc.stdout.lower()
