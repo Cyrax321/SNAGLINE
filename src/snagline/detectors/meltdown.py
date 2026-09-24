@@ -111,7 +111,17 @@ class MeltdownDetector:
 
     @staticmethod
     def _identity(event: StepEvent) -> str:
-        return event.tool_name or event.action_signature[:16]
+        # The full signature, never a prefix. This identity is only ever
+        # compared for equality and counted into the window's distribution --
+        # never displayed or stored per-character -- so truncation buys
+        # nothing and reintroduces issue #15's collision: two distinct actions
+        # sharing a 16-char prefix (endpoint-style signatures like
+        # ``search:database:alpha`` / ``:omega``) would collapse to one
+        # identity, deflating the window's entropy toward the "collapse"
+        # threshold and firing a false meltdown on healthy alternation. See
+        # ``make_signature`` in ``events.py``, which returns the full digest
+        # for exactly this reason.
+        return event.tool_name or event.action_signature
 
     def observe(self, event: StepEvent) -> FailureRisk | None:
         if event.action_type != "tool_call":

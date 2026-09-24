@@ -123,3 +123,51 @@ def test_state_round_trip():
     r1 = [(r.trigger, r.score) for r in _run(d1, rest)]
     r2 = [(r.trigger, r.score) for r in _run(d2, rest)]
     assert r1 == r2 and r1, "restored detector must behave identically"
+
+
+def _fallback_event(step_id: int, signature: str) -> StepEvent:
+    # tool_name absent -> _identity falls back to the raw action_signature.
+    # This is the generic-endpoint case: HTTP-style instrumentation with no
+    # discrete tool name and a free-form (non-hashed) signature.
+    return StepEvent(
+        step_id=str(step_id),
+        episode_id="ep",
+        timestamp=float(step_id),
+        action_type="tool_call",
+        action_signature=signature,
+        tool_name=None,
+    )
+
+
+def test_prefix_colliding_signatures_stay_distinct_identities():
+    """Regression for #493: the identity fallback must not truncate.
+
+    Two *distinct* endpoint-style signatures sharing a 16-char prefix
+    (`search:database:` here) are healthy 1-bit alternation. Truncating the
+    identity to `[:16]` collapsed them to one, deflating the window entropy to
+    0 and firing a false meltdown -- exactly the collision issue #15 removed
+    from `make_signature`. On the full signature they read as two identities.
+    """
+    d = MeltdownDetector(window_size=6)
+    risks = []
+    for i in range(12):
+        sig = "search:database:alpha" if i % 2 == 0 else "search:database:omega"
+        risks.extend(_run(d, [_fallback_event(i, sig)]))
+    assert risks == [], (
+        "distinct actions sharing a 16-char prefix must not collapse into one "
+        f"identity and fire a false meltdown: {risks[0].detail if risks else ''}"
+    )
+
+
+def test_repeated_fallback_signature_still_collapses():
+    """Guard: dropping the truncation must not disable collapse on the fallback.
+
+    A genuinely repeated fallback signature (one identity, zero entropy) is a
+    real collapse and must still fire -- the fix widens the identity, it does
+    not stop counting.
+    """
+    d = MeltdownDetector(window_size=6)
+    risks = _run(d, [_fallback_event(i, "search:database:alpha") for i in range(12)])
+    assert len(risks) == 1, "a repeated single action must still read as collapse"
+    assert risks[0].trigger == "meltdown"
+    assert "collapsed" in risks[0].detail

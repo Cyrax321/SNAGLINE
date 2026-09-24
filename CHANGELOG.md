@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nothing yet.
 
 ### Fixed
+- `MeltdownDetector` no longer truncates its fallback action identity to 16
+  characters. When a `tool_call` event carries no `tool_name`, the detector
+  keyed its per-window tool-choice distribution on `action_signature[:16]` —
+  reintroducing the collision that issue #15 removed from `make_signature`.
+  Two distinct endpoint-style signatures sharing a 16-char prefix (e.g.
+  `search:database:alpha` / `search:database:omega`, or `/api/v1/users/1` /
+  `/api/v1/users/2`) collapsed to one identity, so healthy alternation read as
+  zero-entropy repetition and fired a false score-0.7 `meltdown` collapse. The
+  identity is only ever compared for equality and counted, never displayed, so
+  the full signature is now used with no downside (#493).
 - `snagline baseline --list-versions` is now honored on both the fit and
   `retrain` paths and is read-only everywhere: it lists and exits 0 without
   fitting, writing `baseline.json`, or storing a new version. Without
