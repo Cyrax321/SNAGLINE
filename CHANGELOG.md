@@ -8,7 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Nothing yet.
+- `[project.urls]` now includes a `Changelog` link pointing at `CHANGELOG.md`,
+  so PyPI renders a changelog entry in the project sidebar (#467).
 
 ### Fixed
 - `snagline baseline --list-versions` is now honored on both the fit and

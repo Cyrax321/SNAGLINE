@@ -56,6 +56,7 @@ Homepage = "https://github.com/Cyrax321/SNAGLINE"
 Repository = "https://github.com/Cyrax321/SNAGLINE"
 Documentation = "https://github.com/Cyrax321/SNAGLINE#readme"
 Issues = "https://github.com/Cyrax321/SNAGLINE/issues"
+Changelog = "https://github.com/Cyrax321/SNAGLINE/blob/master/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 where = ["src"]

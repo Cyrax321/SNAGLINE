@@ -57,6 +57,31 @@ def test_py_typed_is_declared_as_package_data() -> None:
     assert (REPO_ROOT / "src" / "snagline" / "py.typed").is_file()
 
 
+def test_changelog_project_url_is_declared_and_points_at_a_real_file() -> None:
+    """PyPI renders a ``Changelog`` sidebar link when ``[project.urls]`` has one.
+
+    A ``CHANGELOG.md`` exists at the repo root but ``[project.urls]`` listed
+    Homepage / Repository / Documentation / Issues and never the changelog
+    (issue #467), so the release page pointed at everything except the one file
+    that says what changed. Guard both halves: the key exists, and it names the
+    file that actually ships.
+    """
+    tomllib = pytest.importorskip("tomllib")  # 3.11+; CI's oldest leg is 3.10
+    with PYPROJECT.open("rb") as fh:
+        urls = tomllib.load(fh)["project"]["urls"]
+
+    assert "Changelog" in urls, (
+        "[project.urls] has no Changelog entry; PyPI will not render a "
+        "changelog link even though CHANGELOG.md ships at the repo root"
+    )
+    assert urls["Changelog"].endswith("CHANGELOG.md"), (
+        f"the Changelog URL {urls['Changelog']!r} does not point at CHANGELOG.md"
+    )
+    assert (REPO_ROOT / "CHANGELOG.md").is_file(), (
+        "the Changelog URL points at CHANGELOG.md but no such file ships"
+    )
+
+
 def test_dev_extra_tool_pins_match_ci() -> None:
     """``pyproject.toml``'s dev pins must agree with the CI install line.
 
