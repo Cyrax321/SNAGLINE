@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Nothing yet.
 
+### Changed
+- CI hygiene: the accuracy-gate comment in `ci.yml` now says "109-episode
+  corpus" to match the committed fixtures (68 labeled + 41 healthy controls,
+  the README already reflected 109) (#470); `stale.yml` no longer exempts a
+  `security` label that the repo does not define — the token was inert, so the
+  exempt lists now name only labels that exist (`help wanted`, `good first
+  issue`) (#471); and the `semantic-pr.yml` `disallowScopes` placeholder
+  `[name:none]` is removed. It was parsed as the regex `^[name:none]$`, a
+  character class that would reject legitimate single-character scopes like
+  `fix(a):` while blocking nothing intended (#472).
+
 ### Fixed
 - `snagline baseline --list-versions` is now honored on both the fit and
   `retrain` paths and is read-only everywhere: it lists and exits 0 without

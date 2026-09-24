@@ -107,7 +107,7 @@ jobs:
 
   benchmark-accuracy:
     # False-positive gate (issue #148): replays the committed deterministic
-    # 76-episode corpus through benchmarks/detection_accuracy.py on every
+    # 109-episode corpus through benchmarks/detection_accuracy.py on every
     # push/PR. The harness exits 1 when any healthy control fires, so its
     # exit code is consumed directly as the gate -- a red job here means a
     # detector regressed onto healthy traffic and must not merge. Stdlib-only
