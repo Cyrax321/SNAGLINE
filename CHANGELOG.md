@@ -8,7 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Nothing yet.
+- `python -m snagline` now works: a `snagline/__main__.py` package entry point
+  dispatches into `cli.main`, matching the `snagline` console script. Previously
+  only the bare `snagline` command and `python -m snagline.cli` ran; `python -m
+  snagline` failed with "'snagline' is a package and cannot be directly executed",
+  which is the usual way to invoke a tool when its Scripts directory is not on
+  PATH (#487).
 
 ### Fixed
 - `snagline baseline --list-versions` is now honored on both the fit and
