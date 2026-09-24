@@ -120,3 +120,57 @@ def test_goal_drift_still_dedupes_while_drift_persists():
     det = GoalDriftDetector(baseline=_healthy_baseline(), config=cfg)
     risks = [det.observe(_ev("search", 5000.0, error=True)) for _ in range(10)]
     assert sum(1 for r in risks if r is not None) == 1
+
+
+def _msg(episode="ep"):
+    return StepEvent(
+        step_id="m",
+        episode_id=episode,
+        timestamp=1.0,
+        action_type="message",
+        action_signature="sig",
+    )
+
+
+def test_goal_drift_sample_gate_counts_tool_calls_not_messages():
+    """Issue #478: the min-samples gate must count the tool-call observations the
+    score consumes, not total event volume. A handful of message steps plus one
+    errored tool call used to satisfy the gate on non-representative volume and
+    then score that tool's error_rate on a single sample -- firing at 1.00."""
+    cfg = Config()  # goal_drift_min_samples defaults to 10
+    det = GoalDriftDetector(baseline=_healthy_baseline(), config=cfg)
+    # 9 message steps then one errored search call: only 1 tool observation.
+    for _ in range(9):
+        assert det.observe(_msg()) is None
+    r = det.observe(_ev("search", 100.0, error=True))
+    assert r is None, "one tool call cannot clear a 10-sample gate on message padding"
+
+
+def test_goal_drift_still_scores_once_enough_tool_calls_arrive():
+    """The gate opens on tool-call volume even when interleaved with messages:
+    real drift over enough tool observations must still fire."""
+    cfg = Config()
+    cfg.goal_drift_min_samples = 5
+    det = GoalDriftDetector(baseline=_healthy_baseline(), config=cfg)
+    fired = []
+    for _ in range(4):
+        det.observe(_msg())  # non-tool padding never advances the gate
+    for _ in range(6):  # six errored tool calls: crosses the 5-sample gate
+        r = det.observe(_ev("search", 100.0, error=True))
+        if r is not None:
+            fired.append(r)
+    assert fired, "genuine drift over enough tool samples must fire"
+    assert fired[0].trigger == "goal_drift"
+
+
+def test_goal_drift_within_tolerance_stays_silent_over_full_sample():
+    """Control: a low error rate measured over a full tool sample is not drift --
+    the fix must not fire on it (this is the shape #478 says should stay quiet)."""
+    cfg = Config()  # min_samples 10
+    det = GoalDriftDetector(baseline=_healthy_baseline(), config=cfg)
+    risks = []
+    for i in range(10):  # 10 healthy search calls, exactly one errors -> rate 0.1
+        r = det.observe(_ev("search", 100.0, error=(i == 0)))
+        if r is not None:
+            risks.append(r)
+    assert risks == [], "0.10 error rate over 10 samples is within tolerance"

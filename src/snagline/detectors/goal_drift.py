@@ -48,7 +48,19 @@ class GoalDriftDetector:
         baseline = self._baseline
         live = self._live.setdefault(event.episode_id, BaselineProfile())
         live.add_event(event)
-        if live.total_steps < self._cfg.goal_drift_min_samples:
+        # Gate on the number of *tool-call* observations, not total_steps
+        # (issue #478). BaselineProfile.total_steps counts every event, but the
+        # drift score is built exclusively from per-tool tool_call stats
+        # (error_rate / latency, over live.tools). Gating on total_steps let an
+        # episode of mostly message/plan_step/observation steps clear the sample
+        # bar on non-representative volume and then score a tool's error_rate on
+        # a single sample -- so one errored tool call among a few messages fired
+        # at score 1.00. Counting the samples the score actually consumes keeps
+        # the detector quiet until there is enough tool history for a rate to
+        # mean anything. (The semantic detector in drift/goal_drift.py is
+        # unaffected: its centroid is computed over all events by design.)
+        tool_samples = sum(tb.count for tb in live.tools.values())
+        if tool_samples < self._cfg.goal_drift_min_samples:
             return None
         score = self._drift_score(event.episode_id, baseline)
         if score < self._cfg.goal_drift_score_threshold:

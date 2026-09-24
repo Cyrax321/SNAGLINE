@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nothing yet.
 
 ### Fixed
+- `GoalDriftDetector` no longer fires at score 1.00 on an ordinary episode that
+  reasons across several `message` steps and then makes one tool call that
+  happens to error. Its min-samples gate counted every event (`total_steps`) but
+  the drift score is built only from per-tool `tool_call` stats, so message
+  padding could satisfy the gate and the score then measured a tool's error rate
+  on a single sample. The gate now counts tool-call observations — the samples
+  the score actually consumes — so drift is only scored once there is enough tool
+  history for a rate to mean anything. (The semantic detector in
+  `drift/goal_drift.py` is unaffected; its centroid is computed over all events
+  by design.) (#478)
 - `snagline baseline --list-versions` is now honored on both the fit and
   `retrain` paths and is read-only everywhere: it lists and exits 0 without
   fitting, writing `baseline.json`, or storing a new version. Without
