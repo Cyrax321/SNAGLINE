@@ -258,8 +258,9 @@ class LatencyAnomalyDetector:
                         0.8,
                         "latency_anomaly",
                         f"latency baseline shifted {old_mu:.0f}ms -> "
-                        f"{state.mu0:.0f}ms ({shift:.0f}ms move, beyond the "
-                        f"{self.h}x-sigma alarm bar); baseline re-fitted",
+                        f"{state.mu0:.0f}ms ({shift:.0f}ms move, a sustained "
+                        f"shift past the CUSUM's k-sigma sensitivity); baseline "
+                        f"re-fitted",
                         event.timestamp,
                     )
         if alarm:
@@ -282,11 +283,15 @@ class LatencyAnomalyDetector:
         """Advance periodic baseline re-fit bookkeeping (issue #92).
 
         Returns ``(shifted, old_mu, shift)``: ``shifted`` is True when the
-        frozen baseline itself moved beyond the same ``h * sigma`` alarm bar
-        the CUSUM uses, so "baseline drifted" is exactly as hard to claim as
-        "a step deviated". The candidate baseline is adopted either way once
-        measured -- keeping a stale baseline would fight reality -- and the
-        CUSUM accumulator restarts from zero against the new reference.
+        frozen baseline itself moved past the CUSUM's sustained-shift
+        sensitivity (``k * sigma0``) -- the point beyond which a sustained shift
+        accumulates a CUSUM alarm -- so "baseline drifted" is exactly as hard to
+        claim as a sustained deviation actually is. Reporting at the single-step
+        ``h * sigma`` bar instead left a band ``(k*sigma, h*sigma]`` where a
+        sustained regression the CUSUM was alarming on got adopted silently
+        (issue #482). The candidate baseline is adopted either way once measured
+        -- keeping a stale baseline would fight reality -- and the CUSUM
+        accumulator restarts from zero against the new reference.
 
         Coverage never pauses: the frozen baseline keeps scoring every sample
         while the parallel Welford learner accumulates.
@@ -304,7 +309,18 @@ class LatencyAnomalyDetector:
                 assert state.mu0 is not None
                 old_mu = state.mu0
                 shift = abs(state.learner_mean - old_mu)
-                bar = self.h * state.sigma0
+                # The CUSUM alarms on a *sustained* shift once its accumulated
+                # standardized deviation crosses h, which happens for any shift
+                # whose per-step deviation beats the slack: shift/sigma0 > k,
+                # i.e. shift > k*sigma0. The old bar (h*sigma0) is the bar for a
+                # *single* step deviating -- an order of magnitude stricter --
+                # so a sustained regression in the band (k*sigma0, h*sigma0] got
+                # adopted (mu0 moved, cusum zeroed) yet emitted nothing,
+                # silently learning away a regression the CUSUM was actively
+                # alarming on. Reporting at the CUSUM's real sustained-shift
+                # sensitivity keeps "baseline drifted" as hard to claim as a
+                # sustained deviation actually is (issue #482).
+                bar = self.k * state.sigma0
                 state.adopt_candidate()
                 if shift > bar:
                     state.pending_old_mu = old_mu
