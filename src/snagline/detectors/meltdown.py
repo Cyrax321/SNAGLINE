@@ -125,7 +125,17 @@ class MeltdownDetector:
         w = self._eps.setdefault(ep, _EpisodeWindow())
         w.push(self._identity(event), target)
 
-        if len(w.window) < target:
+        # Readiness opens once the *base* window has filled, not the scaled
+        # target (issue #477). effective_window_size grows as base*ceil(n/steps),
+        # which outpaces the fill count n whenever window_size > scale_steps, so
+        # len(w.window) < target would never come true while scaling is active --
+        # silently delaying the first entropy check from step `window_size` to
+        # step `max_window` (and suppressing it entirely for shorter episodes).
+        # Scaling is meant to retain *more* history (a larger push cap above),
+        # not to postpone detection; the entropy statistic is meaningful over any
+        # window of at least window_size items, and the window keeps growing
+        # toward target on subsequent steps.
+        if len(w.window) < self.window_size:
             return None
 
         h = w.entropy()

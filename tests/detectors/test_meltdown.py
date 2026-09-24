@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from snagline.config import Config
 from snagline.detectors.meltdown import MeltdownDetector
 from snagline.events import StepEvent
 
@@ -123,3 +124,39 @@ def test_state_round_trip():
     r1 = [(r.trigger, r.score) for r in _run(d1, rest)]
     r2 = [(r.trigger, r.score) for r in _run(d2, rest)]
     assert r1 == r2 and r1, "restored detector must behave identically"
+
+
+def test_scaling_does_not_delay_readiness_past_the_base_window():
+    """Issue #477: with window scaling on and window_size > scale_steps the
+    scaled target grows faster than the fill count, so a target-based gate never
+    opens. A genuine collapse from step 1 must still fire once the base window
+    fills, not be postponed to max_window (or suppressed for shorter episodes)."""
+    cfg = Config(meltdown_enabled=True, window_scale_steps=10, max_window=512)
+    d = MeltdownDetector(window_size=20, config=cfg)
+    # 300 identical tool calls: entropy 0.0, an unambiguous collapse.
+    fires = [i for i in range(300) if d.observe(_event(i, "search")) is not None]
+    assert fires, "a full-collapse episode must fire even with scaling on"
+    # Fires as soon as the base window has filled (step index 19), not at 511.
+    assert fires[0] == 19, f"readiness must open at the base window, got {fires[0]}"
+    assert len(fires) == 1, "still edge-triggered: one finding per collapse"
+
+
+def test_scaling_off_readiness_is_unchanged():
+    """Control: with scaling disabled the gate is byte-identical to before --
+    target == base, so the base-window gate is the same comparison."""
+    d = MeltdownDetector(window_size=20)  # window_scale_steps defaults to 0
+    fires = [i for i in range(40) if d.observe(_event(i, "search")) is not None]
+    assert fires == [19]
+
+
+def test_scaling_retains_more_history_after_readiness_opens():
+    """The scaled target still governs how much history the window holds: after
+    the base window fills, the window keeps growing toward target rather than
+    capping at window_size, so scaling's retain-more-history purpose survives."""
+    cfg = Config(meltdown_enabled=True, window_scale_steps=10, max_window=512)
+    d = MeltdownDetector(window_size=20, config=cfg)
+    for i in range(80):
+        d.observe(_event(i, "search"))
+    # After 80 steps target == 20*ceil(80/10) == 160, capped by the 80 items
+    # actually seen: the window holds all 80, not just the base 20.
+    assert len(d._eps["ep"].window) == 80
