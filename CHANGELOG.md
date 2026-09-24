@@ -8,7 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Nothing yet.
+- `severity_from_score` and the `SEVERITY_CRITICAL` / `SEVERITY_WARNING` /
+  `SEVERITY_INFO` constants are now re-exported from the top-level `snagline`
+  package (`from snagline import severity_from_score, SEVERITY_WARNING`) and
+  listed in `__all__`. They already backed the built-in Slack/webhook/PagerDuty
+  sinks and the `--min-severity` CLI plumbing; a downstream sink filtering on
+  severity previously had to reach into `snagline.risk` or re-derive the
+  score→severity cutoffs (#464).
 
 ### Fixed
 - `snagline baseline --list-versions` is now honored on both the fit and

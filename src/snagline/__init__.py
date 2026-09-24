@@ -5,6 +5,9 @@ Public API (core, zero third-party dependencies):
     returns a ready-to-use instance with the tier-1 detectors and console sink.
   * ``StepEvent`` / ``EpisodeMeta`` / ``make_signature`` -- canonical schema.
   * ``FailureRisk`` -- the signal detectors emit and sinks consume.
+  * ``severity_from_score`` / ``SEVERITY_CRITICAL`` / ``SEVERITY_WARNING`` /
+    ``SEVERITY_INFO`` -- the score->severity mapping a custom severity-filtering
+    sink needs (mirrors the ``--min-severity`` CLI plumbing).
   * ``Config`` -- all tunable thresholds in one place.
   * ``watch`` -- the stdlib ``raw`` adapter for plain Python loops.
 """
@@ -24,7 +27,14 @@ from snagline.detectors.goal_drift import GoalDriftDetector
 from snagline.detectors.ml_ensemble import MLOrchestrator
 from snagline.events import EpisodeMeta, StepEvent, make_signature
 from snagline.monitor import Monitor
-from snagline.risk import FailureRisk, TriggerType
+from snagline.risk import (
+    SEVERITY_CRITICAL,
+    SEVERITY_INFO,
+    SEVERITY_WARNING,
+    FailureRisk,
+    TriggerType,
+    severity_from_score,
+)
 
 try:
     from importlib.metadata import version
@@ -41,6 +51,10 @@ __all__ = [
     "make_signature",
     "FailureRisk",
     "TriggerType",
+    "severity_from_score",
+    "SEVERITY_CRITICAL",
+    "SEVERITY_WARNING",
+    "SEVERITY_INFO",
     "Config",
     "watch",
     "BaselineProfile",

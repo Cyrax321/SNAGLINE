@@ -109,3 +109,42 @@ def test_no_prose_file_hardcodes_a_test_count(prose: Path) -> None:
         "drifts on every PR that adds a test and differs by environment -- "
         "point readers at `python -m pytest tests/ -q` or the CI badge instead"
     )
+
+
+# Severity helpers a custom severity-filtering sink needs. They live in
+# snagline.risk and are used by the built-in Slack/webhook/PagerDuty sinks, but
+# were not re-exported from the top-level package -- so a downstream sink had to
+# reach into the submodule or re-derive the score->severity cutoffs (issue
+# #464). Guard the top-level re-export so it cannot silently regress.
+_SEVERITY_EXPORTS = (
+    "severity_from_score",
+    "SEVERITY_CRITICAL",
+    "SEVERITY_WARNING",
+    "SEVERITY_INFO",
+)
+
+
+@pytest.mark.parametrize("name", _SEVERITY_EXPORTS)
+def test_severity_helpers_are_top_level_exports(name: str) -> None:
+    import snagline
+
+    assert hasattr(snagline, name), (
+        f"snagline.{name} is not importable from the top-level package; a "
+        "severity-filtering sink should not have to reach into snagline.risk"
+    )
+    assert name in snagline.__all__, f"{name} is missing from snagline.__all__"
+
+
+def test_top_level_severity_helpers_are_the_risk_module_objects() -> None:
+    """The re-export must be the same objects, not a re-implementation."""
+    import snagline
+    from snagline import risk
+
+    assert snagline.severity_from_score is risk.severity_from_score
+    assert snagline.SEVERITY_CRITICAL is risk.SEVERITY_CRITICAL
+    assert snagline.SEVERITY_WARNING is risk.SEVERITY_WARNING
+    assert snagline.SEVERITY_INFO is risk.SEVERITY_INFO
+    # And they behave: the cutoffs map as documented.
+    assert snagline.severity_from_score(0.9) == snagline.SEVERITY_CRITICAL
+    assert snagline.severity_from_score(0.6) == snagline.SEVERITY_WARNING
+    assert snagline.severity_from_score(0.1) == snagline.SEVERITY_INFO
