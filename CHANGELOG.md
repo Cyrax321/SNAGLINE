@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nothing yet.
 
 ### Fixed
+- `BaselineStore` version retention is now chronological and version ids are
+  path-validated. Retention sorted `versions/*.json` lexicographically, so a
+  variable-width custom id pruned the wrong version — and at `max_versions=1`,
+  writing `"b"` then `"a"` deleted `"a"` (the version just written and pointed
+  to by `latest.json`), losing the newest baseline for rollback. Pruning and
+  `list_versions` now order by write time and the just-written version is never
+  pruned. Separately, a `version` id was used unsanitized as a path component:
+  a `/` crashed `save()` mid-write *after* it returned the id, and `..` wrote
+  outside the scope directory. Ids are now validated up front and a bad one
+  raises `ValueError` before anything is written. The default path (synthesized
+  fixed-width timestamp id) is unaffected (#451).
 - `snagline baseline --list-versions` is now honored on both the fit and
   `retrain` paths and is read-only everywhere: it lists and exits 0 without
   fitting, writing `baseline.json`, or storing a new version. Without

@@ -15,11 +15,36 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import IO
 
 from snagline.baseline import BaselineProfile, fit_baseline_from_jsonl
+
+# A stored version id becomes a single on-disk filename (``{version}.json``) and
+# a sort key for retention. It must therefore be one path-safe component: no
+# separators (which would crash ``save`` mid-write once the nested parent is
+# missing, or escape the scope dir with ``..``) and no leading ``.``/``-``
+# (which rules out ``.``, ``..`` and hidden files). The synthesized default
+# ``f"{time.time():.6f}"`` matches this (issue #451).
+_SAFE_VERSION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+
+def _validate_version_id(version: str) -> str:
+    """Return ``version`` if it is a single path-safe component, else raise.
+
+    Fails loudly at the top of the write/read path instead of mid-write (a
+    ``/`` leaves a save half-done after it has advertised the id) or silently
+    out of tree (``..`` escapes the scope directory).
+    """
+    if not isinstance(version, str) or _SAFE_VERSION_RE.fullmatch(version) is None:
+        raise ValueError(
+            f"invalid baseline version id {version!r}: expected a single "
+            r"path-safe component matching [A-Za-z0-9][A-Za-z0-9._-]* "
+            r"(no '/', '\', '..', or leading '.'/'-')"
+        )
+    return version
 
 
 def _write_json(stream: IO[str], data: dict) -> None:
@@ -55,6 +80,7 @@ class BaselineStore:
         return self._root / tenant / deployment
 
     def _version_path(self, tenant: str, deployment: str, version: str) -> Path:
+        _validate_version_id(version)
         return self._scope_dir(tenant, deployment) / "versions" / f"{version}.json"
 
     # --- write ---------------------------------------------------------------
@@ -73,9 +99,14 @@ class BaselineStore:
         entry first, then the pointer flip, so a reader of ``latest.json``
         always sees one complete profile, never a partial write. Old versions
         beyond ``max_versions`` (this call, else the store default) are pruned
-        oldest-first.
+        oldest-first by write time, and the version written by *this* call is
+        never pruned. A ``version`` id that is not a single path-safe component
+        is rejected before anything is written (issue #451).
         """
         version = version or f"{time.time():.6f}"
+        # Validate before any filesystem effect: a bad id must not create the
+        # versions dir, write a history entry, or flip the latest pointer.
+        _validate_version_id(version)
         scope = self._scope_dir(tenant, deployment)
         versions_dir = scope / "versions"
         versions_dir.mkdir(parents=True, exist_ok=True)
@@ -90,17 +121,40 @@ class BaselineStore:
         _atomic_write_json(scope / "latest.json", profile.to_dict())
 
         limit = max_versions if max_versions is not None else self._max_versions
-        self._prune(tenant, deployment, limit)
+        self._prune(tenant, deployment, limit, keep=version)
         return version
 
-    def _prune(self, tenant: str, deployment: str, limit: int) -> None:
+    def _prune(
+        self, tenant: str, deployment: str, limit: int, keep: str | None = None
+    ) -> None:
         versions_dir = self._scope_dir(tenant, deployment) / "versions"
         if not versions_dir.exists():
             return
-        existing = sorted(p.name for p in versions_dir.glob("*.json"))
-        excess = existing[: max(0, len(existing) - limit)]
-        for name in excess:
-            (versions_dir / name).unlink(missing_ok=True)
+        # Order by write time (``st_mtime_ns``), not by filename: string sort
+        # only equals chronological order for the fixed-width default ids, so
+        # variable-width custom ids ("9" vs "10") pruned lexicographically
+        # deleted the wrong version (issue #451). Filename is a stable
+        # tiebreak for the rare same-timestamp case.
+        keep_name = f"{keep}.json" if keep is not None else None
+        entries: list[tuple[int, str, Path]] = []
+        for p in versions_dir.glob("*.json"):
+            if p.name == keep_name:
+                continue  # never prune the version just written
+            try:
+                mtime = p.stat().st_mtime_ns
+            except OSError:
+                continue
+            entries.append((mtime, p.name, p))
+        entries.sort(key=lambda e: (e[0], e[1]))
+        # The kept version (if present) occupies one retention slot, so the
+        # number to delete counts it against the limit -- but it is never a
+        # deletion candidate. At limit < 1 this keeps only the just-written
+        # version rather than deleting it, matching "never prune the id just
+        # written".
+        reserved = 1 if keep_name and (versions_dir / keep_name).exists() else 0
+        excess = max(0, len(entries) + reserved - limit)
+        for _, _, p in entries[:excess]:
+            p.unlink(missing_ok=True)
 
     # --- read ----------------------------------------------------------------
     def load(
@@ -126,7 +180,19 @@ class BaselineStore:
         versions_dir = self._scope_dir(tenant, deployment) / "versions"
         if not versions_dir.exists():
             return []
-        return sorted(p.name[:-5] for p in versions_dir.glob("*.json"))
+        # Chronological (write-time) order, oldest first -- the same key
+        # ``_prune`` uses, so listing and retention agree even for
+        # variable-width custom ids (issue #451). ``_newest_stored_age``
+        # reads the newest via ``reversed(...)`` and relies on this order.
+        entries: list[tuple[int, str]] = []
+        for p in versions_dir.glob("*.json"):
+            try:
+                mtime = p.stat().st_mtime_ns
+            except OSError:
+                continue
+            entries.append((mtime, p.name[:-5]))
+        entries.sort(key=lambda e: (e[0], e[1]))
+        return [name for _, name in entries]
 
 
 def capture_from_jsonl(
