@@ -25,7 +25,7 @@ import threading
 import time
 
 from snagline.risk import FailureRisk
-from snagline.sinks.base import AlertSink
+from snagline.sinks.base import AlertSink, format_sink_repr
 
 
 class BatchingSink:
@@ -55,6 +55,14 @@ class BatchingSink:
         self._wake = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
+
+    def __repr__(self) -> str:
+        return format_sink_repr(
+            "BatchingSink",
+            inner=self._sink,
+            max_batch=self._max_batch,
+            flush_interval=self._flush_interval,
+        )
 
     def emit(self, risk: FailureRisk) -> None:
         # Non-blocking enqueue; the background thread does the actual delivery.

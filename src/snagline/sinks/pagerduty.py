@@ -20,6 +20,7 @@ from snagline.risk import (
     SEVERITY_WARNING,
     FailureRisk,
 )
+from snagline.sinks.base import format_sink_repr
 
 logger = logging.getLogger("snagline")
 
@@ -57,6 +58,15 @@ class PagerDutySink:
         self._timeout = timeout
         self._source = source
         self._min = min_severity
+
+    def __repr__(self) -> str:
+        """Repr without the routing key, which is a credential (#390)."""
+        return format_sink_repr(
+            "PagerDutySink",
+            source=self._source,
+            timeout=self._timeout,
+            min_severity=self._min,
+        )
 
     def emit(self, risk: FailureRisk) -> None:
         if self._min is not None and _order(risk.severity) < _order(self._min):

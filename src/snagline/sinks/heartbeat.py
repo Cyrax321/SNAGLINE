@@ -20,6 +20,7 @@ import logging
 import os
 
 from snagline.risk import FailureRisk
+from snagline.sinks.base import format_sink_repr
 
 logger = logging.getLogger("snagline")
 
@@ -36,6 +37,9 @@ class HeartbeatSink:
     def __init__(self, path: str) -> None:
         self._path = path
         self._fault_logged = False
+
+    def __repr__(self) -> str:
+        return format_sink_repr("HeartbeatSink", path=self._path)
 
     def touch(self) -> None:
         """Best-effort mtime bump; fail-open, logged once until it recovers."""
