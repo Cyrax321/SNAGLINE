@@ -32,5 +32,3 @@ jobs:
             chore
             revert
           requireScope: false
-          disallowScopes: |
-            [name:none]
