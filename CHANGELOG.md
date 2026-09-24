@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nothing yet.
 
 ### Fixed
+- Meltdown detector readiness under window auto-scaling: the entropy window
+  now becomes ready once the base `meltdown_window_size` fills, not once the
+  scaled `target = window_size * ceil(n / window_scale_steps)` does. When
+  `window_size > window_scale_steps` the scaled target grew faster than the
+  episode length, so the old `len(window) < target` gate never cleared until
+  the episode reached the `max_window` cap — silently disabling meltdown
+  detection for the entire episode (and forever for episodes shorter than
+  `max_window`). With scaling off (`window_scale_steps == 0`) behavior is
+  byte-identical (#477).
 - `snagline baseline --list-versions` is now honored on both the fit and
   `retrain` paths and is read-only everywhere: it lists and exits 0 without
   fitting, writing `baseline.json`, or storing a new version. Without

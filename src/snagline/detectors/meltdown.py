@@ -125,7 +125,17 @@ class MeltdownDetector:
         w = self._eps.setdefault(ep, _EpisodeWindow())
         w.push(self._identity(event), target)
 
-        if len(w.window) < target:
+        # Readiness gates on the *base* window_size, not the scaled ``target``
+        # (issue #477). With scaling on and window_size > window_scale_steps,
+        # target = window_size * ceil(n / scale_steps) grows faster than the
+        # step count n, so ``len(window) < target`` never clears until n hits
+        # the max_window cap -- disabling detection for the whole episode (or
+        # forever, for episodes shorter than max_window). The base window is
+        # where the entropy thresholds are tuned; once it has filled the
+        # statistic is meaningful, and scaling still grows retention beyond it.
+        # With scaling off, target == window_size, so this is byte-identical to
+        # the pre-#477 gate.
+        if len(w.window) < self.window_size:
             return None
 
         h = w.entropy()

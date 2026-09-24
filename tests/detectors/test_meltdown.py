@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from snagline.config import Config
 from snagline.detectors.meltdown import MeltdownDetector
 from snagline.events import StepEvent
 
@@ -112,6 +113,30 @@ def test_twelve_tool_churn_still_fires():
 def test_inverted_thresholds_rejected():
     with pytest.raises(ValueError):
         MeltdownDetector(low_entropy=2.0, high_entropy=1.0)
+
+
+def test_scaling_does_not_delay_readiness_past_base_window():
+    """Regression for #477: with window auto-scaling on and
+    ``window_size > window_scale_steps``, the effective ``target`` grows as
+    ``window_size * ceil(n / scale_steps)`` -- faster than the episode length
+    ``n`` -- so a window gated on ``len(window) < target`` never fills until
+    ``n`` reaches the ``max_window`` cap. Detection is therefore disabled for
+    the whole episode (or, for episodes shorter than ``max_window``, forever).
+
+    The readiness gate must key off the base ``window_size`` -- where the
+    entropy thresholds are tuned -- not the moving scaled target. Scaling
+    still grows retention, but a collapse must be caught once the base window
+    has filled."""
+    cfg = Config(window_scale_steps=4)  # 4 < window_size below: target outruns n
+    d = MeltdownDetector(window_size=8, config=cfg)
+    # A sustained single-tool collapse (entropy 0 bits) over far more steps
+    # than the base window. Pre-fix this stays silent for all 60 steps because
+    # the scaled target chases max_window (512) and never fills.
+    risks = _run(d, [_event(i, "search") for i in range(60)])
+    assert len(risks) == 1, "collapse under scaling must fire exactly once"
+    assert risks[0].trigger == "meltdown"
+    assert risks[0].score == 0.7
+    assert "collapsed" in risks[0].detail
 
 
 def test_state_round_trip():
