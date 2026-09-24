@@ -19,59 +19,46 @@ enterprise-grade alerting. Concretely:
 - Configuration and secrets follow 12-factor practices.
 - Detection quality is measurable and honest.
 
-## Current limitations (verified in code)
+## Current limitations
+
+Earlier editions of this document listed the integration, state-backend,
+alerting, and self-observability gaps here as unbuilt. They have since
+shipped -- auto-instrumentation (`snagline.auto`), the `openai` / `anthropic`
+/ `continuum` adapters, sidecar auth and TLS, the versioned `BaselineStore`
+with retrain and auto-calibration, the Slack / PagerDuty / dedup sinks, and
+`GET /metrics` + `GET /health` -- so those bullets have been removed rather
+than left standing as false. Every one is itemised with its PR in the
+[Progress log](#progress-log) at the end of this file. What remains genuinely
+open:
 
 ### Integration surface
 
-- No auto-instrumentation. Every host must be edited to call `ingest` or
-  register an adapter. There is no monkey-patch or middleware path, so
-  "attach without touching the host" does not exist yet.
-- Adapters present: `raw`, `langchain`, `langgraph`, `autogen`, `crewai`,
-  `claude_code`. Missing: `openai`, `anthropic`, `continuum` (all still
-  pending per spec).
-- Non-Python systems depend on the HTTP sidecar (`server/http_server.py`
-  exists) or file/command bridges, but the sidecar lacks auth, documented
-  schema validation, and is flagged inconsistently between README
-  ("Complete") and `project.md` ("pending").
-- No schema auto-discovery: the host must map its telemetry to `StepEvent`
-  fields (`tool_name`, `latency_ms`, `error`, `signature`). Systems that do
-  not expose latency or tool names degrade silently.
+- No schema auto-discovery: the host still maps its telemetry to `StepEvent`
+  fields (`tool_name`, `latency_ms`, `error`, `action_signature`). Systems
+  that do not expose latency or tool names degrade silently -- the affected
+  detectors simply see less signal, not an error.
 
 ### State, scale, and distribution
 
-- `Monitor` keeps all detector state in memory, single process. No
-  persistence across restarts, no shared state across workers, so horizontal
-  scaling is impossible without an external store.
-- `monitor.py:47` takes one global `threading.Lock()` per instance, so
-  `ingest` serializes. Fine for a single agent; a bottleneck if one Monitor
-  serves a high-throughput service.
-- `goal_drift` needs a manually captured baseline file. No versioning, no
-  auto-collection cadence, no per-tenant or per-deployment baselines, no
-  retraining.
+- A `Monitor` holds detector state in memory and shards its ingest lock per
+  episode, so one process already scales across concurrent episodes without a
+  global lock. Sharing state *across workers* or surviving a restart is
+  opt-in, not automatic: wire the Redis `StateBackend` for cross-worker locks,
+  or `Monitor.snapshot` / `restore` for persistence. Neither is on by default.
 
 ### Detection quality
 
-- The research differentiators are unbuilt: `ml/esn_ensemble` (echo-state
-  network) and `drift/goal_drift` (semantic embeddings). Shipped
-  `ml_ensemble` is a deterministic noisy-OR; `goal_drift` is structural
-  (error rate and latency vs baseline). Solid, but not the paper's accuracy.
-- No automatic threshold tuning from a baseline; defaults may false-positive
-  or miss on unfamiliar systems.
-- No evaluation harness (`benchmarks/detection_accuracy.py`), so the §14
-  honesty gate is unmet.
+- The `ml` (echo-state ensemble) and `drift` (semantic goal-drift) extras
+  ship but are opt-in and untuned for your workload: defaults may
+  false-positive or miss on an unfamiliar system until you fit a
+  `BaselineProfile` and enable auto-calibration. Accuracy is measured by
+  `benchmarks/detection_accuracy.py` (a CI gate), not assumed.
 
-### Production hardening
+### Packaging
 
-- Sinks: only `console` and `webhook`. Slack and PagerDuty are still
-  "planned". No dedup or cooldown (issue #4), so alert storms are possible.
-- `webhook.py` sets only `Content-Type`; no auth token, no TLS verification,
-  no signing. Not enterprise-ready.
-- Config is a Python dataclass; no env/yml/toml loader, no secrets management
-  (not 12-factor).
-- Not on PyPI (`version = 0.1.0`, README says "Not on PyPI"). `pip install
-  snagline` does not work yet.
-- No self-observability: no metrics endpoint, no health check, no structured
-  logs for the monitor itself.
+- Not yet on a public index: the PyPI metadata is ready and `python -m build`
+  is verified, but the upload is pending a token, so `pip install snagline`
+  from PyPI does not work yet. Install from source in the meantime.
 
 ## What is needed, prioritized
 

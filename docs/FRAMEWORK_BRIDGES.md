@@ -128,7 +128,7 @@ canonical StepEvent directly:
 
 ```bash
 curl -s -X POST http://127.0.0.1:8787/events -H 'Content-Type: application/json' \
-  -d '{"step_id":"'$RANDOM'","episode_id":"openclaw-session","timestamp",'\
+  -d '{"step_id":"'$RANDOM'","episode_id":"openclaw-session","timestamp":'$(date +%s)','\
 '"action_type":"tool_call","action_signature":"<hash-of-tool+args>",'\
 '"tool_name":"<tool>","latency_ms":<ms>,"error":false}'
 ```

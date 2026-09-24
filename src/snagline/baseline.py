@@ -190,11 +190,21 @@ def fit_baseline_from_jsonl(path: str) -> BaselineProfile:
 
 
 def save_baseline(profile: BaselineProfile, path: str) -> None:
+    """Persist ``profile`` to ``path`` as indented, key-sorted JSON.
+
+    Writes the ``BaselineProfile.to_dict`` view -- aggregate statistics only,
+    never raw events -- so the on-disk file is content-free. Round-trips with
+    :func:`load_baseline`."""
     with open(path, "w", encoding="utf-8") as fh:
         _write_json(fh, profile.to_dict())
 
 
 def load_baseline(path: str) -> BaselineProfile:
+    """Load a :class:`BaselineProfile` previously written by :func:`save_baseline`.
+
+    Reads the JSON at ``path`` and rebuilds the profile via
+    ``BaselineProfile.from_dict``, the inverse of the ``to_dict`` view
+    :func:`save_baseline` persists."""
     with open(path, encoding="utf-8") as fh:
         return BaselineProfile.from_dict(json.load(fh))
 

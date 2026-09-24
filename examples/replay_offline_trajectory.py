@@ -19,7 +19,7 @@ import sys
 import tempfile
 
 from snagline.cli import replay
-from snagline.events import EpisodeMeta, StepEvent, make_signature
+from snagline.events import StepEvent, make_signature
 
 
 def _build_trajectory() -> list[StepEvent]:
@@ -70,9 +70,12 @@ def main() -> None:
         for e in events:
             f.write(json.dumps(dataclasses.asdict(e)) + "\n")
 
-    print(f"[demo] replaying {len(events)} steps from {path}", file=__import__("sys").stderr)
+    print(f"[demo] replaying {len(events)} steps from {path}", file=sys.stderr)
     n = replay(path)
-    print(f"[demo] replayed {n} steps; see stderr above for any FailureRisk lines.", file=__import__("sys").stderr)
+    print(
+        f"[demo] replayed {n} steps; see stderr above for any FailureRisk lines.",
+        file=sys.stderr,
+    )
     os.remove(path)
 
 

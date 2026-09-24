@@ -24,6 +24,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unreachable. An out-of-range value is now a configuration error naming the
   knob (#317). 57305ac (fix(cli): make --list-versions read-only on fit and retrain paths)
 
+### Changed
+- Docs accuracy sweep. `docs/ATTACH_ANY_SYSTEM.md`'s "Current limitations
+  (verified in code)" block described auto-instrumentation, the
+  `openai`/`anthropic`/`continuum` adapters, sidecar auth/TLS, the versioned
+  `BaselineStore` with retrain and auto-calibration, the Slack/PagerDuty/dedup
+  sinks, and `/metrics` + `/health` as unbuilt -- all of which ship and are
+  itemised as merged in the same file's Progress log, so the "(verified in
+  code)" header was actively misleading. The block now lists only genuinely
+  open limitations (no schema auto-discovery, opt-in cross-worker state,
+  untuned ml/drift extras, no PyPI upload yet) and points at the Progress log
+  (#453). The `docs/FRAMEWORK_BRIDGES.md` OpenClaw `curl` recipe emitted
+  invalid JSON -- a bare `"timestamp",` key with no value made the sidecar
+  reject the pasted snippet with 400; it now sends `"timestamp":'$(date +%s)'`
+  (#454). Public `save_baseline` / `load_baseline` gained docstrings matching
+  their neighbour `fit_baseline_from_jsonl`, describing the content-free JSON
+  round-trip (#459).
+- `examples/replay_offline_trajectory.py` dropped an unused `EpisodeMeta`
+  import and now references the module-level `sys` instead of
+  `__import__("sys")` in its two `print` calls (no behaviour change) (#466).
+
 ## [0.1.0] - 2026-08-27
 
 This is the first tagged release. It comprises 87 merge commits on `origin/master`
