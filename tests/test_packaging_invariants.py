@@ -14,6 +14,7 @@ value nobody re-checks:
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -108,4 +109,46 @@ def test_no_prose_file_hardcodes_a_test_count(prose: Path) -> None:
         f"{prose.name} hardcodes a test count {offenders[:5]}: the number "
         "drifts on every PR that adds a test and differs by environment -- "
         "point readers at `python -m pytest tests/ -q` or the CI badge instead"
+    )
+
+
+def _init_fallback_version() -> str:
+    """The string literal ``__init__.py`` assigns to ``__version__`` in its
+    ``except`` fallback (used for editable / metadata-less installs).
+
+    Read from source with ``ast`` rather than importing ``snagline.__version__``:
+    in an installed environment ``importlib.metadata.version`` wins and returns
+    the *distribution* version, which is exactly the value that can mask a stale
+    hand-maintained fallback. We want the literal, not the resolved value.
+    """
+    init_py = _package_dir() / "__init__.py"
+    tree = ast.parse(init_py.read_text(encoding="utf-8"))
+    literals = [
+        node.value.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "__version__" for t in node.targets)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+    ]
+    assert len(literals) == 1, (
+        f"expected exactly one literal __version__ assignment in {init_py}, "
+        f"found {literals!r}"
+    )
+    return literals[0]
+
+
+def test_init_fallback_version_matches_pyproject() -> None:
+    """The version lives in two hand-maintained places -- ``pyproject.toml``'s
+    ``project.version`` and ``__init__.py``'s ``except`` fallback literal -- and
+    nothing tied them together. A release that bumps pyproject but forgets the
+    fallback reports a stale version in editable installs (issue #457)."""
+    tomllib = pytest.importorskip("tomllib")  # 3.11+; CI's oldest leg is 3.10
+    with PYPROJECT.open("rb") as fh:
+        pyproject_version = tomllib.load(fh)["project"]["version"]
+
+    assert _init_fallback_version() == pyproject_version, (
+        "version drift: pyproject.toml project.version is "
+        f"{pyproject_version!r} but src/snagline/__init__.py's fallback literal "
+        f"is {_init_fallback_version()!r} -- bump both together"
     )
