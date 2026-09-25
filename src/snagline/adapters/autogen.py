@@ -26,6 +26,7 @@ in-process latency differences.
 
 from __future__ import annotations
 
+import inspect
 import itertools
 import time
 from collections.abc import Callable
@@ -177,10 +178,16 @@ async def run_and_monitor(
 ) -> Any:
     """Run an Autogen agent while streaming its events through a handler.
 
-    Wraps ``await agent.run_stream(task)`` (falling back to ``agent.run``) and
+    Wraps ``agent.run_stream(task=task)`` (falling back to ``agent.run``) and
     feeds every emitted event to a :class:`SnaglineAutogenHandler`. Returns the
     agent's final result. The agent must expose an async ``run_stream`` (or
     ``run``) method; if it exposes neither, raise a clear error at call time.
+
+    Real Autogen (``autogen-agentchat``) defines ``run_stream`` as an async
+    *generator* function taking a keyword-only ``task`` -- calling it returns an
+    async iterator directly, so it must be iterated, never ``await``ed. We still
+    tolerate a duck-typed ``run_stream`` that is a coroutine returning an
+    iterator by awaiting the result only when it is actually awaitable.
     """
     handler = SnaglineAutogenHandler(
         monitor,
@@ -196,17 +203,26 @@ async def run_and_monitor(
                 f"got {type(agent).__name__!r}"
             )
         try:
-            result = await agent.run(task)  # type: ignore[attr-defined]
+            # ``task`` is keyword-only on the real ``run``; pass it by keyword.
+            result = agent.run(task=task)  # type: ignore[attr-defined]
+            if inspect.isawaitable(result):
+                result = await result
             handler.observe(result)
             return result
         finally:
             handler.close()
 
     try:
-        stream = await agent.run_stream(task)
+        # Do NOT await: the real ``run_stream`` is an async generator function,
+        # so the call yields an async iterator directly. Await only a coroutine
+        # that returns the iterator (duck-typed agents / older shapes).
+        stream = agent.run_stream(task=task)
+        if inspect.isawaitable(stream):
+            stream = await stream
         if stream is None:
             raise TypeError(
-                f"agent.run_stream({task!r}) returned None; expected an async iterator"
+                f"agent.run_stream(task={task!r}) returned None; "
+                "expected an async iterator"
             )
         final = None
         async for event in stream:

@@ -142,6 +142,45 @@ def test_run_and_monitor_streams_autogen_events() -> None:
     assert result["type"] == "ToolCallRequestEvent"
 
 
+def test_run_and_monitor_iterates_async_generator_run_stream() -> None:
+    # Real autogen-agentchat defines run_stream as an async *generator* function
+    # with a keyword-only ``task`` (issue #512). Calling it returns an async
+    # iterator directly, so it must be iterated, never awaited, and ``task`` must
+    # be passed by keyword. This fake models that real shape; the old adapter
+    # (await + positional task) raised TypeError before observing any event.
+    class _RealShapeAgent:
+        async def run_stream(self, *, task, cancellation_token=None):  # noqa: ARG002
+            yield {"type": "TextMessage", "content": "hi"}
+            yield {
+                "type": "ToolCallRequestEvent",
+                "content": [{"name": "t", "arguments": "x"}],
+            }
+
+    mon = _Collector()
+    result = asyncio.run(
+        run_and_monitor(_RealShapeAgent(), "task", monitor=mon, episode_id="ep-1")
+    )
+    assert len(mon.events) == 2
+    assert result["type"] == "ToolCallRequestEvent"
+    assert mon.ended == ["ep-1"]
+
+
+def test_run_and_monitor_run_fallback_passes_task_by_keyword() -> None:
+    # The real ``run`` fallback is a coroutine with a keyword-only ``task``
+    # (issue #512); the old adapter called it positionally and TypeErrored.
+    class _RealRunAgent:
+        async def run(self, *, task, cancellation_token=None):  # noqa: ARG002
+            return {"type": "TaskResult", "content": "done"}
+
+    mon = _Collector()
+    result = asyncio.run(
+        run_and_monitor(_RealRunAgent(), "task", monitor=mon, episode_id="ep-1")
+    )
+    assert result["type"] == "TaskResult"
+    assert mon.ended == ["ep-1"]
+    assert len(mon.events) == 1
+
+
 def test_run_and_monitor_raises_for_agent_with_no_stream_or_run() -> None:
     class _Bare:
         pass

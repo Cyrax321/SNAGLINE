@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nothing yet.
 
 ### Fixed
+- `run_and_monitor` in the Autogen adapter now drives a real Autogen agent. The
+  real `autogen-agentchat` `run_stream` is an async *generator* function with a
+  keyword-only `task`, so `await agent.run_stream(task)` raised
+  `TypeError: object async_generator can't be used in 'await' expression`, and
+  passing `task` positionally raised `takes 1 positional argument but 2 were
+  given` on both `run_stream` and the `run` fallback. The adapter now iterates
+  the returned async iterator directly (awaiting only when the result is
+  actually awaitable, for duck-typed agents) and passes `task=` by keyword.
+  Verified against autogen-agentchat 0.7.5 (#512).
 - `snagline baseline --list-versions` is now honored on both the fit and
   `retrain` paths and is read-only everywhere: it lists and exits 0 without
   fitting, writing `baseline.json`, or storing a new version. Without
