@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from pathlib import Path
 
 from snagline.cli import main
@@ -94,6 +96,63 @@ def test_iter_lines_calls_on_wait_while_following(tmp_path):
         pass
     assert consumed == ['{"step_id": "s1"}']
     assert len(waits) == 3
+
+
+def test_iter_lines_reassembles_a_line_flushed_in_two_writes(tmp_path):
+    """A producer that flushes mid-line must yield one complete line, not two
+    unparseable fragments (issue #508). This is the documented ``watch --file
+    --follow`` bridge, where the writer's flush boundaries are out of our
+    control.
+    """
+    from snagline.cli import _iter_lines
+
+    watched = tmp_path / "events.jsonl"
+    watched.write_text("")  # exists and empty; the writer appends below
+    full = '{"step_id": "s1", "episode_id": "e1"}\n'
+
+    def writer() -> None:
+        with open(watched, "a", encoding="utf-8") as fh:
+            fh.write(full[:15])  # flush a bare prefix, no newline yet
+            fh.flush()
+            time.sleep(0.6)  # a 0.2s follow-poll lands mid-line
+            fh.write(full[15:])  # ... then the remainder plus the newline
+            fh.flush()
+
+    class _Done(Exception):
+        pass
+
+    waits: list[int] = []
+
+    def guard() -> None:  # safety net so a broken fix can't hang the suite
+        waits.append(1)
+        if len(waits) > 50:
+            raise _Done
+
+    consumed: list[str] = []
+    t = threading.Thread(target=writer)
+    t.start()
+    try:
+        for line in _iter_lines(str(watched), True, on_wait=guard):
+            consumed.append(line)
+            break  # the first complete logical line is all we need
+    except _Done:  # pragma: no cover - only trips if the reassembly regresses
+        pass
+    finally:
+        t.join()
+
+    assert consumed == [full]
+
+
+def test_iter_lines_yields_a_final_line_without_a_trailing_newline(tmp_path):
+    """Non-follow EOF still flushes a held final unterminated line (issue #508
+    must not regress the pre-existing behaviour): multiple complete lines plus
+    a trailing line with no newline all arrive intact."""
+    from snagline.cli import _iter_lines
+
+    watched = tmp_path / "events.jsonl"
+    watched.write_text('{"a": 1}\n{"b": 2}')  # final line has no newline
+    lines = list(_iter_lines(str(watched), False))
+    assert lines == ['{"a": 1}\n', '{"b": 2}']
 
 
 # --- issue #225: finalize-based detectors must see the real episode ids -------

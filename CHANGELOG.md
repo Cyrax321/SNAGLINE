@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nothing yet.
 
 ### Fixed
+- `snagline watch --file --follow` no longer drops an event whose producer
+  flushes it in two writes. `_iter_lines` now holds a partial line (one with no
+  trailing newline) in a buffer and yields it only once the newline arrives, so
+  a record split across two flushes reaches `monitor.ingest` as one line instead
+  of two unparseable `skipping malformed line` fragments. A final unterminated
+  line at EOF in non-follow mode is still yielded, and idle follow-polls still
+  fire the heartbeat `on_wait` (#508).
 - `snagline baseline --list-versions` is now honored on both the fit and
   `retrain` paths and is read-only everywhere: it lists and exits 0 without
   fitting, writing `baseline.json`, or storing a new version. Without

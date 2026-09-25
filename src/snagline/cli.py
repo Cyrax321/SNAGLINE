@@ -525,20 +525,38 @@ def _iter_lines(
     ``on_wait`` (issue #92) fires on every empty follow-poll so a heartbeat
     can keep proving liveness while the watched file is silent. Failures are
     the callback's own problem; this loop never inspects them.
+
+    A partial line -- one whose newline has not been flushed yet -- is held in
+    a buffer and yielded only once the newline arrives (issue #508): an
+    external producer (a Node/Go stream, a rotated log, a pipe with a large
+    kernel buffer) can land a flush boundary mid-line, and ``readline`` would
+    otherwise hand back the two halves as two separate, unparseable lines. At
+    EOF in non-follow mode a final unterminated line is still flushed so no
+    trailing event is dropped.
     """
     if path is None:
         yield from sys.stdin
         return
     with open(path, encoding="utf-8") as fh:
+        buffer = ""
         while True:
-            line = fh.readline()
-            if line:
-                yield line
+            chunk = fh.readline()
+            if chunk:
+                # readline returns at most one line, so a newline can only be
+                # the last character; accumulate fragments until it shows up.
+                buffer += chunk
+                if buffer.endswith("\n"):
+                    yield buffer
+                    buffer = ""
             elif follow:
                 if on_wait is not None:
                     on_wait()
                 time.sleep(0.2)
             else:
+                # EOF, no more writes coming: a held final line (no trailing
+                # newline) is still a complete record -- yield it.
+                if buffer:
+                    yield buffer
                 return
 
 
