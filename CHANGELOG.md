@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nothing yet.
 
 ### Fixed
+- The LangGraph adapter (`watch_graph`) now surfaces a node that *raises*.
+  A real LangGraph node error is not delivered as an update item — LangGraph
+  propagates the exception out of `graph.stream()` — so the previous
+  pass-through loop re-raised before emitting anything and the node crash, the
+  very signal the error detectors exist to catch, never reached the Monitor.
+  `watch_graph` now emits one error `StepEvent` for the failure and then
+  re-raises, leaving the caller's own exception handling unchanged. The
+  adapter's docstring claim that LangGraph "signals node errors" as yielded
+  Exception updates was also corrected.
 - `snagline baseline --list-versions` is now honored on both the fit and
   `retrain` paths and is read-only everywhere: it lists and exits 0 without
   fitting, writing `baseline.json`, or storing a new version. Without

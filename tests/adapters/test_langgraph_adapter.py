@@ -2,6 +2,9 @@
 
 Uses hand-built update items with the same shape LangGraph's
 ``stream_mode="updates"`` yields, so no langgraph install is needed.
+A real node error is not an update item -- LangGraph raises it out of
+``graph.stream()`` -- so that path is covered separately by
+``test_node_error_raised_by_stream_is_recorded_before_reraise``.
 A separate integration demo (examples/) exercises a real LangGraph-based
 ``create_agent`` graph.
 """
@@ -10,6 +13,8 @@ from __future__ import annotations
 
 from collections import deque
 from typing import Any
+
+import pytest
 
 from snagline.adapters.langgraph_adapter import watch_graph
 from snagline.events import StepEvent
@@ -69,6 +74,9 @@ def test_one_event_per_node_update():
 
 def test_error_key_and_exception_updates_set_error_flag():
     monitor = _RecordingMonitor()
+    # The bare-exception update value is the manual pass-through case (a caller
+    # feeding their own updates), not a shape real LangGraph yields -- a real
+    # node error raises out of the stream (see the test below).
     stream: list[dict[str, Any]] = [
         {"ok": {"x": 1}},
         {"boom": {"x": 1, "error": ValueError("node failed")}},
@@ -80,6 +88,28 @@ def test_error_key_and_exception_updates_set_error_flag():
     assert monitor.events[1].error_type == "ValueError"
     assert monitor.events[2].error is True
     assert monitor.events[2].error_type == "RuntimeError"
+
+
+def test_node_error_raised_by_stream_is_recorded_before_reraise():
+    # Real LangGraph propagates a node's exception out of graph.stream() rather
+    # than yielding it as an update, so the pass-through loop raises. The
+    # adapter must still surface the failure to the Monitor before re-raising,
+    # or the node crash never reaches any detector.
+    monitor = _RecordingMonitor()
+
+    def raising_stream():
+        yield {"good": {"x": 1}}
+        raise RuntimeError("node failed")
+
+    with pytest.raises(RuntimeError, match="node failed"):
+        list(watch_graph(monitor, "ep-1", raising_stream()))
+
+    assert len(monitor.events) == 2
+    assert monitor.events[0].error is False
+    assert monitor.events[1].error is True
+    assert monitor.events[1].error_type == "RuntimeError"
+    assert monitor.events[1].tool_name is None
+    assert monitor.events[1].action_type == "node_run"
 
 
 def test_latency_is_measured_between_yields():
