@@ -51,7 +51,7 @@ jobs:
           # optional extra: without langchain-core the integration test silently
           # skips, so CI would never run it; install it explicitly
           pip install "langchain-core>=0.2"
-          pip install "pytest" "pytest-cov==7.1.0" "ruff==0.16.7" "mypy"
+          pip install "pytest" "pytest-cov==7.1.0" "ruff==0.16.8" "mypy"
 
       - name: Lint (ruff)
         if: runner.os == 'Linux'
