@@ -130,6 +130,59 @@ class SnaglineCallbackHandler(BaseCallbackHandler):
             return None
         return (self._clock() - start) * 1000.0
 
+    def _tokens_from_response(self, response: Any) -> tuple[int | None, int | None]:
+        """Read ``tokens_in`` / ``tokens_out`` from an ``LLMResult``.
+
+        Two report shapes exist, and both must be honoured or the
+        token-runaway detector is silently starved (issue #515):
+
+        * **Legacy**: completions-style models (``langchain-openai``) put a
+          single aggregate dict on ``LLMResult.llm_output["token_usage"]`` with
+          ``prompt_tokens`` / ``completion_tokens``.
+        * **Chat models**: since langchain-core 0.2, a chat model reports
+          per-message usage on ``AIMessage.usage_metadata``
+          (``input_tokens`` / ``output_tokens``) and leaves ``llm_output`` as
+          ``None`` on that path. A chat model is the ``create_agent`` /
+          LangGraph default, so this is the common case.
+
+        The legacy read wins when present (it is the tighter, already-aggregated
+        number); otherwise we fall back to summing ``usage_metadata`` across
+        ``response.generations``. Everything is duck-typed, so no LangChain
+        import is needed and this stays testable under ``--no-deps``.
+        """
+        llm_output = getattr(response, "llm_output", None)
+        if isinstance(llm_output, dict):
+            tu = llm_output.get("token_usage") or {}
+            tokens_in = tu.get("prompt_tokens")
+            tokens_out = tu.get("completion_tokens")
+            if tokens_in is not None or tokens_out is not None:
+                return tokens_in, tokens_out
+
+        generations = getattr(response, "generations", None) or []
+        tokens_in = tokens_out = 0
+        seen = False
+        for batch in generations:
+            # LLMResult.generations is List[List[Generation]] but stay tolerant
+            # of a flat list, which some hand-built stubs pass.
+            entries = batch if isinstance(batch, (list, tuple)) else (batch,)
+            for generation in entries:
+                # ChatGeneration carries the AIMessage in .message; accept a
+                # bare message too so this works with either stub shape.
+                message = getattr(generation, "message", None) or generation
+                usage = getattr(message, "usage_metadata", None)
+                if not isinstance(usage, dict):
+                    continue
+                i = usage.get("input_tokens")
+                o = usage.get("output_tokens")
+                if i is None and o is None:
+                    continue
+                tokens_in += i or 0
+                tokens_out += o or 0
+                seen = True
+        if not seen:
+            return None, None
+        return tokens_in, tokens_out
+
     # -- tool calls ---------------------------------------------------------
     def on_tool_start(
         self,
@@ -306,12 +359,7 @@ class SnaglineCallbackHandler(BaseCallbackHandler):
         if info is None:
             return
         latency = (self._clock() - info["start"]) * 1000.0
-        tokens_in = tokens_out = None
-        llm_output = getattr(response, "llm_output", None)
-        if isinstance(llm_output, dict):
-            tu = llm_output.get("token_usage") or {}
-            tokens_in = tu.get("prompt_tokens")
-            tokens_out = tu.get("completion_tokens")
+        tokens_in, tokens_out = self._tokens_from_response(response)
         self._emit(
             "message",
             info["tool"],

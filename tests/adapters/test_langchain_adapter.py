@@ -7,6 +7,7 @@ module guards its LangChain import for exactly this reason.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any, cast
 
 from snagline.adapters.langchain_adapter import SnaglineCallbackHandler
@@ -43,6 +44,32 @@ class RecMonitor(Monitor):
 
 def _monitor() -> RecMonitor:
     return cast(RecMonitor, RecMonitor.default(sinks=[RecordingSink()]))
+
+
+class _StubMessage:
+    """Duck-types ``langchain_core.messages.AIMessage`` for the token path."""
+
+    def __init__(self, usage_metadata: dict[str, int] | None) -> None:
+        self.usage_metadata = usage_metadata
+
+
+class _StubGeneration:
+    """Duck-types ``langchain_core.outputs.ChatGeneration``."""
+
+    def __init__(self, message: _StubMessage) -> None:
+        self.message = message
+
+
+class _StubLLMResult:
+    """Duck-types ``langchain_core.outputs.LLMResult``."""
+
+    def __init__(
+        self,
+        generations: Sequence[Sequence[_StubGeneration]] = (),
+        llm_output: dict[str, Any] | None = None,
+    ) -> None:
+        self.generations = [list(batch) for batch in generations]
+        self.llm_output = llm_output
 
 
 def test_tool_call_emits_event_with_latency() -> None:
@@ -99,6 +126,129 @@ def test_llm_end_emits_message_with_tokens() -> None:
     e = mon.events[-1]
     assert e.action_type == "message"
     assert e.tokens_in == 10 and e.tokens_out == 20
+
+
+def test_llm_end_reads_usage_metadata_when_llm_output_is_none() -> None:
+    # Issue #515: since langchain-core 0.2 a chat model reports per-message
+    # usage on AIMessage.usage_metadata and leaves LLMResult.llm_output as
+    # None on that path. The old code read only llm_output, so a chat model --
+    # the create_agent / LangGraph default -- reported no tokens at all and
+    # the token-runaway detector was silently starved for the whole run.
+    mon = _monitor()
+    h = SnaglineCallbackHandler(mon, "ep1")
+    h.on_chat_model_start({"name": "chat"}, [["user", "hi"]], run_id="r4")
+    h.on_llm_end(
+        _StubLLMResult(
+            generations=[
+                [
+                    _StubGeneration(
+                        _StubMessage(
+                            {"input_tokens": 11, "output_tokens": 7, "total_tokens": 18}
+                        )
+                    )
+                ]
+            ],
+            llm_output=None,
+        ),
+        run_id="r4",
+    )
+    e = mon.events[-1]
+    assert e.action_type == "message"
+    assert e.tokens_in == 11 and e.tokens_out == 7
+
+
+def test_llm_end_sums_usage_metadata_across_generations() -> None:
+    # A batched LLMResult carries one message per generation; the fallback
+    # must aggregate rather than take the first.
+    mon = _monitor()
+    h = SnaglineCallbackHandler(mon, "ep1")
+    h.on_chat_model_start({"name": "chat"}, [["user", "hi"]], run_id="r5")
+    h.on_llm_end(
+        _StubLLMResult(
+            generations=[
+                [
+                    _StubGeneration(
+                        _StubMessage({"input_tokens": 4, "output_tokens": 1})
+                    )
+                ],
+                [
+                    _StubGeneration(
+                        _StubMessage({"input_tokens": 6, "output_tokens": 2})
+                    )
+                ],
+            ],
+            llm_output=None,
+        ),
+        run_id="r5",
+    )
+    e = mon.events[-1]
+    assert e.tokens_in == 10 and e.tokens_out == 3
+
+
+def test_llm_end_prefers_legacy_llm_output_when_both_present() -> None:
+    # The legacy aggregate is the tighter, already-summed number, so it wins
+    # when both shapes are available; usage_metadata is only a fallback.
+    mon = _monitor()
+    h = SnaglineCallbackHandler(mon, "ep1")
+    h.on_llm_start({"name": "llm"}, ["prompt"], run_id="r6")
+    h.on_llm_end(
+        _StubLLMResult(
+            generations=[
+                [
+                    _StubGeneration(
+                        _StubMessage({"input_tokens": 99, "output_tokens": 99})
+                    )
+                ]
+            ],
+            llm_output={"token_usage": {"prompt_tokens": 10, "completion_tokens": 20}},
+        ),
+        run_id="r6",
+    )
+    e = mon.events[-1]
+    assert e.tokens_in == 10 and e.tokens_out == 20
+
+
+def test_llm_end_without_any_usage_reports_no_tokens() -> None:
+    # Neither shape present -> still None, None. Nothing is fabricated and the
+    # detector keeps ignoring the step, matching documented behaviour.
+    mon = _monitor()
+    h = SnaglineCallbackHandler(mon, "ep1")
+    h.on_llm_start({"name": "llm"}, ["prompt"], run_id="r7")
+    h.on_llm_end(
+        _StubLLMResult(generations=[[_StubGeneration(_StubMessage(None))]]),
+        run_id="r7",
+    )
+    e = mon.events[-1]
+    assert e.tokens_in is None and e.tokens_out is None
+
+
+def test_chat_model_usage_metadata_feeds_token_runaway_detector() -> None:
+    # End-to-end proof that the fix removes the starvation: a chat-model run
+    # whose usage_metadata crosses a budget envelope now raises a risk where
+    # before it emitted None tokens and the detector stayed permanently quiet.
+    from snagline.detectors.token_runaway import TokenRunawayDetector
+
+    sink = RecordingSink()
+    mon = RecMonitor([TokenRunawayDetector(budget_total_tokens=50)], [sink])
+    h = SnaglineCallbackHandler(cast(Monitor, mon), "ep-runaway")
+    for i in range(4):
+        rid = f"run-{i}"
+        h.on_chat_model_start({"name": "chat"}, [["user", "hi"]], run_id=rid)
+        h.on_llm_end(
+            _StubLLMResult(
+                generations=[
+                    [
+                        _StubGeneration(
+                            _StubMessage({"input_tokens": 20, "output_tokens": 20})
+                        )
+                    ]
+                ],
+                llm_output=None,
+            ),
+            run_id=rid,
+        )
+    assert any(r.trigger == "token_runaway" for r in sink.risks)
+    assert any(r.trigger == "budget_breach" for r in sink.risks)
 
 
 def test_repeated_tool_calls_trigger_loop_detector() -> None:
