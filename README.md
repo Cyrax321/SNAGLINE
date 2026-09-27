@@ -38,7 +38,9 @@ Existing monitoring approaches have gaps:
 
 SNAGLINE asks a narrower question: can a zero-dependency, O(1) per-step monitor catch the most common failure modes (loops, error cascades, latency drift) in any agent, running on any framework, at microsecond-scale overhead?
 
-The answer is yes. SNAGLINE's tier-1 detectors are deterministic, O(1) amortized per step, run with no network calls and no LLM calls, and cost a few microseconds per `ingest()` call (measured median 1.7--2.4 us/step on Apple silicon; see [Empirical Verification](#empirical-verification) and run `snagline bench` for your own hardware). They run cheaply enough to instrument every step of a production agent.
+The answer is yes. SNAGLINE's tier-1 detectors are deterministic, O(1) amortized per step, run with no network calls and no LLM calls, and cost a few microseconds per step (see [Empirical Verification](#empirical-verification) and run `snagline bench` for your own hardware). They run cheaply enough to instrument every step of a production agent.
+
+`snagline bench` reports the full per-step path an integrator pays -- building the `StepEvent` and then ingesting it -- plus an `ingest only` split. The two differ because event construction is not free: `StepEvent` is a frozen dataclass whose generated `__init__` routes every field through `object.__setattr__` to enforce immutability, and that costs more than `ingest()` itself (issue #312). The headline used to time `ingest()` alone and silently excluded it.
 
 ## Quick Start
 
@@ -161,7 +163,7 @@ in [docs/RETRAIN_CADENCE.md](docs/RETRAIN_CADENCE.md)).
 |:--|:--|
 | **Zero dependencies** | The core needs nothing but Python 3.10+ -- `dependencies = []` in `pyproject.toml`, non-negotiable. Published to PyPI as `snagline` (`pip install snagline`, or `pip install .` from a clone, see [Quick Start](#quick-start)). Every framework adapter is an optional extra. |
 | **Fail-open guarantee** | Detector/sink exceptions are caught, logged, and never propagated into the host agent. A monitoring library that can crash the thing it monitors is a non-starter. |
-| **Microsecond-scale overhead** | Median 2.43 us/step, p99 27.71 us/step over 200,000 synthetic steps. Cheap enough to run on every step of a week-long run. Numbers and provenance in [Empirical Verification](#automated-test-suite-and-benchmarks); reproduce with `snagline bench`. |
+| **Microsecond-scale overhead** | The full per-step path -- constructing a `StepEvent` and ingesting it -- is a few microseconds per step, and `ingest()` alone is median 2.43 us/step, p99 27.71 us/step over 200,000 synthetic steps. Cheap enough to run on every step of a week-long run. Numbers and provenance in [Empirical Verification](#automated-test-suite-and-benchmarks); reproduce with `snagline bench`. |
 | **Framework-agnostic core** | All detector and sink logic operates only on the canonical `StepEvent` schema. Framework-specific code lives in isolated adapter modules and nowhere else. |
 | **No content retention** | Detectors reason about hashes, timings, counts, and booleans -- never prompt or response content. Adoption blocker if left ambiguous. |
 | **Streaming-first, batch-capable** | Primary use is live monitoring of a running agent. The same event schema and detectors also work over an exported trajectory file for offline analysis. |
@@ -333,11 +335,19 @@ tests : run `python -m pytest tests/ -q` and trust your own output.
         so no fixed number is quoted here. The CI matrix is Python
         3.10--3.13 on ubuntu/windows; see the ci.yml workflow runs for
         each leg's totals.
-bench : median 2.43 us/step, p99 27.71 us/step over 200,000 synthetic steps
+bench : reports the full per-step path (construct a StepEvent + ingest it)
+        plus an "ingest only" split over 200,000 synthetic steps.
+        ingest only: median 2.43 us/step, p99 27.71 us/step
         (measured 2026-08-26 on Apple M1, arm64, CPython 3.14.5;
          earlier 1.91 / 33.90 on same hardware 2026-08-15;
          independently reproduced at commit f7857d1 on Apple M4 /
          CPython 3.13.5: median 1.70 us/step, p99 1.77 us/step)
+        The full-step headline is higher by the construction cost: a frozen
+        dataclass's __init__ routes every field through object.__setattr__,
+        which on the measured hardware costs more than ingest() itself
+        (issue #312). The older figures above were ingest-only, so they
+        remain the apples-to-apples comparison for detector overhead; the
+        headline now includes what an integrator actually pays per step.
 enforcement (issue #93): added latency per halting step, halt_timeout_s=250ms,
         Apple M1 / CPython 3.14 / 2026-08-26: responding localhost endpoint
         median 264 us/step, refused (dead) endpoint median 57 us/step,
@@ -471,10 +481,13 @@ genuinely are loops, so the loop detector (and the meltdown detector for
 labels. The gate the harness exists for -- `healthy controls that fired: 0`,
 exit code 0 -- still holds.
 
-Ingest overhead on commit `22faeae`'s parent-line hardware: median 2.43 us/step,
-p99 27.71 us/step over 200,000 synthetic steps
+Ingest overhead on commit `22faeae`'s parent-line hardware: ingest-only
+median 2.43 us/step, p99 27.71 us/step over 200,000 synthetic steps
 (`python benchmarks/overhead_benchmark.py` or `snagline bench`; Apple M1,
-arm64, CPython 3.14.5).
+arm64, CPython 3.14.5). The same run's headline number is the full per-step
+path -- StepEvent construction plus ingest -- which is higher by the
+construction cost (issue #312); the ingest-only figure above is what to
+compare against older ingest-only measurements.
 
 ## Framework Integration
 

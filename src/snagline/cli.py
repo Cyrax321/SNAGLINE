@@ -208,7 +208,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     sub.add_parser(
-        "bench", help="Run the ingest() overhead benchmark and print us/step."
+        "bench",
+        help="Time the per-step path (build a StepEvent + ingest it) and print us/step.",
     )
 
     p_watch = sub.add_parser(
@@ -1151,12 +1152,32 @@ def _inline_benchmark(
     call site below). Mirrors the shape of
     ``benchmarks.overhead_benchmark.run_benchmark`` -- signature
     included -- so the CLI output is identical either way (issue #6),
-    including the scaled legs (issue #298)."""
+    including the scaled legs (issue #298) and the full-step headline that
+    charges StepEvent construction rather than timing ingest() alone
+    (issue #312)."""
     import statistics
 
     from snagline import Monitor
     from snagline.config import Config
     from snagline.events import StepEvent, make_signature
+
+    def build_event(i: int) -> StepEvent:
+        # The same generator both legs use, so they differ only in whether
+        # construction is charged (issue #312).
+        return StepEvent(
+            step_id=str(i),
+            episode_id="bench",
+            timestamp=__import__("time").time(),
+            action_type="tool_call",
+            action_signature=make_signature("tool_call", "tool", str(i)),
+            tool_name="tool",
+            latency_ms=100.0,
+        )
+
+    def percentiles(per_step_us: list[float]) -> tuple[float, float]:
+        ordered = sorted(per_step_us)
+        p99_idx = min(len(ordered) - 1, int(0.99 * len(ordered)))
+        return statistics.median(per_step_us), ordered[p99_idx]
 
     def time_ingest(monitor: Monitor) -> tuple[float, float]:
         for e in events[:block]:
@@ -1169,33 +1190,42 @@ def _inline_benchmark(
                 monitor.ingest(e)
             t1 = time.perf_counter()
             per_step_us.append((t1 - t0) / len(chunk) * 1e6)
-        ordered = sorted(per_step_us)
-        p99_idx = min(len(ordered) - 1, int(0.99 * len(ordered)))
-        return statistics.median(per_step_us), ordered[p99_idx]
+        return percentiles(per_step_us)
 
-    events = [
-        StepEvent(
-            step_id=str(i),
-            episode_id="bench",
-            timestamp=__import__("time").time(),
-            action_type="tool_call",
-            action_signature=make_signature("tool_call", "tool", str(i)),
-            tool_name="tool",
-            latency_ms=100.0,
-        )
-        for i in range(n)
-    ]
+    def time_full_step(monitor: Monitor) -> tuple[float, float]:
+        # The headline: construction happens inside the timed region, because
+        # that is what an integrator pays per step. Timing ingest() alone on
+        # pre-built events hid the frozen-dataclass construction cost
+        # (issue #312).
+        for i in range(block):
+            monitor.ingest(build_event(i))
+        per_step_us: list[float] = []
+        for start in range(block, n, block):
+            end = min(start + block, n)
+            t0 = time.perf_counter()
+            for i in range(start, end):
+                monitor.ingest(build_event(i))
+            t1 = time.perf_counter()
+            per_step_us.append((t1 - t0) / (end - start) * 1e6)
+        return percentiles(per_step_us)
+
+    events = [build_event(i) for i in range(n)]
     # One resolved config for every leg, matching run_benchmark(): a bare
     # Config() pins every knob to its dataclass default while Monitor.default()
     # resolves the SNAGLINE_* env layering, so mixing the two would compare
     # detector setups that differ in more than scaling.
     base_cfg = Config.resolve()
-    median_us, p99_us = time_ingest(Monitor.default(base_cfg))
+    full_median_us, full_p99_us = time_full_step(Monitor.default(base_cfg))
+    ingest_median_us, ingest_p99_us = time_ingest(Monitor.default(base_cfg))
     stats: dict = {
         "n": n,
         "blocks": len(range(block, n, block)),
-        "median_us": median_us,
-        "p99_us": p99_us,
+        "median_us": full_median_us,
+        "p99_us": full_p99_us,
+        "ingest_only": {
+            "median_us": ingest_median_us,
+            "p99_us": ingest_p99_us,
+        },
         "scaled": [],
     }
     for cap in max_windows:
@@ -1224,6 +1254,12 @@ def _cmd_bench() -> int:
     print(f"  steps measured : {stats['n']}")
     print(f"  median        : {stats['median_us']:.2f} us/step")
     print(f"  p99           : {stats['p99_us']:.2f} us/step")
+    split = stats.get("ingest_only")
+    if split:
+        print(
+            f"  ingest only   : median {split['median_us']:.2f} us/step, "
+            f"p99 {split['p99_us']:.2f} us/step"
+        )
     for leg in stats.get("scaled", []):
         print(
             f"  scaled max_window={leg['max_window']:<5d}: "
