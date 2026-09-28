@@ -281,6 +281,37 @@ def test_crewai_stuck_tool_loop_escalates_end_to_end() -> None:
     assert [r.trigger for r in risks] == ["loop"]
 
 
+def test_crewai_callback_drops_tool_result_phantom() -> None:
+    # Issue #522: CrewAI's sync executor fires step_callback with a bare
+    # ToolResult (result/result_as_answer only) before the paired AgentAction.
+    # The ToolResult names no tool, so mapping it emits a content-less phantom
+    # agent_step. The callback must drop it -- and must not advance the step
+    # counter, so the following real step keeps step_id "0".
+    mon = _Collector()
+    cb = snagline_step_callback(mon, "ep-tr")  # noqa: F821
+    cb({"result": "ERROR: division by zero", "result_as_answer": False})
+    assert mon.events == []
+    cb(_crewai_step('{"x": 1}', "Action: calculator", tool="calculator"))
+    assert len(mon.events) == 1
+    ev = mon.events[0]
+    assert ev.action_type == "tool_call"
+    assert ev.tool_name == "calculator"
+    assert ev.step_id == "0"
+
+
+def test_crewai_tool_step_not_double_counted_via_real_callback_sequence() -> None:
+    # Issue #522, end to end: one real CrewAI tool step invokes the callback
+    # twice (ToolResult then AgentAction). Exactly one StepEvent must result --
+    # the tool_call -- with no content-less agent_step (tool_name=None) phantom.
+    mon = _Collector()
+    cb = snagline_step_callback(mon, "ep-seq")  # noqa: F821
+    cb({"result": "42", "result_as_answer": True})
+    cb(_crewai_step('{"a": 2, "b": 40}', "Action: add", tool="add"))
+    assert len(mon.events) == 1
+    assert mon.events[0].action_type == "tool_call"
+    assert all(ev.tool_name is not None for ev in mon.events)
+
+
 def test_crewai_exotic_tool_input_does_not_raise_into_the_host() -> None:
     # Mapping runs in the framework's thread, before Monitor.ingest and so
     # outside its fail-open guard. A payload JSON cannot canonicalize (unorderable

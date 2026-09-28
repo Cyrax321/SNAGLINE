@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nothing yet.
 
 ### Fixed
+- The CrewAI adapter no longer emits a phantom `agent_step` for every tool
+  call. CrewAI's default sync executor invokes `step_callback` twice per tool
+  step (verified against `crewai==1.15.22`): first with a bare `ToolResult`
+  (`result`/`result_as_answer` only), then with the `AgentAction`. The adapter
+  mapped the `ToolResult` to a content-less `agent_step` (`tool_name=None`,
+  `error=False`), doubling the step count and feeding the count/rate detectors
+  (meltdown, stagnation, loop) noise. `snagline_step_callback` now drops the
+  `ToolResult` invocation — the paired `AgentAction` already produces the
+  `tool_call` and a `result_as_answer=True` final answer arrives as an
+  `AgentFinish`, so no event captured elsewhere is lost, and no payload content
+  is inspected (#522).
 - `snagline baseline --list-versions` is now honored on both the fit and
   `retrain` paths and is read-only everywhere: it lists and exits 0 without
   fitting, writing `baseline.json`, or storing a new version. Without

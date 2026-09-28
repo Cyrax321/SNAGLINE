@@ -21,6 +21,22 @@ CrewAI step objects vary by version; we read common attributes (``tool``,
 ``tool_input``, ``output``/``text``, ``error``) and fall back to a dict view, so
 the adapter stays loosely coupled to a specific CrewAI release.
 
+CrewAI's default sync executor invokes ``step_callback`` *twice* per tool step
+(verified against ``crewai==1.15.22``): first with a bare ``ToolResult``
+(``result``/``result_as_answer`` only), then with the ``AgentAction`` that
+carries the tool and its arguments. A ``ToolResult`` names no tool and holds no
+argument payload, so mapping it would emit a content-less phantom ``agent_step``
+that doubles the step count and feeds the count/rate detectors (meltdown,
+stagnation, loop) noise. :func:`snagline_step_callback` therefore drops the
+``ToolResult`` invocation: the paired ``AgentAction`` already produces the
+``tool_call``, and a ``result_as_answer=True`` final answer arrives separately
+as an ``AgentFinish``, so nothing captured elsewhere is lost. Detection is keyed
+off ``result_as_answer`` -- a field that exists only on ``ToolResult`` -- so no
+payload content is inspected. Note that a real ``AgentAction``/``AgentFinish``
+exposes no structured error flag or timing, so ``error`` is ``False`` and
+``latency_ms`` is ``None`` for CrewAI-sourced steps; the ``error``/``latency_ms``
+reads below apply only to step dicts a host constructs itself.
+
 The optional ``clock=`` defaults to :func:`time.perf_counter`: monotonic and
 high-resolution on every platform. ``time.time`` advances in ~15.6 ms ticks on
 Windows and quantized sub-tick latencies to zero (issue #155). Note that
@@ -52,6 +68,20 @@ def _to_dict(obj: Any) -> dict[str, Any]:
     if hasattr(obj, "__dict__"):
         return dict(vars(obj))
     return {}
+
+
+def _is_tool_result(step: dict[str, Any]) -> bool:
+    """True when the step dict is a CrewAI ``ToolResult`` rather than a step.
+
+    CrewAI's sync executor passes a bare ``ToolResult`` to ``step_callback``
+    before the paired ``AgentAction`` (``crew_agent_executor.py:448`` ->
+    ``agent_utils.py:702``). A ``ToolResult`` is a plain dataclass with exactly
+    ``result`` and ``result_as_answer``; ``result_as_answer`` appears on no
+    other object in the callback surface (``AgentAction``/``AgentFinish``), so
+    its presence is a content-free discriminator -- we look at the key, never
+    the payload value.
+    """
+    return "result_as_answer" in step
 
 
 def _extract_tool_name(step: dict[str, Any]) -> str | None:
@@ -182,10 +212,21 @@ class _CrewAIStepCallback:
         self._side_effect_tools: set[str] = set(side_effect_tools or [])
 
     def __call__(self, step: Any) -> None:
+        d = _to_dict(step)
+        # CrewAI's sync executor fires step_callback twice per tool step,
+        # passing a bare ToolResult first and the AgentAction second (verified
+        # against crewai==1.15.22). The ToolResult carries no tool/tool_input/
+        # text, so mapping it emits a content-less phantom agent_step that
+        # doubles the step count and feeds the count/rate detectors noise. The
+        # paired AgentAction already produces the tool_call and a
+        # result_as_answer=True final answer arrives as an AgentFinish, so
+        # dropping the ToolResult loses no event captured elsewhere. The counter
+        # is not advanced, keeping step_ids dense for the real events.
+        if _is_tool_result(d):
+            return
         # Host-declared allowlist (issue #150): only a tool_call whose name
         # the host put in side_effect_tools becomes side_effect=True. Never
         # read metadata and never guess from args or payload content.
-        d = _to_dict(step)
         tool_name = _extract_tool_name(d)
         side_effect = tool_name is not None and tool_name in self._side_effect_tools
         self._monitor.ingest(
