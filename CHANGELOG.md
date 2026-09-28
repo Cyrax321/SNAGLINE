@@ -761,6 +761,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   invalid JSON -- a bare `"timestamp",` key with no value made the sidecar
   reject the pasted snippet with 400; it now sends `"timestamp":'$(date +%s)'`
   (#454).
+- The calibrated CUSUM seed now gates on `latency_count` instead of `count`.
+  A profile fitted from a trajectory that called a tool often enough but never
+  with a `latency_ms` (the shape auto-calibration produces on streams whose
+  steps report no timing) used to seed `mu0 = 0` with the bare sigma floor, so
+  the first ordinary call came back score 1.0 / `critical` with a
+  self-contradictory "baseline (mean 0ms)". Such tools now keep the
+  learn-then-freeze warm-up. The ML ensemble's Mahalanobis latency term is
+  likewise gated on two timed samples, so it scores the error term alone
+  instead of dividing by the 1ms floor (#539).
 
 ## [0.1.0] - 2026-08-27
 

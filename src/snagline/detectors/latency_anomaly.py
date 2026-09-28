@@ -320,8 +320,13 @@ class LatencyAnomalyDetector:
             state.refit_every = self.refit_every
             # Calibrated start (issue #101): when a healthy profile describes
             # this tool well enough, skip warm-up and freeze onto its stats.
-            # Tools without a sufficient entry keep today's learn-then-freeze
-            # behavior.
+            # "Well enough" means enough *timed* samples: the seed freezes
+            # onto mean_latency/std_latency, which are moments over
+            # latency_count only. Gating on count instead admits a tool the
+            # profile observed often but never timed (auto-calibration, issue
+            # #101, produces exactly that shape), seeding mu0 = 0 and a bare
+            # sigma floor, so the first ordinary call alarms critical (issue
+            # #539). Tools below the bar keep learn-then-freeze.
             seeded: ToolBaseline | None = None
             if self._baseline is not None:
                 candidate = self._baseline.tools.get(key[1])

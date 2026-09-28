@@ -119,6 +119,21 @@ def _latency_profile(
     return profile
 
 
+def _untimed_profile(calls: int, tool: str = "search_web") -> BaselineProfile:
+    """Profile whose tool ran ``calls`` times but never carried a latency_ms.
+
+    Exactly the shape issue #101's auto-calibration produces on a stream whose
+    steps report no timing: ``count`` reaches min_samples while
+    ``latency_count`` stays 0 (issue #539).
+    """
+    profile = BaselineProfile()
+    tb = ToolBaseline(tool_name=tool)
+    for _ in range(calls):
+        tb.add(None, False)
+    profile.tools[tool] = tb
+    return profile
+
+
 def _detector_params(monitor: Monitor) -> list[tuple]:
     """Structural snapshot of tier-1 detector configuration."""
     params = []
@@ -471,6 +486,26 @@ class TestSeededCusum:
             monitor.ingest(_event("new-ep", i, tool="brand_new_tool", latency=400.0))
         monitor.ingest(_event("new-ep", 5, tool="brand_new_tool", latency=2500.0))
         assert "latency_anomaly" in [r.trigger for r in collector.risks]
+
+    def test_untimed_profile_does_not_fabricate_critical(self) -> None:
+        # The profile saw the tool 10 times (>= min_samples 5) but never with a
+        # latency_ms. Gating the seed on count froze mu0 = 0 / sigma0 = 1ms, so
+        # an ordinary 50ms call came back score 1.0 / critical with a detail
+        # claiming a "baseline (mean 0ms)" that never existed (issue #539).
+        # The seed is declined and the first call feeds the warm-up instead.
+        untimed = _untimed_profile(10)
+        assert untimed.tools["search_web"].count == 10
+        assert untimed.tools["search_web"].latency_count == 0
+        cfg = Config(calibration="auto", calibration_baseline=untimed)
+        monitor, collector = _monitor(cfg)
+        monitor.ingest(_event("ep", 0, latency=50.0))
+        assert collector.risks == []
+
+        # Silent on the healthy continuation too -- no fabricated baseline.
+        monitor2, collector2 = _monitor(cfg)
+        for i, ms in enumerate((50.0, 55.0, 45.0, 50.0, 52.0)):
+            monitor2.ingest(_event("calm-ep", i, latency=ms))
+        assert collector2.risks == []
 
 
 # --------------------------------------------------------------------------

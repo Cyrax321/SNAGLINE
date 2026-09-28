@@ -397,6 +397,11 @@ class EsnCusumDetector:
         terms += z_e * z_e
         dof += 1
         lat = event.latency_ms
+        # The latency term needs real timed moments. std_latency is 0 below
+        # two timed samples and mean_latency is 0 when none were timed, so the
+        # floors alone would make one ordinary call a near-saturated z
+        # (issue #539). Goal_drift guards the same way; drop the latency term
+        # and score the error term alone when the profile has no timing.
         if lat is not None and lat > 0.0 and tb.latency_count >= 2:
             sigma_l = max(
                 tb.std_latency,
