@@ -154,6 +154,53 @@ def test_from_env_still_returns_a_full_config():
     assert cfg.cusum_k == Config().cusum_k
 
 
+@pytest.mark.parametrize("prefix", ["snagline_", "Snagline_", "SNAGLINE_", "sNaGline_"])
+def test_from_env_overrides_matches_the_prefix_case_insensitively(prefix):
+    # Issue #541: only the field suffix was lowercased, so the startswith(prefix)
+    # comparison stayed exact-case and any other spelling of the prefix was
+    # silently dropped -- with no warning, since the warning path only fires for
+    # a recognized key whose value fails to coerce. The documented read is
+    # case-insensitive, so every spelling must apply.
+    overrides = Config.from_env_overrides(environ={f"{prefix}LOG_FORMAT": "json"})
+    assert overrides == {"log_format": "json"}
+
+
+def test_from_env_overrides_matches_a_lowercase_field_suffix():
+    # The whole key can be lowercase, not just the prefix.
+    overrides = Config.from_env_overrides(environ={"snagline_log_format": "json"})
+    assert overrides == {"log_format": "json"}
+    assert Config.from_env(environ={"snagline_log_format": "json"}).log_format == "json"
+
+
+def test_from_env_overrides_custom_prefix_is_also_case_insensitive():
+    # The prefix is a parameter, so a host embedding snagline under its own
+    # namespace gets the same case-insensitive read.
+    overrides = Config.from_env_overrides(
+        environ={"app_cusum_k": "0.9", "APP_FAIL_OPEN": "false"}, prefix="APP_"
+    )
+    assert overrides == {"cusum_k": 0.9, "fail_open": False}
+
+
+def test_from_env_overrides_unrelated_case_variants_do_not_collide():
+    # Two keys that differ only by case are the same variable once the read is
+    # case-insensitive; iteration order decides which value wins (last write
+    # wins, exactly as for a duplicated key in a Config constructor).
+    overrides = Config.from_env_overrides(
+        environ={"snagline_log_format": "json", "SNAGLINE_LOG_FORMAT": "text"}
+    )
+    assert overrides == {"log_format": "text"}
+
+
+def test_resolve_honours_a_lowercase_env_prefix(tmp_path):
+    # End-to-end: the case-insensitive read must survive the file -> env
+    # layering, so an operator spelling the prefix in lowercase still overrides
+    # the config file.
+    path = tmp_path / "cfg.json"
+    path.write_text(json.dumps({"log_format": "text"}))
+    cfg = Config.resolve(path=str(path), environ={"snagline_log_format": "json"})
+    assert cfg.log_format == "json"
+
+
 def test_readme_configuration_snippet_matches_config_defaults():
     # Mechanical guard for issue #153: the README Configuration snippet must
     # never drift from the shipped Config dataclass defaults (cusum_min_samples

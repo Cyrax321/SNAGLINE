@@ -295,6 +295,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `profile.add_event` is now inside the `try` and coerces the numeric fields
   *before* any accumulator is touched, so a bad line is skipped whole (not
   half-counted) -- matching the documented contract and `replay()` (#540).
+- `Config.from_env_overrides` now matches the `SNAGLINE_` prefix
+  case-insensitively, as its docstring and the README always claimed. Only the
+  field suffix was lowercased, so the `startswith` comparison stayed exact-case
+  and a variable spelled `snagline_log_format` (or any other casing of the
+  prefix) was silently dropped -- with no warning, since the warning path only
+  fires for a recognized key whose value fails to coerce. The operator got the
+  default and no clue why. Every spelling now applies, and where two case
+  variants of the same key are both present the later one in iteration order
+  wins (#541).
 - `snagline baseline --list-versions` is now honored on both the fit and
   `retrain` paths and is read-only everywhere: it lists and exits 0 without
   fitting, writing `baseline.json`, or storing a new version. Without

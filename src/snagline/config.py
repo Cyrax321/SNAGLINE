@@ -1002,19 +1002,33 @@ class Config:
         unset one, and comparing against a default instance would silently drop
         it (issue #66).
 
-        Reads ``<prefix><FIELD>`` (case-insensitive). Unknown prefixes, unknown
-        keys, values that fail to coerce, and keys naming object-typed fields
-        that cannot be built from a string are ignored (logged at warning)
-        rather than fatal, so a host can pass through unrelated environment
-        without breaking startup.
+        Reads ``<prefix><FIELD>`` (case-insensitive, so ``snagline_log_format``
+        and ``SNAGLINE_LOG_FORMAT`` are the same variable; if both are present,
+        the later one in iteration order wins). Unknown prefixes, unknown keys,
+        values that fail to coerce, and keys naming object-typed fields that
+        cannot be built from a string are ignored (logged at warning) rather
+        than fatal, so a host can pass through unrelated environment without
+        breaking startup.
         """
         environ = os.environ if environ is None else environ
+        # Issue #541: the prefix comparison has to be case-insensitive too.
+        # Only the field suffix was lowercased, so the startswith(prefix)
+        # comparison stayed exact-case and any variable whose prefix was spelled
+        # in any other case was silently dropped -- a silent drop, not a warned
+        # one, since the warning path only fires for a recognized key whose value
+        # fails to coerce. A POSIX operator spelling the prefix in lowercase hit
+        # it, as did any host passing environ in explicitly (os.environ itself
+        # uppercases keys on Windows, so the process-inherited case is masked
+        # there). Casefold both sides and slice on the folded prefix so a prefix
+        # whose casefold changes its length still leaves the right field name.
+        prefix_fold = prefix.casefold()
         hints = get_type_hints(cls)
         overrides: dict[str, Any] = {}
         for key, value in environ.items():
-            if not key.startswith(prefix):
+            folded = key.casefold()
+            if not folded.startswith(prefix_fold):
                 continue
-            name = key[len(prefix) :].lower()
+            name = folded[len(prefix_fold) :]
             if name not in hints:
                 continue
             hint = _coercible_hint(hints[name])
