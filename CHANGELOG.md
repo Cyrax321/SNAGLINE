@@ -287,6 +287,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   baseline for that tool). The `__del__` is removed, so an abandoned stream now
   emits nothing — matching the async wrappers and the `snagline.auto` stream
   wrappers, which never emitted on abandonment (#531).
+- `fit_baseline_from_jsonl` no longer aborts the whole fit on a wrong-typed
+  field. A line such as `{"latency_ms": "120ms", ...}` is valid JSON and a
+  valid `StepEvent` (the dataclass has no `__post_init__` validation), so it
+  slipped past the fail-soft loop and only blew up in `ToolBaseline.add`'s
+  arithmetic, killing the fit over one bad line in a long trajectory.
+  `profile.add_event` is now inside the `try` and coerces the numeric fields
+  *before* any accumulator is touched, so a bad line is skipped whole (not
+  half-counted) -- matching the documented contract and `replay()` (#540).
 - `snagline baseline --list-versions` is now honored on both the fit and
   `retrain` paths and is read-only everywhere: it lists and exits 0 without
   fitting, writing `baseline.json`, or storing a new version. Without

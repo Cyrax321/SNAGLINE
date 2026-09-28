@@ -150,6 +150,16 @@ class BaselineProfile:
     embedding_model: str | None = None
 
     def add_event(self, event: StepEvent) -> None:
+        # Coerce the numeric fields *before* any accumulator is touched. A
+        # StepEvent built straight from JSON carries no type guarantees -- a
+        # wrong-typed ``"latency_ms": "120ms"`` parses and constructs cleanly,
+        # then dies in ToolBaseline.add's arithmetic (issue #540). Validating
+        # up front means such an event is rejected whole rather than leaving
+        # the profile half-updated (total_steps counted, tool stats missing).
+        latency_ms = event.latency_ms
+        if latency_ms is not None:
+            latency_ms = float(latency_ms)
+        error = bool(event.error)
         self.total_steps += 1
         if event.action_type == "tool_call":
             name = event.tool_name or "default"
@@ -157,7 +167,7 @@ class BaselineProfile:
             if tb is None:
                 tb = ToolBaseline(tool_name=name)
                 self.tools[name] = tb
-            tb.add(event.latency_ms, event.error)
+            tb.add(latency_ms, error)
 
     def to_dict(self) -> dict:
         data: dict = {
@@ -203,10 +213,14 @@ def fit_baseline_from_jsonl(path: str) -> BaselineProfile:
             try:
                 obj = json.loads(line)
                 event = StepEvent(**obj)
+                # add_event is inside the try on purpose: StepEvent has no
+                # __post_init__ validation, so a line with a wrong-typed field
+                # parses fine and only fails here. The arithmetic must be
+                # covered too, not just the parsing (issue #540).
+                profile.add_event(event)
             except (json.JSONDecodeError, TypeError, ValueError):
                 # Fail-soft, like replay(): a bad line must not abort the fit.
                 continue
-            profile.add_event(event)
     return profile
 
 

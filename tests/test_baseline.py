@@ -74,6 +74,65 @@ def test_baseline_skips_malformed_lines(tmp_path):
     assert "search" in profile.tools
 
 
+def test_baseline_skips_wrong_typed_field_without_aborting(tmp_path):
+    # A line with a wrong-typed numeric field is valid JSON and a valid
+    # StepEvent (no __post_init__ validation), but blows up in the arithmetic.
+    # It must be skipped, not fatal -- and it must not be half-counted
+    # (issue #540).
+    traj = tmp_path / "typed.jsonl"
+    rows = [
+        _event("search", "120ms"),  # wrong type: str, not float
+        _event("search", 100.0),
+    ]
+    traj.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+
+    profile = fit_baseline_from_jsonl(str(traj))
+    # The bad line is dropped whole; the good one is counted.
+    assert profile.total_steps == 1
+    assert profile.tools["search"].count == 1
+    assert abs(profile.tools["search"].mean_latency - 100.0) < 1e-6
+
+
+def test_baseline_wrong_typed_field_variants_do_not_abort(tmp_path):
+    # Every wrong-typed shape that reaches the arithmetic must fail soft.
+    # A str latency and a list latency raise on the float() coercion; the
+    # well-formed line after them must still be counted.
+    traj = tmp_path / "variants.jsonl"
+    base = _event("search", 100.0)
+    bad_str = dict(base, latency_ms="120ms")
+    bad_list = dict(base, latency_ms=[100.0])
+    bad_none_adjacent = dict(base, latency_ms=None)
+    traj.write_text(
+        "\n".join(json.dumps(r) for r in [bad_str, bad_list, bad_none_adjacent, base])
+        + "\n"
+    )
+
+    profile = fit_baseline_from_jsonl(str(traj))
+    # The two bad latencies are dropped; a null latency and the well-formed
+    # line are counted (a null latency is valid -- untimed steps, issue #101).
+    assert profile.total_steps == 2
+    assert profile.tools["search"].count == 2
+    assert profile.tools["search"].latency_count == 1
+    assert abs(profile.tools["search"].mean_latency - 100.0) < 1e-6
+
+
+def test_add_event_rejects_bad_type_before_mutating():
+    # The guard must fire before any accumulator is touched, so a rejected
+    # event leaves the profile untouched rather than half-updated.
+    profile = BaselineProfile()
+    event = type(
+        "E",
+        (),
+        _event("search", "120ms"),
+    )()
+    try:
+        profile.add_event(event)
+    except (TypeError, ValueError):
+        pass
+    assert profile.total_steps == 0
+    assert profile.tools == {}
+
+
 def test_baseline_save_and_load_roundtrip(tmp_path):
     profile = BaselineProfile()
     for lat in (100.0, 110.0, 90.0):
