@@ -30,6 +30,29 @@ from snagline.events import StepEvent
 from snagline.risk import FailureRisk
 
 
+def _graded_cascade_score(observed: int, threshold: int) -> float:
+    """Grade a cascade by how far it has run past ``threshold`` (issue #538).
+
+    The alarm fires *at* the threshold, so a plain ``observed / threshold``
+    ratio is always >= 1 and every alert lands on 1.0 / critical. Grading in
+    bands keeps a marginal first crossing in the warning band while a cascade
+    that keeps going still reaches critical, which is what the halt policy
+    (``min_severity_for_halt``, default 0.8) is calibrated against.
+
+    Bands are multiples of the threshold rather than a continuous ratio: the
+    dedupe flag means the live path only ever fires at exactly
+    ``observed == threshold``, so any continuous scaling would collapse to one
+    value there and a real outage could never halt.
+    """
+    floor = max(int(threshold), 1)
+    ratio = observed / floor
+    if ratio >= 3.0:
+        return 1.0
+    if ratio >= 2.0:
+        return 0.8
+    return 0.5
+
+
 class ErrorCascadeDetector:
     name = "error_cascade"
 
@@ -70,7 +93,12 @@ class ErrorCascadeDetector:
         self._counts: dict[str, int] = {}
         # Dedupe: emit at most once per cascade, then stay quiet until the alarm
         # condition clears and re-arms (issue #4).
-        self._fired: dict[str, bool] = {}
+        # ``fired`` holds the band score the episode already alerted on (0.0
+        # once cleared), not a bare bool: dedupe compares bands so a deepening
+        # cascade can escalate (issue #538). Older snapshots carry booleans,
+        # and ``bool`` is a valid float, so they restore as 1.0 -- "already
+        # alerted at the top band", which only suppresses a repeat.
+        self._fired: dict[str, float] = {}
         # Running count of True flags in each window (issue #298), maintained
         # only while scaling is on; see ``observe`` for why the default path
         # keeps using ``sum``.
@@ -132,21 +160,32 @@ class ErrorCascadeDetector:
             # ``end_episode`` -- alerts exactly once, ever. A *sustained* cascade
             # still emits only once (issue #4): the flag clears only when neither
             # rule holds any more.
-            self._fired[event.episode_id] = False
+            self._fired[event.episode_id] = 0.0
             return None
-        # Already escalated this cascade -- suppress until it clears.
-        if self._fired.get(event.episode_id, False):
+        # A 0 threshold is rejected by Config validation (issue #322); guard
+        # anyway, since Config is a plain mutable dataclass a host can
+        # reconfigure after construction.
+        if consecutive_alarm:
+            graded = _graded_cascade_score(consecutive, self.consecutive_threshold)
+        else:
+            graded = _graded_cascade_score(total, self.error_threshold)
+        # Dedupe on the *band*, not on a single boolean (issue #538, following
+        # ``LoopDetector``): a cascade that deepens past the band it already
+        # alerted on is new information, not a repeat. A plain flag latched at
+        # the first crossing would keep a genuine outage pinned at 0.5/warning
+        # for the rest of the episode, so a real failure could never reach
+        # ``min_severity_for_halt``. Within one band the cascade still alerts
+        # exactly once (issue #4); clearing the alarm below resets the band.
+        already = self._fired.get(event.episode_id, 0.0)
+        if graded <= already:
             return None
 
-        self._fired[event.episode_id] = True
+        self._fired[event.episode_id] = graded
         if consecutive_alarm:
-            # A 0 threshold is rejected by Config validation (issue #322);
-            # guard anyway, since Config is a plain mutable dataclass a host
-            # can reconfigure after construction.
-            score = min(1.0, consecutive / max(self.consecutive_threshold, 1))
+            score = graded
             detail = f"{consecutive} consecutive errors"
         else:
-            score = min(1.0, total / max(self.error_threshold, 1))
+            score = graded
             detail = f"{total} errors in last {len(w)} steps"
         return FailureRisk(
             event.episode_id,
@@ -211,7 +250,12 @@ class ErrorCascadeDetector:
         # live streaks/fired -- the exact non-transactional state this guards
         # against (issue #402/#406).
         new_consecutive = {ep: int(v) for ep, v in state.get("consecutive", {}).items()}
-        new_fired = {ep: bool(v) for ep, v in state.get("fired", {}).items()}
+        # ``fired`` carries a band score, not a bool, so a restored episode
+        # keeps escalating from where it left off (issue #538). Snapshots
+        # written before that change hold booleans; ``float(True)`` is 1.0,
+        # which is exactly "already alerted at the top band", so they restore
+        # without inventing a regression.
+        new_fired = {ep: float(v) for ep, v in state.get("fired", {}).items()}
         # Every field has parsed; publish the whole snapshot at once.
         self._windows = new_windows
         self._counts = new_counts

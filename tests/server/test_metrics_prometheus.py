@@ -158,8 +158,9 @@ def test_loop_fires_with_exact_labels_and_counters_grow_monotonically():
         ) not in first
 
         # Error-cascade default consecutive_threshold=3: three consecutive
-        # failing tool calls with distinct signatures fire error_cascade once
-        # with score 1.0, i.e. severity "critical", and never trip loop.
+        # failing tool calls with distinct signatures fire error_cascade once.
+        # Graded scoring (issue #538) lands the first crossing at
+        # min(1, 3/3*0.5)=0.5, i.e. severity "warning", and never trips loop.
         cascade_sigs = ["bbb11111cccc2222", "bbb22222cccc2222", "bbb33333cccc2222"]
         _post(
             base,
@@ -173,7 +174,7 @@ def test_loop_fires_with_exact_labels_and_counters_grow_monotonically():
 
         assert (
             second[
-                ("snagline_risks_total", 'trigger="error_cascade",severity="critical"')
+                ("snagline_risks_total", 'trigger="error_cascade",severity="warning"')
             ]
             == 1.0
         )

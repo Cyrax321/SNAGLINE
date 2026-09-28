@@ -220,7 +220,11 @@ def test_replay_fingerprints_unchanged_when_options_unset() -> None:
     """
     expected = {
         "healthy_run.jsonl": [],
-        "injected_error_cascade.jsonl": [("error_cascade", "22", 1.0)],
+        # Graded scoring (issue #538): the cascade first crosses the default
+        # threshold at step 22 with 3 consecutive errors, so the score is the
+        # first-crossing 0.5 -- not the flat 1.0 it was before -- matching the
+        # loop fixture's first crossing.
+        "injected_error_cascade.jsonl": [("error_cascade", "22", 0.5)],
         "injected_governance_decay.jsonl": [("loop", "4", 0.5)],
         "injected_latency_spike.jsonl": [
             ("latency_anomaly", str(i), 1.0) for i in range(40, 52)

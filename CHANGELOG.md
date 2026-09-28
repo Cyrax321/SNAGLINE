@@ -42,6 +42,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so PyPI renders a changelog entry in the project sidebar (#467).
 
 ### Fixed
+- The `error_cascade` score is graded again. The alarm fires *at* the
+  threshold, so `n / threshold` was always `>= 1` and the `min` clamp was dead
+  code: every alert, from a marginal "3 errors in 10 steps" to a total tool
+  outage, was emitted at `1.0` / `critical`, and the pre-breach warning band
+  was unreachable. The score now grades in bands on how far the cascade has run
+  past its threshold (`0.5` at the crossing, `0.8` at 2x, `1.0` at 3x), and
+  the dedupe marker tracks the band instead of a bare boolean so a cascade that
+  keeps deepening escalates rather than being silenced for the rest of the
+  episode. A first crossing is now a `warning`; a genuine outage still reaches
+  `min_severity_for_halt` (`0.8`), which the flat-`1.0` score and a
+  first-crossing-only `0.5` both failed to distinguish (#538).
 - `TokenRunawayDetector.load_state` now publishes its restored state only once
   the whole snapshot has parsed, so a malformed entry leaves the detector on
   its live state like every other detector (#417 hardened them; this one was

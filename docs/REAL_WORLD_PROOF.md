@@ -131,6 +131,16 @@ The same risk, delivered over HTTP to the sidecar and printed by it:
 [sidecar] RECEIVED risk -> trigger=error_cascade score=0.8 detail=3 consecutive errors
 ```
 
+> **Note on the score.** The `0.8` above is the capture as it was emitted on
+> the build the run was made against, and is kept verbatim. That build scored
+> the cascade with a fixed constant. The grading has since been corrected
+> (issue #538): the score now scales with how far the cascade has run past the
+> threshold, so this same first crossing -- 3 consecutive errors against the
+> default `cascade_consecutive_threshold` of 3 -- reports `score: 0.5`
+> (severity `warning`) today, escalating toward `1.0` as the cascade deepens.
+> Everything else in the record above (trigger, detail, episode/step ids) is
+> unchanged.
+
 ### 4.2 Latency anomaly: real model slowness
 
 Mode `error`, a ~23-step task (weather + sensor + flaky + summary). The free
@@ -234,7 +244,7 @@ PYTHONPATH=src python examples/real_time_webhook_demo.py \
     --model openai/gpt-oss-20b:free --mode error
 
 # Terminal 1 now prints, for each real detection:
-#   [sidecar] RECEIVED risk -> trigger=error_cascade score=0.8 detail=3 consecutive errors
+#   [sidecar] RECEIVED risk -> trigger=error_cascade score=0.5 detail=3 consecutive errors
 # Inspect everything received:  curl -s http://127.0.0.1:8787/risks
 ```
 
