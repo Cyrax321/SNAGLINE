@@ -600,6 +600,8 @@ def make_handler(
         snagline_monitor: Any = None
         snagline_tracker: Any = None
         snagline_risks: Any = None
+        # Guards snagline_risks; set alongside it in make_handler (issue #543).
+        snagline_risks_lock: Any = None
         snagline_auth: str | None = None
         snagline_max_body: int = 1_000_000
         snagline_collector: Any = None
@@ -719,9 +721,15 @@ def make_handler(
             if split.path == "/metrics":
                 self._serve_metrics(parse_qs(split.query), head_only=head_only)
             elif split.path == "/risks":
-                self._respond(
-                    200, {"risks": list(self.snagline_risks)}, head_only=head_only
-                )
+                # Snapshot under the lock rather than passing the deque
+                # straight to _respond: the deque is shared by every handler
+                # thread, and list(deque) iterates it while a POST on another
+                # thread appends -- which, at maxlen, also frees the leftmost
+                # block the iterator may still be pointing at. deque iteration
+                # takes no internal lock, so serialize both ends (issue #543).
+                with self.snagline_risks_lock:
+                    risks = list(self.snagline_risks)
+                self._respond(200, {"risks": risks}, head_only=head_only)
             elif split.path == "/directive":
                 self._serve_directive(head_only=head_only)
             else:
@@ -876,7 +884,11 @@ def make_handler(
             except (ValueError, json.JSONDecodeError):
                 self._respond(400, {"error": "invalid risk JSON"})
                 return
-            self.snagline_risks.append(risk)
+            # Serialize with the GET side: an append past maxlen frees the
+            # leftmost block a concurrent deque iterator may still be reading
+            # (issue #543).
+            with self.snagline_risks_lock:
+                self.snagline_risks.append(risk)
             logger.info("snagline sidecar received risk: %s", risk)
             print(
                 f"[sidecar] RECEIVED risk -> trigger={risk.get('trigger')} "
@@ -1284,6 +1296,9 @@ def make_handler(
     # Bounded: POST /risks is an open-ended ingest point, so retain only the
     # most recent max_risks entries rather than growing without limit.
     _Handler.snagline_risks = deque(maxlen=max(1, max_risks))
+    # The deque is read on GET /risks and written on POST /risks from different
+    # handler threads; both ends serialize on this lock (issue #543).
+    _Handler.snagline_risks_lock = threading.Lock()
     _Handler.snagline_auth = auth_token
     if max_body_bytes <= 0:
         # do_POST compares ``length > snagline_max_body`` with a strict ``>``,
