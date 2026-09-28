@@ -1368,19 +1368,32 @@ class _TLSThreadingHTTPServer(ThreadingHTTPServer):
     its own thread, not the accept loop: one slow or hostile peer cannot
     freeze every other sender (the failure mode of wrapping the listener
     itself, where ``accept()`` performs the handshake inline).
+
+    The accepted socket also gets the configured read timeout *before* it is
+    wrapped, so the handshake phase is bounded too (issue #542). Without it the
+    timeout only takes effect in ``StreamRequestHandler.setup`` -- *after*
+    ``wrap_socket`` returns -- and a peer that never sends its ClientHello
+    parks its worker thread and socket FD forever; a few hundred such peers
+    exhaust both and the sidecar stops serving.
     """
 
     def __init__(
         self,
         *args: Any,
         snagline_ssl_context: ssl.SSLContext,
+        snagline_read_timeout: float,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
         self.snagline_ssl_context = snagline_ssl_context
+        self.snagline_read_timeout = snagline_read_timeout
 
     def finish_request(self, request: Any, client_address: Any) -> None:
         try:
+            # Bound the handshake: wrap_socket() drives it synchronously with
+            # do_handshake_on_connect=True, and this socket has no timeout
+            # until setup() runs on the other side of this call.
+            request.settimeout(self.snagline_read_timeout)
             tls_request = self.snagline_ssl_context.wrap_socket(
                 request, server_side=True
             )
@@ -1388,6 +1401,8 @@ class _TLSThreadingHTTPServer(ThreadingHTTPServer):
             # Failed handshake (plaintext probe against the TLS port, port
             # scan, stale client): drop this one connection and keep serving.
             # Fail-open per project.md §1.2; never surface as a serving error.
+            # socket.timeout is a subclass of OSError, so a handshake that
+            # stalls past the read timeout lands here as well.
             logger.debug(
                 "snagline sidecar: TLS handshake failed from %s:%s",
                 client_address[0],
@@ -1422,7 +1437,8 @@ def make_server(
     HTTPS directly (issue #120): connections are wrapped server-side via
     stdlib ``ssl`` with the handshake running on each connection's own
     worker thread. Without them the server is plain HTTP, exactly as before.
-    ``read_timeout`` bounds stalled body reads (issue #130); ``None`` resolves
+    ``read_timeout`` bounds stalled body reads (issue #130) and, with TLS on,
+    the handshake itself (issue #542); ``None`` resolves
     via ``SNAGLINE_SERVER_READ_TIMEOUT`` / ``Config.server_read_timeout``.
     ``episode_ttl_seconds`` sets the TTL for ``snagline_episodes_active`` ids;
     ``None`` resolves via ``SNAGLINE_EPISODE_TTL_SECONDS`` / ``Config.episode_ttl_seconds``
@@ -1431,19 +1447,25 @@ def make_server(
     every handshake and verifies it against that CA bundle (issue #145).
     """
     tls_context = _resolve_ssl_context(ssl_context, certfile, keyfile, client_ca)
+    # Resolve once and share it with the handler so the handshake bound here
+    # and the body-read bound in setup() are always the same number.
+    resolved_read_timeout = _resolve_read_timeout(read_timeout)
     handler = make_handler(
         monitor,
         auth_token,
         max_body_bytes,
         max_risks,
         metrics_format,
-        read_timeout,
+        resolved_read_timeout,
         episode_ttl_seconds,
     )
     if tls_context is None:
         return ThreadingHTTPServer((host, port), handler)
     return _TLSThreadingHTTPServer(
-        (host, port), handler, snagline_ssl_context=tls_context
+        (host, port),
+        handler,
+        snagline_ssl_context=tls_context,
+        snagline_read_timeout=resolved_read_timeout,
     )
 
 

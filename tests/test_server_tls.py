@@ -14,6 +14,7 @@ import socket
 import ssl
 import subprocess
 import threading
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -102,6 +103,16 @@ def _request_tls(method: str, base: str, path: str, **kw: Any) -> tuple[int, Any
         return int(exc.code), json.loads(exc.read())
 
 
+def _wait_until(predicate: Any, timeout: float) -> bool:
+    """Poll ``predicate`` until it is true or ``timeout`` seconds elapse."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.05)
+    return predicate()
+
+
 @requires_openssl
 def test_tls_handshake_serves_health_over_https(tmp_path) -> None:
     server, base = _start_tls_server(tmp_path)
@@ -127,6 +138,37 @@ def test_stalled_handshake_does_not_block_other_connections(tmp_path) -> None:
     host, port = server.server_address[0], server.server_address[1]
     stalled = socket.create_connection((host, port), timeout=5)
     try:
+        status, body = _request_tls("GET", base, "/health")
+        assert status == 200
+        assert body == {"status": "ok"}
+    finally:
+        stalled.close()
+        server.shutdown()
+        server.server_close()
+
+
+@requires_openssl
+def test_stalled_handshake_is_reclaimed_after_read_timeout(tmp_path) -> None:
+    # Companion to the above: the accept loop staying free is not enough. The
+    # handshake phase itself is bounded by the read timeout, so a client that
+    # opens a connection and never sends its ClientHello gives its worker
+    # thread and socket FD back instead of parking them forever (issue #542).
+    server, base = _start_tls_server(tmp_path, read_timeout=0.5)
+    host, port = server.server_address[0], server.server_address[1]
+    baseline = threading.active_count()
+    stalled = socket.create_connection((host, port), timeout=5)
+    try:
+        # First confirm the worker thread actually spawned for this stalled
+        # connection, so the count falling back below is a real reclaim and
+        # not a connect that never got accepted.
+        assert _wait_until(lambda: threading.active_count() > baseline, timeout=5), (
+            "stalled handshake never spawned a worker thread"
+        )
+        # Then wait for it to be reclaimed: comfortably past read_timeout.
+        assert _wait_until(lambda: threading.active_count() <= baseline, timeout=10), (
+            "stalled handshake parked its worker thread past the read timeout"
+        )
+        # The sidecar is still healthy for well-behaved clients.
         status, body = _request_tls("GET", base, "/health")
         assert status == 200
         assert body == {"status": "ok"}
