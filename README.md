@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/architecture.svg" alt="SNAGLINE Banner" width="100%" />
+  <img src="./docs/snagline-banner.png" alt="SNAGLINE — Real-Time Failure Detection for AI Agents" width="100%" />
 </p>
 
 <p align="center">
@@ -87,7 +87,7 @@ PYTHONPATH=src python3 examples/real_agent_demo.py --mode loop   # real LangChai
 
 SNAGLINE separates **detection logic** from **agent logic**. An adapter normalizes framework-specific events into a canonical `StepEvent` schema. The `Monitor` runs every registered detector against each event. If a detector fires, the `FailureRisk` is dispatched to every registered sink.
 
-![SNAGLINE architecture](docs/architecture.svg)
+![SNAGLINE architecture](./docs/snagline-banner-white-minimal.png)
 
 The data flow, in words:
 
