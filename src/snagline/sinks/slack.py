@@ -27,6 +27,7 @@ from snagline.risk import (
     FailureRisk,
 )
 from snagline.sinks.base import (
+    _MAX_SINK_RESPONSE_BYTES,
     bounded_post,
     describe_failure,
     redacted_destination,
@@ -83,7 +84,7 @@ class SlackSink:
             method="POST",
         )
         try:
-            bounded_post(req, self._timeout)
+            bounded_post(req, self._timeout, _MAX_SINK_RESPONSE_BYTES)
         except Exception as exc:
             # The URL is the credential -- a Slack incoming webhook embeds its
             # secret as the final path segment -- and a failed POST is the

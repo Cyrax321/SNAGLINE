@@ -33,7 +33,7 @@ def test_emit_posts_failure_risk_fields_only() -> None:
         def __exit__(self, *exc):
             return False
 
-        def read(self):
+        def read(self, amt=None):
             return b"{}"
 
     def fake_urlopen(req, timeout=None):
@@ -85,7 +85,10 @@ class _Resp:
     def __exit__(self, *exc):
         return False
 
-    def read(self):
+    # ``amt`` models ``http.client.HTTPResponse.read``, which the sinks call
+    # with their response cap (issue #560); a bare ``read()`` would raise
+    # ``TypeError`` and be swallowed as a delivery failure.
+    def read(self, amt=None):
         return b"{}"
 
 

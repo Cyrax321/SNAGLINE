@@ -136,6 +136,18 @@ _MAX_INFLIGHT_POSTS = 64
 _inflight_posts = threading.BoundedSemaphore(_MAX_INFLIGHT_POSTS)
 
 
+# The wall-clock deadline bounds *time*, not memory: a fast endpoint that
+# streams an endless or chunked body allocates without bound well inside a
+# 2 s budget, and every parked POST can carry its own unbounded buffer. The
+# sinks discard the reply -- a delivery is decided by the status code, not by
+# anything in the body -- so reading it at all is courtesy, and a small
+# ceiling is behaviour-preserving. Mirrors the halt webhook's own
+# ``_MAX_HALT_RESPONSE_BYTES`` (monitor.py), which parses its reply and so
+# keeps a like-for-like cap; 64 KiB is generous for an endpoint's one-line
+# ack and vanishingly small next to an unbounded stream (issue #560).
+_MAX_SINK_RESPONSE_BYTES = 65_536
+
+
 class SinkBusyError(RuntimeError):
     """Raised when the in-flight sink-POST cap is full, so no POST was started.
 
@@ -181,8 +193,9 @@ def bounded_post(
 
     ``max_bytes`` caps the read, so a malicious or broken endpoint cannot make
     the exchange unbounded by streaming an endless body. The sinks pass
-    ``None`` because they discard the reply anyway; the halt webhook passes
-    its existing response cap.
+    ``_MAX_SINK_RESPONSE_BYTES`` -- they discard the reply, so only the status
+    code decides the delivery -- and the halt webhook passes its own cap
+    because it parses the body into an enforcement directive.
 
     Raises whatever the exchange raised once that is known, or ``TimeoutError``
     if the deadline passed first. Raises ``SinkBusyError`` without starting the

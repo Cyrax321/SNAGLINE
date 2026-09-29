@@ -29,6 +29,7 @@ from snagline.risk import (
     FailureRisk,
 )
 from snagline.sinks.base import (
+    _MAX_SINK_RESPONSE_BYTES,
     bounded_post,
     describe_failure,
     redacted_destination,
@@ -87,7 +88,7 @@ class WebhookSink:
             method="POST",
         )
         try:
-            bounded_post(req, self._timeout)
+            bounded_post(req, self._timeout, _MAX_SINK_RESPONSE_BYTES)
         except Exception as exc:
             # The URL is the credential -- it can carry basic auth
             # (``user:pass@host``) and, for some providers, a secret path

@@ -164,7 +164,9 @@ def test_a_fast_post_is_delivered_and_silent(caplog) -> None:
         def __exit__(self, *exc):
             return False
 
-        def read(self):
+        # ``amt`` models ``http.client.HTTPResponse.read``, which the sinks now
+        # call with their response cap (issue #560).
+        def read(self, amt=None):
             return b"ok"
 
     def fake_urlopen(req, timeout=None):

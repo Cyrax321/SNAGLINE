@@ -33,7 +33,12 @@ from snagline.config import Config
 from snagline.events import StepEvent
 from snagline.monitor import Monitor
 from snagline.risk import FailureRisk
-from snagline.sinks.base import AlertSink, bounded_post, redacted_destination
+from snagline.sinks.base import (
+    _MAX_SINK_RESPONSE_BYTES,
+    AlertSink,
+    bounded_post,
+    redacted_destination,
+)
 
 # Scaled benchmark-leg knobs, mirrored from
 # ``benchmarks.overhead_benchmark`` (which is not importable from an installed
@@ -779,7 +784,7 @@ def _cmd_hook(args: argparse.Namespace) -> int:
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            bounded_post(req, args.timeout)
+            bounded_post(req, args.timeout, _MAX_SINK_RESPONSE_BYTES)
         except Exception as exc:
             # The URL can carry basic auth (``user:pass@host``), and a failed
             # forward is when an operator reads this line (issue #390).

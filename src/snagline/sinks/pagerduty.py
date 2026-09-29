@@ -25,7 +25,11 @@ from snagline.risk import (
     SEVERITY_WARNING,
     FailureRisk,
 )
-from snagline.sinks.base import bounded_post, format_sink_repr
+from snagline.sinks.base import (
+    _MAX_SINK_RESPONSE_BYTES,
+    bounded_post,
+    format_sink_repr,
+)
 
 logger = logging.getLogger("snagline")
 
@@ -104,7 +108,7 @@ class PagerDutySink:
             method="POST",
         )
         try:
-            bounded_post(req, self._timeout)
+            bounded_post(req, self._timeout, _MAX_SINK_RESPONSE_BYTES)
         except Exception:
             logger.exception(
                 "snagline PagerDuty sink POST failed; ignoring (fail-open)"

@@ -57,6 +57,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   horizontal-swipe pipeline, tube-light logo effect) (#291).
 
 ### Fixed
+- The network sinks no longer buffer an entire reply they then throw away.
+  `bounded_post` documents its `max_bytes` parameter because "a malicious or
+  broken endpoint cannot make the exchange unbounded by streaming an endless
+  body," but the webhook, Slack, and PagerDuty sinks -- and the
+  `snagline hook --url` forward -- all called it as `bounded_post(req, timeout)`,
+  so the cap never applied. The wall-clock deadline bounds *time*, not memory:
+  a fast endless or chunked stream allocates without bound well inside a 2 s
+  budget, and with the pooled POSTs of #423 the address space multiplies. The
+  halt webhook was the one caller passing its cap. All four fire-and-forget
+  call sites now pass a shared 64 KiB `_MAX_SINK_RESPONSE_BYTES`, and a
+  delivery is decided by the status code, not by anything in the body, so the
+  small ceiling is behaviour-preserving (#560).
 - The `error_cascade` score is graded again. The alarm fires *at* the
   threshold, so `n / threshold` was always `>= 1` and the `min` clamp was dead
   code: every alert, from a marginal "3 errors in 10 steps" to a total tool
