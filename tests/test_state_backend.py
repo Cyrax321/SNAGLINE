@@ -486,6 +486,8 @@ def test_redact_url(url, expected):
     from snagline.state import _redact_url
 
     assert _redact_url(url) == expected
+
+
 # --- Redis backend: lock TTL and renewal (issue #326) -----------------------
 #
 # CI does not install redis, so the tests below inject a time-aware fake
