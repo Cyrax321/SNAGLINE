@@ -1774,7 +1774,7 @@ $$('a[href^="#"]').forEach(function(a){
     { text: '<span class="dm">|</span> step 03 &middot; tool:fetch_url("https://api.external.com") <span class="er">err</span> <span class="dm">429 RateLimit</span>', delay: 380 },
     { text: '<span class="dm">|</span> step 04 &middot; tool:fetch_url("https://api.external.com") <span class="er">err</span> <span class="dm">429 RateLimit (retry 1)</span>', delay: 380 },
     { text: '<span class="dm">|</span> step 05 &middot; tool:fetch_url("https://api.external.com") <span class="er">err</span> <span class="dm">429 RateLimit (retry 2)</span>', delay: 420 },
-    { text: '<span class="er">!</span> <span class="er">SNAG INTERCEPT</span> CascadeDetector fired @ step 5 <span class="dm">(streak=3, score=1.00)</span>', delay: 550 },
+    { text: '<span class="er">!</span> <span class="er">SNAG INTERCEPT</span> <span class="ac">error_cascade</span> fired @ step 5 <span class="dm">(trigger=error_cascade, streak=3, score=1.00)</span>', delay: 550 },
     { text: '<span class="vi">⚡</span> <span class="vi">ACTION</span> Dispatched <span class="ac">AGENT_HALT</span> & saved checkpoint snapshot', delay: 480 },
     { text: '<span class="ok">✓</span> <span class="ok">SAVED</span> 13 runaway retry loops prevented <span class="dm">(~$14.20 OpenAI API spend avoided)</span>', delay: 420 },
     { text: '<span class="dm">──────────────────────────────────────────────────────────</span>', delay: 200 },
@@ -1814,44 +1814,101 @@ $$('a[href^="#"]').forEach(function(a){
     stopCurrent();
     currentCmd = 'bench';
     setActiveTab('bench');
-    if(titleEl) titleEl.innerHTML = 'snagline bench &middot; 1,000 steps';
+    if(titleEl) titleEl.innerHTML = 'snagline bench &middot; 200,000 steps';
     setBadge('benchmarking', 'var(--accent)', true);
 
     addLine('<span class="ts">' + getTimeStr() + '</span> <span class="dm">$</span> snagline bench', 'cmd-echo');
 
-    var t0 = performance.now();
-    var buf = new Array(128);
-    var h = 2166136261;
-    for(var k=0; k<1000; k++){
-      buf[k & 127] = k;
-      h = Math.imul(h ^ k, 16777619);
-    }
-    var elapsedMs = performance.now() - t0;
-    var perOpUs = Math.max(0.12, (elapsedMs / 1000 * 1000)).toFixed(2);
+    /* The real `snagline bench` prints no per-detector breakdown -- it reports
+       percentiles for the whole per-step path. Measure in blocks here so the
+       displayed median/p99 are real percentiles of a real in-browser sample
+       rather than hardcoded constants, and say so.
 
+       Three things make the numbers mean something:
+         - the ring is sized to the window and READ before written, so a full
+           ring actually evicts. A write-only array that merely grows is not a
+           ring, and the scaled legs below would all measure the same work.
+         - one discarded warmup leg runs first, because the opening blocks
+           absorb V8's compile/optimize cost (~11x steady state) and would
+           otherwise become the entire p99 tail.
+         - one sample per block, not one per op. Replicating a block's per-op
+           cost blockSize times makes p99 a function of blockCount alone:
+           with 40 blocks the 99th percentile *is* the worst block, so a single
+           GC pause reads as the tail latency. Longer blocks also amortise the
+           timer, which is why blockSize is large relative to blockCount. */
+    function benchPercentiles(makeOp, windowSize, blockSize, blockCount){
+      var samples = new Array(blockCount);
+      var buf = new Float64Array(windowSize);
+      for(var b=0; b<blockCount; b++){
+        var t0 = performance.now();
+        for(var k=0; k<blockSize; k++){ makeOp(buf, k + b * blockSize); }
+        /* A block the timer cannot resolve at all reads 0.00; clamp to a hair
+           above timer resolution so nothing prints as a zero measurement. */
+        samples[b] = Math.max((performance.now() - t0) / blockSize * 1000, 0.005);
+      }
+      var sorted = samples.slice().sort(function(a, z){ return a - z; });
+      return {
+        median: sorted[Math.floor(blockCount / 2)],
+        p99: sorted[Math.min(blockCount - 1, Math.ceil(blockCount * 0.99) - 1)]
+      };
+    }
+    var hashState = 2166136261;
+    /* 2,000 x 100 = 200,000 steps, the same count the real command reports, and
+       long enough per block that the measurement is stable run to run. */
+    var BENCH_BLOCK = 2000, BENCH_BLOCKS = 100, BENCH_WARMUP = 2000;
+    benchPercentiles(function(buf, k){
+      var prior = buf[k & 127];
+      buf[k & 127] = prior + k;
+      hashState = Math.imul(hashState ^ k, 16777619);
+    }, 128, BENCH_WARMUP, 8);  /* discarded: JIT only */
+    var fullStep = benchPercentiles(function(buf, k){
+      var prior = buf[k & 127];
+      buf[k & 127] = prior + k;
+      hashState = Math.imul(hashState ^ k, 16777619);
+    }, 128, BENCH_BLOCK, BENCH_BLOCKS);
+    var ingestOnly = benchPercentiles(function(buf, k){
+      var prior = buf[k & 127];
+      buf[k & 127] = prior + k;
+    }, 128, BENCH_BLOCK, BENCH_BLOCKS);
+    /* Scaled legs: the real command reruns ingest() at max_window=512/2048.
+       Here that is a genuinely larger ring, so these are an in-browser sample
+       of the shape, not a claim about the real pipeline. */
+    var scaled512 = benchPercentiles(function(buf, k){
+      var prior = buf[k & 511];
+      buf[k & 511] = prior + k;
+    }, 512, BENCH_BLOCK, BENCH_BLOCKS);
+    var scaled2048 = benchPercentiles(function(buf, k){
+      var prior = buf[k & 2047];
+      buf[k & 2047] = prior + k;
+    }, 2048, BENCH_BLOCK, BENCH_BLOCKS);
+    var medUs = Math.max(fullStep.median, 0.01).toFixed(2);
+    var badgeText = medUs + 'µs/step';
+
+    /* Mirrors the labels and the order _cmd_bench() actually prints. */
     var BENCH_LINES = [
-      { text: '<span class="ok">+</span> benchmarking pipeline over 1,000 synthetic agent events...', delay: 280 },
-      { text: '<span class="dm">|</span> [1/4] RingBuffer (step event ingestion, O(1))     : <span class="ac">' + (perOpUs * 0.9).toFixed(2) + ' µs/op</span>', delay: 280 },
-      { text: '<span class="dm">|</span> [2/4] LoopDetector (FNV-1a ngram hash sequence)  : <span class="ac">0.62 µs/op</span>', delay: 280 },
-      { text: '<span class="dm">|</span> [3/4] CascadeDetector (bitmask status rolling)   : <span class="ac">0.24 µs/op</span>', delay: 280 },
-      { text: '<span class="dm">|</span> [4/4] LatencyCUSUM (recursive tabular mean-drift): <span class="ac">0.36 µs/op</span>', delay: 280 },
+      { text: '<span class="ok">+</span> snagline overhead benchmark <span class="dm">(in-browser sample; run <span class="ac">snagline bench</span> for real numbers)</span>', delay: 280 },
+      { text: '<span class="dm">|</span> steps measured : <span class="ac">200,000</span>', delay: 240 },
+      { text: '<span class="dm">|</span> median        : <span class="ac">' + medUs + ' us/step</span>', delay: 240 },
+      { text: '<span class="dm">|</span> p99           : <span class="ac">' + Math.max(fullStep.p99, 0.01).toFixed(2) + ' us/step</span>', delay: 240 },
+      { text: '<span class="dm">|</span> ingest only   : median <span class="ac">' + Math.max(ingestOnly.median, 0.01).toFixed(2) + ' us/step</span>, p99 <span class="ac">' + Math.max(ingestOnly.p99, 0.01).toFixed(2) + ' us/step</span>', delay: 240 },
+      { text: '<span class="dm">|</span> scaled max_window=512  : median <span class="ac">' + Math.max(scaled512.median, 0.01).toFixed(2) + ' us/step</span>, p99 <span class="ac">' + Math.max(scaled512.p99, 0.01).toFixed(2) + ' us/step</span>', delay: 240 },
+      { text: '<span class="dm">|</span> scaled max_window=2048 : median <span class="ac">' + Math.max(scaled2048.median, 0.01).toFixed(2) + ' us/step</span>, p99 <span class="ac">' + Math.max(scaled2048.p99, 0.01).toFixed(2) + ' us/step</span>', delay: 240 },
       { text: '<span class="dm">──────────────────────────────────────────────────────────</span>', delay: 180 },
-      { text: '<span class="ok">✓</span> <span class="ok">MEDIAN PIPELINE OVERHEAD</span> : <span class="hl">2.08 µs / step</span> <span class="dm">(target &lt; 5.0µs)</span>', delay: 350 },
-      { text: '<span class="dm">|</span> Memory allocations: <span class="ac">0 bytes/step</span> (zero GC pressure, O(1) space)', delay: 250 },
-      { text: '<span class="dm">|</span> Latency overhead vs LLM inference: <span class="ac">&lt; 0.001%</span>', delay: 250 }
+      { text: '<span class="ok">✓</span> <span class="ok">MEDIAN PIPELINE OVERHEAD</span> : <span class="hl">' + medUs + ' µs / step</span> <span class="dm">(target &lt; 5.0µs)</span>', delay: 350 },
+      { text: '<span class="dm">|</span> Published figure for the real pipeline on Apple M1: <span class="hl">2.43 µs / step</span> ingest-only <span class="dm">(README, Empirical Verification)</span>', delay: 250 }
     ];
 
     var step = 0;
     function nextStep(){
       if(step >= BENCH_LINES.length){
-        setBadge('2.08µs/step', 'var(--green)', false);
+        setBadge(badgeText, 'var(--green)', false);
         return;
       }
       var b = BENCH_LINES[step++];
       addLog(null, null, b.text);
       if(REDUCED){
         while(step < BENCH_LINES.length){ addLog(null, null, BENCH_LINES[step++].text); }
-        setBadge('2.08µs/step', 'var(--green)', false);
+        setBadge(badgeText, 'var(--green)', false);
         return;
       }
       runningTimer = setTimeout(nextStep, b.delay);
@@ -1861,12 +1918,14 @@ $$('a[href^="#"]').forEach(function(a){
 
   /* ───── COMMAND: AUDIT ───── */
   var AUDIT_LINES = [
-    { text: '<span class="ok">+</span> detector suite verification (5/5 configured & online):', delay: 260 },
-    { text: '<span class="dm">|</span> <span class="ac">LoopDetector</span>        <span class="ok">[ONLINE]</span> window=16, ngram=3, threshold=0.75', delay: 240 },
-    { text: '<span class="dm">|</span> <span class="ac">CascadeDetector</span>     <span class="ok">[ONLINE]</span> streak=3, status=FAIL_EARLY', delay: 240 },
-    { text: '<span class="dm">|</span> <span class="ac">LatencyCUSUM</span>        <span class="ok">[ONLINE]</span> target=120ms, slack=0.50σ, h=3.0σ', delay: 240 },
-    { text: '<span class="dm">|</span> <span class="ac">GoalDriftDetector</span>   <span class="ok">[ONLINE]</span> rolling cosine similarity, cutoff=0.45', delay: 240 },
-    { text: '<span class="dm">|</span> <span class="ac">EnsembleVoter</span>       <span class="ok">[ONLINE]</span> calibrated noisy-OR fusion, weight=1.00', delay: 240 },
+    { text: '<span class="ok">+</span> detector suite verification (3/3 tier-1 configured & online):', delay: 260 },
+    { text: '<span class="dm">|</span> <span class="ac">LoopDetector</span>           <span class="ok">[ONLINE]</span> window=12, repeat_threshold=3, sha256 signatures', delay: 240 },
+    { text: '<span class="dm">|</span> <span class="ac">ErrorCascadeDetector</span>  <span class="ok">[ONLINE]</span> window=10, error_threshold=3, consecutive=3', delay: 240 },
+    { text: '<span class="dm">|</span> <span class="ac">LatencyAnomalyDetector</span> <span class="ok">[ONLINE]</span> Welford CUSUM, k=0.5σ, h=5.0σ, min_samples=5', delay: 240 },
+    { text: '<span class="dm">──────────────────────────────────────────────────────────</span>', delay: 180 },
+    { text: '<span class="dm">|</span> 9 further triggers are opt-in and ship inert: stagnation, goal_drift,', delay: 240 },
+    { text: '<span class="dm">|</span> token_runaway, meltdown, silent_abort, side_effect_duplicate,', delay: 240 },
+    { text: '<span class="dm">|</span> governance_decay, budget_breach, ml_ensemble.', delay: 240 },
     { text: '<span class="dm">──────────────────────────────────────────────────────────</span>', delay: 180 },
     { text: '<span class="ok">✓</span> <span class="ok">FAIL-OPEN ISOLATION</span> : <span class="hl">Armored</span> (target agent cannot crash)', delay: 280 },
     { text: '<span class="dm">|</span> External dependencies: <span class="ac">0</span> (Python 3.10+ standard library only)', delay: 240 }
@@ -1876,7 +1935,7 @@ $$('a[href^="#"]').forEach(function(a){
     stopCurrent();
     currentCmd = 'audit';
     setActiveTab('audit');
-    if(titleEl) titleEl.innerHTML = 'snagline audit &middot; 5 detectors';
+    if(titleEl) titleEl.innerHTML = 'snagline audit &middot; 3 tier-1 detectors';
     setBadge('auditing', 'var(--violet)', true);
 
     addLine('<span class="ts">' + getTimeStr() + '</span> <span class="dm">$</span> <span class="ac">demo:</span> snagline audit --detectors <span class="dm">(in-browser visualization -- not a real snagline command)</span>', 'cmd-echo');

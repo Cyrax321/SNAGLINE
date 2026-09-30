@@ -485,6 +485,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from the same ledger clock. Combined with the re-anchoring bound above, a
   CONTINUUM episode now degrades to a dropped interval rather than a fabricated
   breach, so mixing it with a monotonic adapter is safe (#532).
+- The landing page's demo panels no longer describe machinery the package does
+  not contain. The `bench` demo printed a per-detector breakdown
+  (`[1/4] RingBuffer`, `[2/4] LoopDetector (FNV-1a ngram hash sequence)`,
+  `[3/4] CascadeDetector (bitmask status rolling)`, `[4/4] LatencyCUSUM
+  (recursive tabular mean-drift)`) that the real `snagline bench` never
+  produces and whose named mechanisms do not exist anywhere in the source; it
+  now prints the percentiles the real command reports, measured live in the
+  browser and labelled as an in-browser sample with the published figure cited
+  to the README. The `audit` demo called itself "detector suite verification
+  (5/5 configured & online)" while listing `CascadeDetector`, `LatencyCUSUM`
+  and `EnsembleVoter` -- none of which exist -- with invented parameters
+  (`ngram=3`, `threshold=0.75`, `h=3.0σ`) that contradict the real Config
+  defaults; it now lists the three detectors `Monitor.default()` actually
+  wires (`LoopDetector` window=12/repeat_threshold=3, `ErrorCascadeDetector`
+  window=10/error_threshold=3/consecutive=3, `LatencyAnomalyDetector`
+  Welford CUSUM k=0.5σ/h=5.0σ/min_samples=5) and names the nine opt-in
+  triggers from `TriggerType` (#565). Regression tests derive the expected
+  names and defaults from the code rather than duplicating them, so the panels
+  cannot drift from the wiring again.
 
 ### Security
 - The sidecar's mutating `POST` endpoints now check where a request came from,
