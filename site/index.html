@@ -7,7 +7,7 @@
 <meta name="description" content="Zero-dependency, O(1) per-step monitoring that catches loops, error cascades, latency drift, and goal drift in any AI agent. ~2 microseconds per step.">
 <meta name="theme-color" content="#07070a">
 <meta property="og:title" content="SNAGLINE — Catch agent failures before they cascade">
-<meta property="og:description" content="Real-time failure detection for AI agents. Zero dependencies. 2.08 microseconds per step. Never crashes the thing it monitors.">
+<meta property="og:description" content="Real-time failure detection for AI agents. Zero dependencies. 1.53 microseconds per step. Never crashes the thing it monitors.">
 <meta property="og:type" content="website">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -558,6 +558,14 @@ canvas#sig{width:100%;flex:1;min-height:190px;display:block}
 .tag.lat{background:var(--amber-dim);color:var(--amber)}
 .tag.drift{background:var(--violet-dim);color:var(--violet)}
 .tag.ml{background:var(--green-dim);color:var(--green)}
+.tag.stag{background:var(--violet-dim);color:var(--violet)}
+.tag.tok{background:var(--amber-dim);color:var(--amber)}
+.tag.melt{background:var(--red-dim);color:var(--red)}
+.tag.abort{background:var(--accent-dim);color:var(--accent)}
+.tag.guard{background:var(--green-dim);color:var(--green)}
+.tag.compact{background:var(--violet-dim);color:var(--violet)}
+.tag.core{background:var(--green-dim);color:var(--green)}
+.tag.opt{background:var(--amber-dim);color:var(--amber)}
 .dcard h3{font-size:clamp(1.2rem,2vw,1.6rem);letter-spacing:-0.03em;line-height:1.05}
 .dcard p{font-size:.9rem;color:var(--ink-2);line-height:1.7}
 .dcard .algo{margin-top:auto;padding-top:1.1rem;border-top:1px solid var(--line);
@@ -755,7 +763,7 @@ footer{border-top:1px solid var(--line);padding:2.75rem var(--pad);max-width:150
 <header class="hero" id="top">
   <div class="hero-bg" aria-hidden="true"><div class="mesh"></div><div class="orb"></div></div>
   <div class="hero-in" id="heroIn">
-    <div class="eyebrow rv"><b></b> Open source <s>/</s> Zero dependencies <s>/</s> 2.08&#181;s per step</div>
+    <div class="eyebrow rv"><b></b> Open source <s>/</s> Zero dependencies <s>/</s> 1.53&#181;s per step</div>
     <h1 class="kinetic" data-split>
       <span class="ln">Catch agent</span>
       <span class="ln pad">failures before</span>
@@ -839,10 +847,10 @@ footer{border-top:1px solid var(--line);padding:2.75rem var(--pad);max-width:150
 
 <!-- ░░ STATS ░░ -->
 <div class="stats" id="stats">
-  <div class="st"><div class="n" data-to="2.08" data-dec="2">0.00<u>&#181;s</u></div><div class="l">Median per step</div></div>
+  <div class="st"><div class="n" data-to="1.53" data-dec="2">0.00<u>&#181;s</u></div><div class="l">Median per step</div></div>
   <div class="st"><div class="n" data-to="0">0</div><div class="l">Required dependencies</div></div>
-  <div class="st"><div class="n" data-to="5">0</div><div class="l">Detectors built in</div></div>
-  <div class="st"><div class="n" data-to="201">0</div><div class="l">Tests in the suite</div></div>
+  <div class="st"><div class="n" data-to="11">0</div><div class="l">Detectors shipped</div></div>
+  <div class="st"><div class="n" data-to="1550">0</div><div class="l">Tests in the suite</div></div>
 </div>
 
 <!-- ░░ 01 · HOW IT WORKS ░░ -->
@@ -1001,7 +1009,7 @@ footer{border-top:1px solid var(--line);padding:2.75rem var(--pad);max-width:150
       <div class="body">
         <p>Every registered detector sees every event. O(1) amortised per step, no network calls, no LLM
           calls, no embeddings. Detectors reason over hashes, counts and timings only.</p>
-        <div class="chip">2.08&#181;s median &middot; 2.31&#181;s p99</div>
+        <div class="chip">1.53&#181;s median &middot; 1.66&#181;s p99</div>
       </div>
     </div>
     <div class="step rv">
@@ -1033,7 +1041,7 @@ footer{border-top:1px solid var(--line);padding:2.75rem var(--pad);max-width:150
     <div class="track-head">
       <div>
         <div class="slabel rv">02 &mdash; Detectors</div>
-        <h2 class="stitle" data-split>Five failure modes</h2>
+        <h2 class="stitle" data-split>Eleven detectors, three on by default</h2>
       </div>
       <div class="track-arrows">
         <button class="track-btn" id="railPrev" aria-label="Previous detector" title="Previous detector">&#8592;</button>
@@ -1042,21 +1050,21 @@ footer{border-top:1px solid var(--line);padding:2.75rem var(--pad);max-width:150
     </div>
     <div class="track-rail" id="rail">
       <div class="dcard" id="detectors">
-        <div class="top"><span class="no">01 / 05</span><span class="tag loop">loop</span></div>
+        <div class="top"><span class="no">01 / 11</span><span><span class="tag loop">loop</span> <span class="tag core">default</span></span></div>
         <h3>Loop detector</h3>
         <p>Catches retry storms and stuck agents. Keeps a sliding window of action signatures; if the
           same signature repeats N times inside W steps, it fires.</p>
         <div class="algo">Sliding window<br>+ SHA-256 action signatures</div>
       </div>
       <div class="dcard">
-        <div class="top"><span class="no">02 / 05</span><span class="tag casc">cascade</span></div>
+        <div class="top"><span class="no">02 / 11</span><span><span class="tag casc">cascade</span> <span class="tag core">default</span></span></div>
         <h3>Error cascade detector</h3>
         <p>Catches both fast cascades and slow-burn degradation. Two independent modes: N consecutive
-          errors, or N errors inside a recent window.</p>
+          errors, or N errors inside a recent window. Scores grade with severity rather than a flat 1.0.</p>
         <div class="algo">Consecutive counter<br>+ windowed counter</div>
       </div>
       <div class="dcard">
-        <div class="top"><span class="no">03 / 05</span><span class="tag lat">latency</span></div>
+        <div class="top"><span class="no">03 / 11</span><span><span class="tag lat">latency</span> <span class="tag core">default</span></span></div>
         <h3>Latency anomaly detector</h3>
         <p>Catches sustained performance regression rather than single slow calls. Per-tool running
           statistics, a frozen healthy baseline, and a cumulative-sum test. A warm-up period suppresses
@@ -1064,7 +1072,7 @@ footer{border-top:1px solid var(--line);padding:2.75rem var(--pad);max-width:150
         <div class="algo">Welford mean/variance<br>+ Page CUSUM + frozen baseline</div>
       </div>
       <div class="dcard">
-        <div class="top"><span class="no">04 / 05</span><span class="tag drift">goal drift</span></div>
+        <div class="top"><span class="no">04 / 11</span><span><span class="tag drift">goal drift</span> <span class="tag opt">opt-in</span></span></div>
         <h3>Goal-drift detector</h3>
         <p>Compares the live run against a persisted <em>healthy</em> baseline profile and flags rising
           error rates, latency several sigma past the healthy mean, and tools that never appeared in the
@@ -1072,12 +1080,61 @@ footer{border-top:1px solid var(--line);padding:2.75rem var(--pad);max-width:150
         <div class="algo">Structural baseline comparison<br>optional embedder for semantic drift</div>
       </div>
       <div class="dcard">
-        <div class="top"><span class="no">05 / 05</span><span class="tag ml">ensemble</span></div>
+        <div class="top"><span class="no">05 / 11</span><span><span class="tag ml">ensemble</span> <span class="tag opt">opt-in</span></span></div>
         <h3>ML ensemble orchestrator</h3>
         <p>Combines the base detectors into one stronger signal. The default combiner is a transparent
           noisy-OR over their scores, so confidence rises when independent detectors agree. Slot in a
           fitted model via one callable when you want to.</p>
         <div class="algo">noisy-OR: 1 &minus; &prod;(1 &minus; s&#7522;)<br>pluggable model hook</div>
+      </div>
+      <div class="dcard">
+        <div class="top"><span class="no">06 / 11</span><span><span class="tag stag">stagnation</span> <span class="tag opt">opt-in</span></span></div>
+        <h3>Stagnation detector</h3>
+        <p>Catches busy-but-discovering-nothing episodes. Tracks the share of never-before-seen action
+          signatures in a window; when novelty collapses below a floor for several consecutive windows
+          it fires once. Catches argument-varying loops that evade exact matching.</p>
+        <div class="algo">Novelty share of a sliding window<br>no baseline needed</div>
+      </div>
+      <div class="dcard">
+        <div class="top"><span class="no">07 / 11</span><span><span class="tag tok">budget</span> <span class="tag opt">opt-in</span></span></div>
+        <h3>Token runaway detector</h3>
+        <p>Catches unbounded token consumption and silence on long episodes. Tracks per-episode token
+          counts against a budget envelope, fires on runaway growth, and derives a wall-clock budget
+          and idle-gap signal from event timestamps &mdash; never the wall clock, so replay stays
+          deterministic.</p>
+        <div class="algo">Token budget envelope<br>+ timestamp-derived horizon</div>
+      </div>
+      <div class="dcard">
+        <div class="top"><span class="no">08 / 11</span><span><span class="tag melt">churn</span> <span class="tag opt">opt-in</span></span></div>
+        <h3>Meltdown detector</h3>
+        <p>Catches pathological tool churn. Measures the entropy of tool usage in a window and fires
+          when it is either too low &mdash; stuck hammering one tool &mdash; or too high, thrashing
+          across many tools without settling.</p>
+        <div class="algo">Windowed tool-usage entropy<br>low and high bands</div>
+      </div>
+      <div class="dcard">
+        <div class="top"><span class="no">09 / 11</span><span><span class="tag abort">abandoned</span> <span class="tag opt">opt-in</span></span></div>
+        <h3>Silent abort detector</h3>
+        <p>Catches abandoned episodes. Checks at end-of-episode for the expected completion signals
+          and fires when an episode ends without a terminal tool call or an explicit success &mdash;
+          the failure mode where an agent simply stops and nobody notices.</p>
+        <div class="algo">End-of-episode<br>completion-signal check</div>
+      </div>
+      <div class="dcard">
+        <div class="top"><span class="no">10 / 11</span><span><span class="tag guard">idempotency</span> <span class="tag opt">opt-in</span></span></div>
+        <h3>Side-effect guard</h3>
+        <p>Catches duplicate non-idempotent actions. Counts per-episode occurrences of
+          (episode, tool, signature) for steps marked side-effecting and fires on the second
+          occurrence &mdash; the second charge on the card, the second row deleted.</p>
+        <div class="algo">Per-(tool, signature) counter<br>gated on side_effect flag</div>
+      </div>
+      <div class="dcard">
+        <div class="top"><span class="no">11 / 11</span><span><span class="tag compact">governance</span> <span class="tag opt">opt-in</span></span></div>
+        <h3>Compaction tripwire</h3>
+        <p>Catches governance decay after context compaction. Tracks adapter-defined compaction pins
+          and fires when a pin is not re-confirmed within its grace window &mdash; the silent way an
+          agent drops a constraint it was supposed to keep honouring.</p>
+        <div class="algo">Compaction pins<br>+ grace-window re-confirmation</div>
       </div>
     </div>
     <div class="track-note" aria-hidden="true"><b></b>&larr; Swipe horizontally to browse &rarr;</div>
@@ -1149,7 +1206,7 @@ monitor <span class="op">=</span> Monitor.<span class="fn">default</span>(config
       <div class="slabel rv">04 &mdash; Integrations</div>
       <h2 class="stitle" data-split>Works with any agent runtime</h2>
     </div>
-    <p class="sdesc rv d1">Six adapters and three zero-touch auto-instrumenters ship in the box. Anything
+    <p class="sdesc rv d1">Nine adapters and three zero-touch auto-instrumenters ship in the box. Anything
       that speaks HTTP can post events without an adapter at all &mdash; or write your own in under fifty
       lines against a documented protocol.</p>
   </div>
@@ -1192,20 +1249,38 @@ monitor <span class="op">=</span> Monitor.<span class="fn">default</span>(config
       <span class="ds">Crew and task lifecycle mapped onto the canonical step schema.</span>
       <span class="mt">snagline[crewai]</span>
     </div>
+    <div class="row">
+      <span class="no">07</span>
+      <span class="nm"><i></i>OpenAI SDK</span>
+      <span class="ds">Explicit per-client wrappers for raw SDK users who want instrumentation visible at the call site.</span>
+      <span class="mt">snagline[openai]</span>
+    </div>
+    <div class="row">
+      <span class="no">08</span>
+      <span class="nm"><i></i>Anthropic SDK</span>
+      <span class="ds">Same explicit wrappers for Claude message calls, no monkeypatching.</span>
+      <span class="mt">snagline[anthropic]</span>
+    </div>
+    <div class="row">
+      <span class="no">09</span>
+      <span class="nm"><i></i>CONTINUUM</span>
+      <span class="ds">Reads a run's hash-chained event log through its public Storage API. Zero new instrumentation on the host side.</span>
+      <span class="mt">snagline[continuum]</span>
+    </div>
 
     <div class="rgroup">Auto-instrument &middot; <code style="font-family:var(--mono);color:var(--accent)">snagline.auto</code></div>
     <div class="row">
-      <span class="no">07</span><span class="nm"><i></i>OpenAI SDK</span>
+      <span class="no">10</span><span class="nm"><i></i>OpenAI SDK</span>
       <span class="ds">Patch the client once; every completion becomes a monitored step.</span>
       <span class="mt">snagline[openai]</span>
     </div>
     <div class="row">
-      <span class="no">08</span><span class="nm"><i></i>Anthropic SDK</span>
+      <span class="no">11</span><span class="nm"><i></i>Anthropic SDK</span>
       <span class="ds">Same one-line attach for Claude message calls.</span>
       <span class="mt">snagline[anthropic]</span>
     </div>
     <div class="row">
-      <span class="no">09</span><span class="nm"><i></i>LangChain (auto)</span>
+      <span class="no">12</span><span class="nm"><i></i>LangChain (auto)</span>
       <span class="ds">Registers the callback handler globally, no per-chain wiring.</span>
       <span class="mt">snagline[langchain]</span>
     </div>
@@ -1229,7 +1304,7 @@ monitor <span class="op">=</span> Monitor.<span class="fn">default</span>(config
       <div class="slabel rv">05 &mdash; Sinks</div>
       <h2 class="stitle" data-split>Route risk anywhere</h2>
     </div>
-    <p class="sdesc rv d1">Seven sinks ship in the core, and the Slack and PagerDuty ones need no extra
+    <p class="sdesc rv d1">Nine sinks ship in the core, and the Slack and PagerDuty ones need no extra
       dependency &mdash; they are stdlib all the way down. Compose them: wrap a noisy sink in dedup, then
       in batching, and the semantics still hold.</p>
   </div>
@@ -1247,9 +1322,17 @@ monitor <span class="op">=</span> Monitor.<span class="fn">default</span>(config
       <p>Cooldown wrapper that collapses repeat alerts for the same trigger.</p></div>
     <div class="cell"><div class="ic vi">06</div><h3>BatchingSink</h3>
       <p>Async, rate-limited dispatch on a background worker so slow endpoints never touch your agent.</p></div>
+    <div class="cell"><div class="ic cy">07</div><h3>LoggingSink</h3>
+      <p>One JSON record per risk on the <code>snagline</code> logger, so log aggregators get
+        machine-readable lines. Structure only, never content.</p></div>
+    <div class="cell"><div class="ic gr">08</div><h3>HeartbeatSink</h3>
+      <p>Touches a liveness file's mtime on every ingest, so an external supervisor sees a hung host
+        in-band detectors never can.</p></div>
+    <div class="cell"><div class="ic vi">09</div><h3>ContinuumSink</h3>
+      <p>Escalates a risk into a CONTINUUM review through its existing request-human path.</p></div>
   </div>
   <div class="grid3 rv d1" style="margin-top:1px;grid-template-columns:1fr">
-    <div class="cell"><div class="ic gr">07</div><h3>Your own sink</h3>
+    <div class="cell"><div class="ic gr">10</div><h3>Your own sink</h3>
       <p>A sink is one method: <code>emit(risk) -&gt; None</code>. Implement the protocol, register it, and
         the monitor's fail-open contract covers your code too &mdash; if it raises, the exception is caught
         and logged, and the agent keeps running.</p></div>
@@ -1283,14 +1366,16 @@ monitor <span class="op">=</span> Monitor.<span class="fn">default</span>(config
     <div class="evc">
       <div class="lb">Fixture trajectories</div>
       <q>Hand-built trajectory files act as ground truth. Loop, cascade and latency detectors fire on the
-        failing runs, and healthy runs produce zero false positives.</q>
+        failing runs, and healthy runs produce zero false positives. The accuracy corpus is 109 episodes:
+        68 labelled failing plus 41 healthy controls.</q>
       <div class="src">tests/fixtures/trajectories/</div>
     </div>
     <div class="evc">
       <div class="lb">Overhead benchmark</div>
-      <q>200,000 synthetic steps measured end to end. Median 2.08&#181;s per step, p99 2.31&#181;s &mdash;
-        comfortably inside the sub-100-microsecond design target.</q>
-      <div class="src">snagline bench &middot; 2026-08-19</div>
+      <q>200,000 synthetic steps measured end to end. Median 1.53&#181;s per step, p99 1.66&#181;s on Apple
+        M1, independently reproduced at 1.70 / 1.77 on M4. With window auto-scaling the median stays flat
+        at ~2.4&#181;s across a 4x window range &mdash; the O(1) claim measured rather than asserted.</q>
+      <div class="src">snagline bench &middot; 2026-09-20</div>
     </div>
   </div>
 </section>
@@ -1300,11 +1385,12 @@ monitor <span class="op">=</span> Monitor.<span class="fn">default</span>(config
   <div class="shead">
     <div>
       <div class="slabel rv">07 &mdash; Roadmap</div>
-      <h2 class="stitle" data-split>Nineteen phases, all shipped</h2>
+      <h2 class="stitle" data-split>Every phase shipped</h2>
     </div>
-    <p class="sdesc rv d1">Two phases landed deterministic, dependency-free implementations with a heavier
-      optional upgrade still open: an ESN model behind <code>snagline[ml]</code> and sentence embeddings
-      behind <code>snagline[drift]</code>.</p>
+    <p class="sdesc rv d1">The original nineteen phases all shipped. The two heavier optional upgrades landed
+      behind extras rather than in the zero-dependency core: an ESN model behind <code>snagline[ml]</code>
+      and sentence embeddings behind <code>snagline[drift]</code>. Four later phases added the opt-in
+      detectors and the remaining sinks and adapters.</p>
   </div>
 
   <div class="rm rv">
@@ -1323,10 +1409,14 @@ monitor <span class="op">=</span> Monitor.<span class="fn">default</span>(config
     <div class="rmi"><span class="dot"></span><span class="ph">13</span><span class="tx">Framework bridge docs</span></div>
     <div class="rmi"><span class="dot"></span><span class="ph">14</span><span class="tx">Offline replay CLI &mdash; <b>snagline replay</b></span></div>
     <div class="rmi"><span class="dot"></span><span class="ph">15</span><span class="tx">Dedup / cooldown &mdash; <b>DedupSink</b></span></div>
-    <div class="rmi"><span class="dot part"></span><span class="ph">16</span><span class="tx">ML ensemble detector</span><span class="st2">ESN pending</span></div>
-    <div class="rmi"><span class="dot part"></span><span class="ph">17</span><span class="tx">Goal-drift detector</span><span class="st2">embeddings pending</span></div>
+    <div class="rmi"><span class="dot"></span><span class="ph">16</span><span class="tx">ML ensemble detector</span><span class="st2">ESN &middot; snagline[ml]</span></div>
+    <div class="rmi"><span class="dot"></span><span class="ph">17</span><span class="tx">Goal-drift detector</span><span class="st2">embeddings &middot; snagline[drift]</span></div>
     <div class="rmi"><span class="dot"></span><span class="ph">18</span><span class="tx">AutoGen / CrewAI adapters</span></div>
     <div class="rmi"><span class="dot"></span><span class="ph">19</span><span class="tx">Slack + PagerDuty sinks</span></div>
+    <div class="rmi"><span class="dot"></span><span class="ph">20</span><span class="tx">Stagnation, token runaway, meltdown, silent abort</span><span class="st2">opt-in</span></div>
+    <div class="rmi"><span class="dot"></span><span class="ph">21</span><span class="tx">Side-effect guard + compaction tripwire</span><span class="st2">opt-in</span></div>
+    <div class="rmi"><span class="dot"></span><span class="ph">22</span><span class="tx">Logging, heartbeat, CONTINUUM sinks</span></div>
+    <div class="rmi"><span class="dot"></span><span class="ph">23</span><span class="tx">OpenAI / Anthropic / CONTINUUM adapters</span></div>
   </div>
 </section>
 
