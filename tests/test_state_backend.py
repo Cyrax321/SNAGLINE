@@ -486,6 +486,8 @@ def test_redact_url(url, expected):
     from snagline.state import _redact_url
 
     assert _redact_url(url) == expected
+
+
 # --- Redis backend: lock TTL and renewal (issue #326) -----------------------
 #
 # CI does not install redis, so the tests below inject a time-aware fake
@@ -531,7 +533,10 @@ class _FakeRedisLock:
         self.acquire_returns = acquire_returns
         self.extend_hook = extend_hook
         self.acquired = False
-        self.expires_at = None
+        # A float from the start: acquire() always sets this before extend() or
+        # release() can read it (both raise early when not acquired), and a
+        # typed deadline keeps mypy off the expiry comparisons below.
+        self.expires_at: float = 0.0
         self.extend_calls = []
         self.extend_errors = []
         self.release_calls = 0
@@ -607,9 +612,9 @@ def _install_fake_redis(monkeypatch) -> tuple[_FakeRedis, types.ModuleType]:
     client = _FakeRedis()
 
     lock_mod = types.ModuleType("redis.lock")
-    lock_mod.Lock = _FakeRedisLock
-    lock_mod.LockError = _FakeLockError
-    lock_mod.LockNotOwnedError = _FakeLockNotOwnedError
+    lock_mod.Lock = _FakeRedisLock  # type: ignore[attr-defined]
+    lock_mod.LockError = _FakeLockError  # type: ignore[attr-defined]
+    lock_mod.LockNotOwnedError = _FakeLockNotOwnedError  # type: ignore[attr-defined]
 
     redis_mod = types.ModuleType("redis")
 
@@ -618,8 +623,8 @@ def _install_fake_redis(monkeypatch) -> tuple[_FakeRedis, types.ModuleType]:
         def from_url(url):
             return client
 
-    redis_mod.Redis = _Redis
-    redis_mod.lock = lock_mod
+    redis_mod.Redis = _Redis  # type: ignore[attr-defined]
+    redis_mod.lock = lock_mod  # type: ignore[attr-defined]
 
     monkeypatch.setitem(sys.modules, "redis", redis_mod)
     monkeypatch.setitem(sys.modules, "redis.lock", lock_mod)
