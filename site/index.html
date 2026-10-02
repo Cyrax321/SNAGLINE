@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SNAGLINE — Catch agent failures before they cascade</title>
 <meta name="description" content="Zero-dependency, O(1) per-step monitoring that catches loops, error cascades, latency drift, and goal drift in any AI agent. ~2 microseconds per step.">
-<meta name="theme-color" content="#07070a">
+<meta name="theme-color" content="#08090b">
 <meta property="og:title" content="SNAGLINE — Catch agent failures before they cascade">
-<meta property="og:description" content="Real-time failure detection for AI agents. Zero dependencies. 2.08 microseconds per step. Never crashes the thing it monitors.">
+<meta property="og:description" content="Real-time failure detection for AI agents. Zero dependencies. 1.53 microseconds per step. Never crashes the thing it monitors.">
 <meta property="og:type" content="website">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -16,10 +16,10 @@
 /* ═══════════════ RESET + TOKENS ═══════════════ */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#07070a;--surface:#0d0d12;--elevated:#14141a;
+  --bg:#08090b;--surface:#0e0f12;--elevated:#151619;
   --line:rgba(255,255,255,0.07);--line-2:rgba(255,255,255,0.14);
-  --ink:#f5f5f3;--ink-2:#9b9ba4;--ink-3:#55555f;
-  --accent:#00d4ff;--accent-dim:rgba(0,212,255,0.09);--accent-glow:rgba(0,212,255,0.28);
+  --ink:#f2f2f0;--ink-2:#9b9ba4;--ink-3:#55555f;
+  --accent:#6ea8d8;--accent-dim:rgba(110,168,216,0.10);--accent-glow:rgba(110,168,216,0.20);
   --green:#34d399;--green-dim:rgba(52,211,153,0.10);
   --red:#f43f5e;--red-dim:rgba(244,63,94,0.10);
   --amber:#fbbf24;--amber-dim:rgba(251,191,36,0.10);
@@ -27,7 +27,7 @@
   --display:'Space Grotesk',system-ui,sans-serif;
   --sans:'Inter',system-ui,sans-serif;
   --mono:'JetBrains Mono',ui-monospace,monospace;
-  --grain:0.045;--nav-bg:rgba(7,7,10,0.72);
+  --nav-bg:rgba(8,9,11,0.72);
   --pad:clamp(1.25rem,4.5vw,5rem);
   --ease:cubic-bezier(.16,1,.3,1);
 }
@@ -40,7 +40,7 @@
   --red:#be123c;--red-dim:rgba(190,18,60,0.09);
   --amber:#b45309;--amber-dim:rgba(180,83,9,0.09);
   --violet:#6d28d9;--violet-dim:rgba(109,40,217,0.09);
-  --grain:0.022;--nav-bg:rgba(241,240,236,0.78);
+  --nav-bg:rgba(241,240,236,0.78);
 }
 html{overflow-x:clip;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
 body{font-family:var(--sans);background:var(--bg);color:var(--ink);line-height:1.6;
@@ -52,98 +52,6 @@ pre,.snip{max-width:100%}
 ::selection{background:var(--accent);color:var(--bg)}
 h1,h2,h3{font-family:var(--display);font-weight:700;letter-spacing:-0.035em;line-height:1}
 
-/* ═══════════════ GRAIN + PROGRESS ═══════════════ */
-/* Grain is a viewport-sized, static layer. It used to be inset:-120% (≈11x the
-   pixel area) with a stepped transform animation, which repainted a huge layer
-   several times a second and was the single worst scroll-jank source. */
-.grain{position:fixed;inset:0;z-index:9997;pointer-events:none;opacity:var(--grain);
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  transition:opacity .5s}
-.progress{position:fixed;top:0;left:0;height:2px;width:100%;z-index:9996;transform:scaleX(0);
-  transform-origin:0 50%;background:linear-gradient(90deg,var(--accent),var(--violet));pointer-events:none}
-
-/* ═══════════════ BACKGROUND COMET ═══════════════ */
-.comet-container{
-  position:fixed;
-  inset:0;
-  pointer-events:none;
-  overflow:hidden;
-  z-index:0;
-}
-
-/* Ensure all page content layers stay strictly in front of background comets */
-.hero,
-.marquee,
-section,
-.stats,
-.track-wrap,
-footer{
-  position:relative;
-  z-index:1;
-}
-.hero-in{
-  position:relative;
-  z-index:2;
-}
-
-/* Night mode (default): luminous pure white comet */
-.comet{
-  position:absolute;
-  height:2px;
-  transform-origin:right center;
-  background:linear-gradient(to right,transparent 0%,rgba(255,255,255,0.15) 30%,rgba(255,255,255,0.85) 75%,#ffffff 100%);
-  border-radius:999px;
-  filter:drop-shadow(0 0 5px rgba(255,255,255,0.95)) drop-shadow(0 0 10px rgba(255,255,255,0.7));
-  opacity:0;
-  will-change:transform,opacity;
-}
-.comet::after{
-  content:'';
-  position:absolute;
-  right:-1px;
-  top:50%;
-  transform:translateY(-50%);
-  height:3px;
-  border-radius:50%;
-  background:#ffffff;
-  box-shadow:0 0 6px 2px #ffffff,0 0 12px 4px rgba(255,255,255,0.85);
-}
-/* Day mode: sleek pure black comet */
-[data-theme="light"] .comet{
-  background:linear-gradient(to right,transparent 0%,rgba(0,0,0,0.10) 30%,rgba(0,0,0,0.75) 75%,#000000 100%);
-  filter:drop-shadow(0 0 3px rgba(0,0,0,0.4));
-}
-[data-theme="light"] .comet::after{
-  background:#000000;
-  box-shadow:0 0 5px 1.5px rgba(0,0,0,0.6),0 0 10px 3px rgba(0,0,0,0.25);
-}
-
-/* ═══════════════ CUSTOM CURSOR ═══════════════ */
-body.cursor-on,body.cursor-on a,body.cursor-on button,body.cursor-on .copyable{cursor:none}
-.cur{position:fixed;top:0;left:0;z-index:9999;pointer-events:none;border-radius:50%;
-  opacity:0;transition:opacity .3s}
-.cursor-on .cur{opacity:1}
-.cur-dot{width:5px;height:5px;background:var(--accent);margin:-2.5px 0 0 -2.5px;
-  box-shadow:0 0 10px var(--accent-glow)}
-.cur-ring{width:34px;height:34px;margin:-17px 0 0 -17px;border:1px solid #fff;
-  mix-blend-mode:difference;transition:width .3s var(--ease),height .3s var(--ease),margin .3s var(--ease),opacity .3s}
-.cur-ring.big{width:66px;height:66px;margin:-33px 0 0 -33px;background:rgba(255,255,255,.08)}
-
-/* ═══════════════ PRELOADER ═══════════════ */
-.pre{position:fixed;inset:0;z-index:9995;background:var(--bg);display:flex;
-  align-items:flex-end;justify-content:space-between;padding:var(--pad);
-  font-family:var(--mono);transition:transform 1s var(--ease)}
-.pre.done{transform:translateY(-101%)}
-.pre-word{font-family:var(--display);font-size:clamp(2rem,7vw,5rem);letter-spacing:-0.05em;
-  font-weight:700;line-height:.9;overflow:hidden}
-.pre-word span{display:block;transform:translateY(105%);transition:transform .9s var(--ease) .1s}
-.pre.in .pre-word span{transform:translateY(0)}
-.pre-num{font-size:clamp(2rem,7vw,5rem);font-weight:500;letter-spacing:-0.04em;color:var(--ink-3);
-  font-variant-numeric:tabular-nums;line-height:.9}
-.pre-bar{position:absolute;left:var(--pad);right:var(--pad);bottom:calc(var(--pad) + clamp(4.5rem,9vw,7rem));
-  height:1px;background:var(--line)}
-.pre-bar i{display:block;height:100%;width:0;background:var(--accent)}
-
 /* ═══════════════ NAV ═══════════════ */
 nav{position:fixed;top:0;left:0;right:0;z-index:900;height:68px;padding:0 var(--pad);
   display:flex;align-items:center;justify-content:space-between;
@@ -153,79 +61,14 @@ nav.solid{background:var(--nav-bg);backdrop-filter:blur(9px);border-bottom-color
 nav.hide{transform:translateY(-100%)}
 .brand{display:flex;align-items:center;gap:.6rem;font-family:var(--mono);font-weight:700;
   font-size:1rem;letter-spacing:-0.02em;position:relative;cursor:pointer;
-  transition:color .06s,opacity .06s,text-shadow .06s,filter .06s}
+  transition:color .2s,opacity .2s}
 .brand-glyph{width:22px;height:22px;color:var(--accent);flex-shrink:0;overflow:visible;
-  filter:drop-shadow(0 0 6px var(--accent-glow));
-  transition:color .06s,filter .06s,transform .25s var(--ease)}
+  transition:color .2s,transform .25s var(--ease)}
 .brand:hover .brand-glyph{transform:scale(1.12)}
-.brand-glyph .bg-core{fill:var(--accent);transition:fill .06s}
-.brand-glyph .bg-line,.brand-glyph .bg-snag,.brand-glyph .bg-snag-sub{stroke:var(--accent);transition:stroke .06s}
+.brand-glyph .bg-core{fill:var(--accent);transition:fill .2s}
+.brand-glyph .bg-line,.brand-glyph .bg-snag,.brand-glyph .bg-snag-sub{stroke:var(--accent);transition:stroke .2s}
 .brand i{width:7px;height:7px;border-radius:50%;background:var(--accent);
-  box-shadow:0 0 8px var(--accent),0 0 14px var(--accent-glow);
-  transition:background .06s,box-shadow .06s,opacity .06s}
-.brand.tube-on{
-  color:var(--ink);
-  text-shadow:0 0 8px var(--accent-glow),0 0 18px rgba(0,212,255,0.25);
-}
-.brand.tube-on .brand-glyph{
-  color:var(--accent);
-  filter:drop-shadow(0 0 6px var(--accent)) drop-shadow(0 0 14px var(--accent-glow));
-}
-.brand.tube-on i{
-  opacity:1;
-  background:var(--accent);
-  box-shadow:0 0 8px var(--accent),0 0 16px var(--accent-glow);
-}
-.brand.tube-dim{
-  opacity:0.22;
-  color:var(--ink-3);
-  text-shadow:none;
-  filter:grayscale(0.6);
-}
-.brand.tube-dim .brand-glyph{
-  color:var(--ink-3);
-  filter:none;
-  opacity:0.25;
-}
-.brand.tube-dim .bg-core{fill:var(--ink-3)}
-.brand.tube-dim .bg-line,.brand.tube-dim .bg-snag,.brand.tube-dim .bg-snag-sub{stroke:var(--ink-3)}
-.brand.tube-dim i{
-  opacity:0.18;
-  background:var(--ink-3);
-  box-shadow:none;
-}
-.brand.tube-spark{
-  opacity:1;
-  color:#ffffff;
-  text-shadow:0 0 10px #ffffff,0 0 20px var(--accent),0 0 32px var(--accent);
-  filter:brightness(1.25);
-}
-.brand.tube-spark .brand-glyph{
-  color:#ffffff;
-  filter:drop-shadow(0 0 8px #ffffff) drop-shadow(0 0 16px var(--accent)) drop-shadow(0 0 26px var(--accent));
-}
-.brand.tube-spark .bg-core{fill:#ffffff}
-.brand.tube-spark .bg-line,.brand.tube-spark .bg-snag,.brand.tube-spark .bg-snag-sub{stroke:#ffffff}
-.brand.tube-spark i{
-  opacity:1;
-  background:#ffffff;
-  box-shadow:0 0 12px #ffffff,0 0 24px var(--accent);
-}
-[data-theme="light"] .brand.tube-on{
-  text-shadow:0 0 10px rgba(14,116,144,0.3);
-}
-[data-theme="light"] .brand.tube-on .brand-glyph{
-  color:var(--accent);
-  filter:drop-shadow(0 0 6px rgba(14,116,144,0.45));
-}
-[data-theme="light"] .brand.tube-spark{
-  color:var(--accent);
-  text-shadow:0 0 12px var(--accent-glow),0 0 20px rgba(14,116,144,0.4);
-}
-[data-theme="light"] .brand.tube-spark .brand-glyph{
-  color:var(--accent);
-  filter:drop-shadow(0 0 10px rgba(14,116,144,0.6)) brightness(1.2);
-}
+  transition:background .2s,opacity .2s}
 .nav-r{display:flex;align-items:center;gap:clamp(1rem,2.2vw,2.1rem)}
 .nav-r a.nl{font-family:var(--mono);font-size:.75rem;letter-spacing:.04em;text-transform:uppercase;
   color:var(--ink-2);position:relative;padding:.2rem 0}
@@ -244,13 +87,13 @@ nav.hide{transform:translateY(-100%)}
 .ghub-icon{flex-shrink:0;opacity:.9}
 .ghub-sep{color:var(--line-2);user-select:none;font-size:.68rem}
 .ghub-star{display:inline-flex;align-items:center;gap:.25rem;color:var(--amber);font-weight:600}
-.ghub-star svg{flex-shrink:0;fill:var(--amber);filter:drop-shadow(0 0 4px rgba(251,191,36,.4))}
+.ghub-star svg{flex-shrink:0;fill:var(--amber)}
 .gh-stars-count{color:var(--ink);font-variant-numeric:tabular-nums}
 .ghub:hover .gh-stars-count{color:#ffffff}
 .ghub-tag{font-size:.62rem;letter-spacing:.04em;padding:.15rem .45rem;border-radius:999px;
-  background:var(--accent-dim);color:var(--accent);border:1px solid rgba(0,212,255,.25);
+  background:var(--accent-dim);color:var(--accent);border:1px solid var(--line-2);
   font-weight:600;line-height:1;display:inline-block;transition:background .2s,border-color .2s}
-.ghub:hover .ghub-tag{background:rgba(0,212,255,.18);border-color:var(--accent)}
+.ghub:hover .ghub-tag{background:var(--accent-dim);border-color:var(--accent)}
 [data-theme="light"] .ghub{background:var(--surface);border-color:var(--line-2);color:var(--ink);box-shadow:0 2px 8px rgba(0,0,0,.06)}
 [data-theme="light"] .ghub:hover{border-color:var(--accent);background:#ffffff;color:var(--ink)}
 [data-theme="light"] .ghub-tag{background:var(--accent-dim);color:var(--accent);border-color:rgba(14,116,144,.3)}
@@ -266,10 +109,7 @@ nav.hide{transform:translateY(-100%)}
 .hero-bg{position:absolute;inset:0;pointer-events:none;z-index:0}
 .hero-bg .orb{position:absolute;top:38%;left:50%;width:min(1250px,150vw);height:min(880px,110vh);
   transform:translate(-50%,-50%);border-radius:50%;
-  background:radial-gradient(ellipse at center,var(--accent-dim) 0%,transparent 62%);
-  animation:orb 11s ease-in-out infinite}
-@keyframes orb{0%,100%{opacity:.75;transform:translate(-50%,-50%) scale(1)}
-  50%{opacity:1;transform:translate(-50%,-50%) scale(1.13)}}
+  background:radial-gradient(ellipse at center,var(--accent-dim) 0%,transparent 62%)}
 .hero-bg .mesh{position:absolute;inset:0;opacity:.5;
   background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);
   background-size:clamp(48px,7vw,90px) clamp(48px,7vw,90px);
@@ -279,14 +119,13 @@ nav.hide{transform:translateY(-100%)}
 .eyebrow{display:flex;flex-wrap:wrap;align-items:center;gap:.6rem;max-width:100%;
   font-family:var(--mono);font-size:clamp(.63rem,1.7vw,.72rem);
   letter-spacing:.11em;text-transform:uppercase;color:var(--ink-2);margin-bottom:clamp(1.5rem,4vh,3rem)}
-.eyebrow b{width:6px;height:6px;border-radius:50%;background:var(--accent);
-  box-shadow:0 0 8px var(--accent-glow);animation:beat 2s ease-in-out infinite}
+.eyebrow b{width:6px;height:6px;border-radius:50%;background:var(--accent)}
 .eyebrow s{text-decoration:none;color:var(--ink-3)}
-h1.kinetic{font-size:clamp(2.3rem,9.6vw,9rem);line-height:.86;letter-spacing:-0.055em;
+h1.kinetic{font-size:clamp(2.1rem,6vw,5rem);line-height:.94;letter-spacing:-0.045em;
   text-transform:uppercase;margin-bottom:clamp(1.75rem,4vh,2.75rem)}
 h1.kinetic .ln{display:block}
 h1.kinetic .ln.pad{padding-left:clamp(0px,8vw,10rem)}
-h1.kinetic em{font-style:normal;color:var(--accent);text-shadow:0 0 60px var(--accent-glow)}
+h1.kinetic em{font-style:normal;color:var(--accent)}
 h1.kinetic .thin{font-weight:400;font-family:var(--display);letter-spacing:-0.04em;
   text-transform:none;font-size:.42em;color:var(--ink-2);display:inline-block;
   vertical-align:baseline;padding-left:.15em}
@@ -311,17 +150,11 @@ h1.kinetic .thin{font-weight:400;font-family:var(--display);letter-spacing:-0.04
 .scroll-cue{position:absolute;left:50%;bottom:1.5rem;transform:translateX(-50%);z-index:2;
   font-family:var(--mono);font-size:.62rem;letter-spacing:.22em;text-transform:uppercase;
   color:var(--ink-3);display:flex;flex-direction:column;align-items:center;gap:.6rem}
-.scroll-cue i{display:block;width:1px;height:38px;background:linear-gradient(var(--ink-3),transparent);
-  animation:cue 2.1s ease-in-out infinite}
-@keyframes cue{0%,100%{transform:scaleY(.35);opacity:.4}50%{transform:scaleY(1);opacity:1}}
+.scroll-cue i{display:block;width:1px;height:38px;background:linear-gradient(var(--ink-3),transparent)}
 
-/* ═══════════════ MARQUEE ═══════════════ */
+/* ═══════════════ MARQUEE (static band) ═══════════════ */
 .marquee{border-top:1px solid var(--line);border-bottom:1px solid var(--line);
-  overflow:hidden;padding:1.1rem 0;background:var(--surface);display:flex}
-.marquee-in{display:flex;flex-shrink:0;gap:2.5rem;padding-right:2.5rem;
-  animation:mq 34s linear infinite;will-change:transform}
-.marquee:hover .marquee-in{animation-play-state:paused}
-@keyframes mq{to{transform:translateX(-100%)}}
+  padding:1.1rem var(--pad);background:var(--surface);display:flex;justify-content:center;flex-wrap:wrap;gap:2.5rem}
 .marquee span{font-family:var(--mono);font-size:.78rem;letter-spacing:.14em;text-transform:uppercase;
   color:var(--ink-2);white-space:nowrap;display:flex;align-items:center;gap:2.5rem}
 .marquee span::after{content:'';width:5px;height:5px;border-radius:50%;background:var(--accent);opacity:.55}
@@ -333,7 +166,7 @@ section{padding:clamp(5rem,13vh,10rem) var(--pad);max-width:1500px;margin:0 auto
 .slabel{font-family:var(--mono);font-size:.7rem;letter-spacing:.16em;text-transform:uppercase;
   color:var(--accent);display:flex;align-items:center;gap:.7rem;margin-bottom:1.25rem}
 .slabel::before{content:'';width:clamp(18px,3vw,44px);height:1px;background:currentColor}
-h2.stitle{font-size:clamp(1.95rem,4.6vw,4rem);line-height:.98;text-transform:uppercase}
+h2.stitle{font-size:clamp(1.6rem,3.2vw,2.6rem);line-height:1.04;text-transform:uppercase;letter-spacing:-0.03em}
 h2.stitle em{font-style:normal;color:var(--ink-3)}
 .sdesc{font-size:clamp(.94rem,1.2vw,1.06rem);color:var(--ink-2);line-height:1.7;max-width:52ch}
 
@@ -359,6 +192,7 @@ h2.stitle em{font-style:normal;color:var(--ink-3)}
 .panel-bar .badge{margin-left:auto;font-family:var(--mono);font-size:.62rem;letter-spacing:.1em;
   text-transform:uppercase;color:var(--green);display:flex;align-items:center;gap:.35rem}
 .panel-bar .badge i{width:5px;height:5px;border-radius:50%;background:var(--green);animation:beat 1.6s infinite}
+@keyframes beat{0%,100%{opacity:1}50%{opacity:.4}}
 .term-tabs{display:flex;align-items:center;gap:.4rem;padding:.45rem 1rem;background:var(--surface);
   border-bottom:1px solid var(--line);flex-wrap:wrap;user-select:none}
 .term-tabs-label{font-family:var(--mono);font-size:.6rem;letter-spacing:.1em;color:var(--ink-3);font-weight:600;margin-right:.15rem}
@@ -367,20 +201,20 @@ h2.stitle em{font-style:normal;color:var(--ink-3)}
   display:inline-flex;align-items:center;gap:.25rem;transition:all .2s var(--ease)}
 .term-tab .t-cmd-prefix{color:var(--accent);opacity:.75;font-weight:700}
 .term-tab:hover{border-color:var(--line-2);color:var(--ink);background:var(--elevated)}
-.term-tab.active{border-color:var(--accent);background:var(--accent-dim);color:var(--accent);box-shadow:0 0 10px var(--accent-glow)}
+.term-tab.active{border-color:var(--accent);background:var(--accent-dim);color:var(--accent)}
 .term-tab.active .t-cmd-prefix{opacity:1}
 .term-tab-ghost{margin-left:auto;color:var(--ink-3);border-color:transparent;background:transparent}
 .term-tab-ghost:hover{color:var(--ink);border-color:var(--line);background:var(--elevated)}
 .term{padding:1rem 1.15rem;font-family:var(--mono);font-size:clamp(.66rem,.83vw,.78rem);line-height:1.85;
   height:375px;display:flex;flex-direction:column;min-width:0;outline:none;position:relative}
-.term:focus-within{box-shadow:inset 0 0 0 1px rgba(0,212,255,0.2)}
+.term:focus-within{box-shadow:inset 0 0 0 1px var(--accent-dim)}
 .term-body{flex:1;overflow-y:auto;overflow-x:hidden;scroll-behavior:smooth;padding-right:.35rem;margin-bottom:.55rem}
 .term-body::-webkit-scrollbar{width:4px}
 .term-body::-webkit-scrollbar-track{background:transparent}
 .term-body::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:4px}
 .term-prompt-row{display:flex;align-items:center;gap:.45rem;padding:.42rem .7rem;border-radius:8px;
   background:var(--elevated);border:1px solid var(--line);font-family:var(--mono);flex-shrink:0;transition:border-color .2s,box-shadow .2s}
-.term-prompt-row:focus-within{border-color:var(--accent);box-shadow:0 0 12px var(--accent-dim)}
+.term-prompt-row:focus-within{border-color:var(--accent)}
 .t-prompt-symbol{color:var(--accent);font-weight:700;font-size:.78rem;user-select:none}
 .t-prompt-cli{color:var(--ink-2);font-size:.72rem;font-weight:500;user-select:none}
 .term-input{background:transparent;border:none;outline:none;color:var(--ink);font-family:var(--mono);
@@ -432,10 +266,10 @@ canvas#sig{width:100%;flex:1;min-height:190px;display:block}
   background:var(--elevated);border-bottom:1px solid var(--line);gap:1rem;flex-wrap:wrap}
 .flow-anim-title{display:flex;align-items:center;gap:.65rem;font-family:var(--mono);font-size:.7rem;
   letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2)}
-.flow-anim-title .live-dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:beat 1.8s infinite}
+.flow-anim-title .live-dot{width:7px;height:7px;border-radius:50%;background:var(--green);animation:beat 1.8s infinite}
 
 .flow-stage{padding:clamp(1.5rem,3.2vw,2.5rem);display:grid;grid-template-columns:1fr 1.35fr 1fr;
-  gap:clamp(1rem,2vw,2rem);align-items:stretch;position:relative;background:radial-gradient(ellipse at 50% 30%, rgba(0,212,255,0.03), transparent 70%)}
+  gap:clamp(1rem,2vw,2rem);align-items:stretch;position:relative}
 @media(max-width:980px){.flow-stage{grid-template-columns:1fr;gap:2.2rem}}
 
 .flow-col{display:flex;flex-direction:column;gap:.9rem}
@@ -443,7 +277,7 @@ canvas#sig{width:100%;flex:1;min-height:190px;display:block}
 .flow-col-tag.hl{color:var(--accent)}
 
 .flow-card{background:var(--elevated);border:1px solid var(--line);border-radius:12px;padding:1.15rem;display:flex;flex-direction:column;gap:.9rem;flex:1;position:relative;transition:border-color .3s,box-shadow .3s}
-.flow-card.firing{border-color:var(--red);box-shadow:0 0 25px rgba(244,63,94,0.18)}
+.flow-card.firing{border-color:var(--red)}
 
 .agent-box{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:.85rem;display:flex;flex-direction:column;gap:.45rem}
 .agent-step-tag{font-family:var(--mono);font-size:.62rem;letter-spacing:.06em;color:var(--ink-3);text-transform:uppercase}
@@ -501,7 +335,7 @@ canvas#sig{width:100%;flex:1;min-height:190px;display:block}
 @media(max-width:760px){.timeline-bar{grid-template-columns:1fr;gap:.35rem}}
 .time-step-btn{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:.5rem .6rem;cursor:pointer;display:flex;flex-direction:column;gap:.2rem;text-align:left;transition:all .2s}
 .time-step-btn:hover{border-color:var(--line-2)}
-.time-step-btn.active{border-color:var(--accent);background:rgba(0,212,255,0.06)}
+.time-step-btn.active{border-color:var(--accent);background:var(--accent-dim)}
 .time-step-btn.active-err{border-color:var(--red);background:rgba(244,63,94,0.08)}
 .time-step-idx{font-family:var(--mono);font-size:.58rem;color:var(--ink-3);letter-spacing:.06em}
 .time-step-name{font-family:var(--mono);font-size:.68rem;font-weight:500;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -558,6 +392,14 @@ canvas#sig{width:100%;flex:1;min-height:190px;display:block}
 .tag.lat{background:var(--amber-dim);color:var(--amber)}
 .tag.drift{background:var(--violet-dim);color:var(--violet)}
 .tag.ml{background:var(--green-dim);color:var(--green)}
+.tag.stag{background:var(--violet-dim);color:var(--violet)}
+.tag.tok{background:var(--amber-dim);color:var(--amber)}
+.tag.melt{background:var(--red-dim);color:var(--red)}
+.tag.abort{background:var(--accent-dim);color:var(--accent)}
+.tag.guard{background:var(--green-dim);color:var(--green)}
+.tag.compact{background:var(--violet-dim);color:var(--violet)}
+.tag.core{background:var(--green-dim);color:var(--green)}
+.tag.opt{background:var(--amber-dim);color:var(--amber)}
 .dcard h3{font-size:clamp(1.2rem,2vw,1.6rem);letter-spacing:-0.03em;line-height:1.05}
 .dcard p{font-size:.9rem;color:var(--ink-2);line-height:1.7}
 .dcard .algo{margin-top:auto;padding-top:1.1rem;border-top:1px solid var(--line);
@@ -614,7 +456,7 @@ canvas#sig{width:100%;flex:1;min-height:190px;display:block}
   font-size:clamp(1rem,1.7vw,1.35rem);letter-spacing:-0.025em}
 .row .nm i{width:5px;height:5px;border-radius:50%;background:var(--ink-3);flex-shrink:0;
   transition:background .35s,box-shadow .35s}
-.row:hover .nm i{background:var(--accent);box-shadow:0 0 8px var(--accent-glow)}
+.row:hover .nm i{background:var(--accent)}
 .row .ds{font-size:.87rem;color:var(--ink-2);line-height:1.6}
 .row .mt{font-family:var(--mono);font-size:.66rem;letter-spacing:.05em;color:var(--ink-3);
   white-space:nowrap;text-align:right}
@@ -637,21 +479,18 @@ canvas#sig{width:100%;flex:1;min-height:190px;display:block}
 .rmi{display:flex;align-items:center;gap:.9rem;padding:.85rem 0;border-bottom:1px solid var(--line);
   font-family:var(--mono);font-size:.8rem;color:var(--ink-2);transition:color .3s}
 .rmi:hover{color:var(--ink)}
-.rmi .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;background:var(--green);
-  box-shadow:0 0 8px var(--green-dim)}
-.rmi .dot.part{background:var(--amber);box-shadow:0 0 8px var(--amber-dim)}
+.rmi .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;background:var(--green)}
+.rmi .dot.part{background:var(--amber)}
 .rmi .ph{color:var(--ink-3);font-size:.7rem;min-width:1.8rem}
 .rmi .tx{flex:1}
 .rmi .tx b{color:var(--ink);font-weight:500}
 .rmi .st2{font-size:.65rem;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
 
 /* ═══════════════ CTA + FOOTER ═══════════════ */
-.cta{position:relative;text-align:center;padding:clamp(6rem,16vh,12rem) var(--pad);overflow:hidden}
-.cta .orb2{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:min(820px,130vw);
-  height:min(520px,70vh);border-radius:50%;pointer-events:none;
-  background:radial-gradient(ellipse at center,var(--accent-dim) 0%,transparent 68%)}
-.cta h2{position:relative;font-size:clamp(2.1rem,7.5vw,6.2rem);line-height:.92;text-transform:uppercase;
-  letter-spacing:-0.05em;margin-bottom:1.35rem}
+.cta{position:relative;text-align:center;padding:clamp(6rem,16vh,12rem) var(--pad);overflow:hidden;
+  border-top:1px solid var(--line)}
+.cta h2{position:relative;font-size:clamp(1.9rem,5.5vw,4rem);line-height:.98;text-transform:uppercase;
+  letter-spacing:-0.045em;margin-bottom:1.35rem}
 .cta p{position:relative;color:var(--ink-2);font-size:1.02rem;margin-bottom:2.5rem}
 .cta-row{position:relative;display:flex;gap:.7rem;justify-content:center;flex-wrap:wrap}
 footer{border-top:1px solid var(--line);padding:2.75rem var(--pad);max-width:1500px;margin:0 auto;
@@ -693,28 +532,11 @@ footer{border-top:1px solid var(--line);padding:2.75rem var(--pad);max-width:150
     transition-duration:.001s !important;scroll-behavior:auto !important}
   .swi{transform:none !important}
   .rv{opacity:1 !important;transform:none !important}
-  .grain{animation:none}
-  .marquee-in{animation:none}
-  .pre{display:none}
 }
 </style>
 <script>document.documentElement.classList.add('js');</script>
 </head>
 <body>
-
-<!-- ░░ OVERLAYS ░░ -->
-<div class="comet-container" id="comet-container" aria-hidden="true"></div>
-<div class="grain" aria-hidden="true"></div>
-<div class="progress" id="prog" aria-hidden="true"></div>
-<div class="cur cur-ring" id="ring" aria-hidden="true"></div>
-<div class="cur cur-dot" id="dot" aria-hidden="true"></div>
-
-<!-- ░░ PRELOADER ░░ -->
-<div class="pre" id="pre" aria-hidden="true">
-  <div class="pre-word"><span>SNAGLINE</span></div>
-  <div class="pre-bar"><i id="preBar"></i></div>
-  <div class="pre-num" id="preNum">00</div>
-</div>
 
 <!-- ░░ NAV ░░ -->
 <nav id="nav">
@@ -733,7 +555,7 @@ footer{border-top:1px solid var(--line);padding:2.75rem var(--pad);max-width:150
     <a href="#detectors" class="nl"><i>02</i>Detectors</a>
     <a href="#integrations" class="nl"><i>04</i>Integrations</a>
     <a href="#evidence" class="nl"><i>06</i>Evidence</a>
-    <a href="https://github.com/Cyrax321/SNAGLINE" class="ghub" target="_blank" rel="noopener noreferrer" data-mag>
+    <a href="https://github.com/Cyrax321/SNAGLINE" class="ghub" target="_blank" rel="noopener noreferrer">
       <svg class="ghub-icon" viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">
         <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
       </svg>
@@ -755,7 +577,7 @@ footer{border-top:1px solid var(--line);padding:2.75rem var(--pad);max-width:150
 <header class="hero" id="top">
   <div class="hero-bg" aria-hidden="true"><div class="mesh"></div><div class="orb"></div></div>
   <div class="hero-in" id="heroIn">
-    <div class="eyebrow rv"><b></b> Open source <s>/</s> Zero dependencies <s>/</s> 2.08&#181;s per step</div>
+    <div class="eyebrow rv"><b></b> Open source <s>/</s> Zero dependencies <s>/</s> 1.53&#181;s per step</div>
     <h1 class="kinetic" data-split>
       <span class="ln">Catch agent</span>
       <span class="ln pad">failures before</span>
@@ -766,8 +588,8 @@ footer{border-top:1px solid var(--line);padding:2.75rem var(--pad);max-width:150
         latency drift and goal drift in real time. Zero required dependencies. It can never crash or
         stall the agent it monitors.</p>
       <div class="hero-cta rv d2">
-        <a href="#install" class="btn btn-fill" data-mag>Get started →</a>
-        <button class="copyable" data-copy="pip install ." data-mag>
+        <a href="#install" class="btn btn-fill">Get started →</a>
+        <button class="copyable" data-copy="pip install .">
           <span class="p">$</span><span class="c">pip install .</span><span class="hint">copy</span>
         </button>
       </div>
@@ -776,18 +598,11 @@ footer{border-top:1px solid var(--line);padding:2.75rem var(--pad);max-width:150
   <div class="scroll-cue" aria-hidden="true">scroll<i></i></div>
 </header>
 
-<!-- ░░ MARQUEE ░░ -->
+<!-- ░░ MARQUEE (static band) ░░ -->
 <div class="marquee" aria-hidden="true">
-  <div class="marquee-in">
-    <span>Loop detection</span><span>Error cascades</span><span>Latency CUSUM</span>
-    <span>Goal drift</span><span>ML ensemble</span><span>Fail-open by construction</span>
-    <span>O(1) per step</span><span>No content retention</span>
-  </div>
-  <div class="marquee-in">
-    <span>Loop detection</span><span>Error cascades</span><span>Latency CUSUM</span>
-    <span>Goal drift</span><span>ML ensemble</span><span>Fail-open by construction</span>
-    <span>O(1) per step</span><span>No content retention</span>
-  </div>
+  <span>Loop detection</span><span>Error cascades</span><span>Latency CUSUM</span>
+  <span>Goal drift</span><span>ML ensemble</span><span>Fail-open by construction</span>
+  <span>O(1) per step</span><span>No content retention</span>
 </div>
 
 <!-- ░░ LIVE ░░ -->
@@ -839,10 +654,10 @@ footer{border-top:1px solid var(--line);padding:2.75rem var(--pad);max-width:150
 
 <!-- ░░ STATS ░░ -->
 <div class="stats" id="stats">
-  <div class="st"><div class="n" data-to="2.08" data-dec="2">0.00<u>&#181;s</u></div><div class="l">Median per step</div></div>
+  <div class="st"><div class="n" data-to="1.53" data-dec="2">0.00<u>&#181;s</u></div><div class="l">Median per step</div></div>
   <div class="st"><div class="n" data-to="0">0</div><div class="l">Required dependencies</div></div>
-  <div class="st"><div class="n" data-to="5">0</div><div class="l">Detectors built in</div></div>
-  <div class="st"><div class="n" data-to="201">0</div><div class="l">Tests in the suite</div></div>
+  <div class="st"><div class="n" data-to="11">0</div><div class="l">Detectors shipped</div></div>
+  <div class="st"><div class="n" data-to="1550">0</div><div class="l">Tests in the suite</div></div>
 </div>
 
 <!-- ░░ 01 · HOW IT WORKS ░░ -->
@@ -1001,7 +816,7 @@ footer{border-top:1px solid var(--line);padding:2.75rem var(--pad);max-width:150
       <div class="body">
         <p>Every registered detector sees every event. O(1) amortised per step, no network calls, no LLM
           calls, no embeddings. Detectors reason over hashes, counts and timings only.</p>
-        <div class="chip">2.08&#181;s median &middot; 2.31&#181;s p99</div>
+        <div class="chip">1.53&#181;s median &middot; 1.66&#181;s p99</div>
       </div>
     </div>
     <div class="step rv">
@@ -1033,7 +848,7 @@ footer{border-top:1px solid var(--line);padding:2.75rem var(--pad);max-width:150
     <div class="track-head">
       <div>
         <div class="slabel rv">02 &mdash; Detectors</div>
-        <h2 class="stitle" data-split>Five failure modes</h2>
+        <h2 class="stitle" data-split>Eleven detectors, three on by default</h2>
       </div>
       <div class="track-arrows">
         <button class="track-btn" id="railPrev" aria-label="Previous detector" title="Previous detector">&#8592;</button>
@@ -1042,21 +857,21 @@ footer{border-top:1px solid var(--line);padding:2.75rem var(--pad);max-width:150
     </div>
     <div class="track-rail" id="rail">
       <div class="dcard" id="detectors">
-        <div class="top"><span class="no">01 / 05</span><span class="tag loop">loop</span></div>
+        <div class="top"><span class="no">01 / 11</span><span><span class="tag loop">loop</span> <span class="tag core">default</span></span></div>
         <h3>Loop detector</h3>
         <p>Catches retry storms and stuck agents. Keeps a sliding window of action signatures; if the
           same signature repeats N times inside W steps, it fires.</p>
         <div class="algo">Sliding window<br>+ SHA-256 action signatures</div>
       </div>
       <div class="dcard">
-        <div class="top"><span class="no">02 / 05</span><span class="tag casc">cascade</span></div>
+        <div class="top"><span class="no">02 / 11</span><span><span class="tag casc">cascade</span> <span class="tag core">default</span></span></div>
         <h3>Error cascade detector</h3>
         <p>Catches both fast cascades and slow-burn degradation. Two independent modes: N consecutive
-          errors, or N errors inside a recent window.</p>
+          errors, or N errors inside a recent window. Scores grade with severity rather than a flat 1.0.</p>
         <div class="algo">Consecutive counter<br>+ windowed counter</div>
       </div>
       <div class="dcard">
-        <div class="top"><span class="no">03 / 05</span><span class="tag lat">latency</span></div>
+        <div class="top"><span class="no">03 / 11</span><span><span class="tag lat">latency</span> <span class="tag core">default</span></span></div>
         <h3>Latency anomaly detector</h3>
         <p>Catches sustained performance regression rather than single slow calls. Per-tool running
           statistics, a frozen healthy baseline, and a cumulative-sum test. A warm-up period suppresses
@@ -1064,7 +879,7 @@ footer{border-top:1px solid var(--line);padding:2.75rem var(--pad);max-width:150
         <div class="algo">Welford mean/variance<br>+ Page CUSUM + frozen baseline</div>
       </div>
       <div class="dcard">
-        <div class="top"><span class="no">04 / 05</span><span class="tag drift">goal drift</span></div>
+        <div class="top"><span class="no">04 / 11</span><span><span class="tag drift">goal drift</span> <span class="tag opt">opt-in</span></span></div>
         <h3>Goal-drift detector</h3>
         <p>Compares the live run against a persisted <em>healthy</em> baseline profile and flags rising
           error rates, latency several sigma past the healthy mean, and tools that never appeared in the
@@ -1072,12 +887,61 @@ footer{border-top:1px solid var(--line);padding:2.75rem var(--pad);max-width:150
         <div class="algo">Structural baseline comparison<br>optional embedder for semantic drift</div>
       </div>
       <div class="dcard">
-        <div class="top"><span class="no">05 / 05</span><span class="tag ml">ensemble</span></div>
+        <div class="top"><span class="no">05 / 11</span><span><span class="tag ml">ensemble</span> <span class="tag opt">opt-in</span></span></div>
         <h3>ML ensemble orchestrator</h3>
         <p>Combines the base detectors into one stronger signal. The default combiner is a transparent
           noisy-OR over their scores, so confidence rises when independent detectors agree. Slot in a
           fitted model via one callable when you want to.</p>
         <div class="algo">noisy-OR: 1 &minus; &prod;(1 &minus; s&#7522;)<br>pluggable model hook</div>
+      </div>
+      <div class="dcard">
+        <div class="top"><span class="no">06 / 11</span><span><span class="tag stag">stagnation</span> <span class="tag opt">opt-in</span></span></div>
+        <h3>Stagnation detector</h3>
+        <p>Catches busy-but-discovering-nothing episodes. Tracks the share of never-before-seen action
+          signatures in a window; when novelty collapses below a floor for several consecutive windows
+          it fires once. Catches argument-varying loops that evade exact matching.</p>
+        <div class="algo">Novelty share of a sliding window<br>no baseline needed</div>
+      </div>
+      <div class="dcard">
+        <div class="top"><span class="no">07 / 11</span><span><span class="tag tok">budget</span> <span class="tag opt">opt-in</span></span></div>
+        <h3>Token runaway detector</h3>
+        <p>Catches unbounded token consumption and silence on long episodes. Tracks per-episode token
+          counts against a budget envelope, fires on runaway growth, and derives a wall-clock budget
+          and idle-gap signal from event timestamps &mdash; never the wall clock, so replay stays
+          deterministic.</p>
+        <div class="algo">Token budget envelope<br>+ timestamp-derived horizon</div>
+      </div>
+      <div class="dcard">
+        <div class="top"><span class="no">08 / 11</span><span><span class="tag melt">churn</span> <span class="tag opt">opt-in</span></span></div>
+        <h3>Meltdown detector</h3>
+        <p>Catches pathological tool churn. Measures the entropy of tool usage in a window and fires
+          when it is either too low &mdash; stuck hammering one tool &mdash; or too high, thrashing
+          across many tools without settling.</p>
+        <div class="algo">Windowed tool-usage entropy<br>low and high bands</div>
+      </div>
+      <div class="dcard">
+        <div class="top"><span class="no">09 / 11</span><span><span class="tag abort">abandoned</span> <span class="tag opt">opt-in</span></span></div>
+        <h3>Silent abort detector</h3>
+        <p>Catches abandoned episodes. Checks at end-of-episode for the expected completion signals
+          and fires when an episode ends without a terminal tool call or an explicit success &mdash;
+          the failure mode where an agent simply stops and nobody notices.</p>
+        <div class="algo">End-of-episode<br>completion-signal check</div>
+      </div>
+      <div class="dcard">
+        <div class="top"><span class="no">10 / 11</span><span><span class="tag guard">idempotency</span> <span class="tag opt">opt-in</span></span></div>
+        <h3>Side-effect guard</h3>
+        <p>Catches duplicate non-idempotent actions. Counts per-episode occurrences of
+          (episode, tool, signature) for steps marked side-effecting and fires on the second
+          occurrence &mdash; the second charge on the card, the second row deleted.</p>
+        <div class="algo">Per-(tool, signature) counter<br>gated on side_effect flag</div>
+      </div>
+      <div class="dcard">
+        <div class="top"><span class="no">11 / 11</span><span><span class="tag compact">governance</span> <span class="tag opt">opt-in</span></span></div>
+        <h3>Compaction tripwire</h3>
+        <p>Catches governance decay after context compaction. Tracks adapter-defined compaction pins
+          and fires when a pin is not re-confirmed within its grace window &mdash; the silent way an
+          agent drops a constraint it was supposed to keep honouring.</p>
+        <div class="algo">Compaction pins<br>+ grace-window re-confirmation</div>
       </div>
     </div>
     <div class="track-note" aria-hidden="true"><b></b>&larr; Swipe horizontally to browse &rarr;</div>
@@ -1149,7 +1013,7 @@ monitor <span class="op">=</span> Monitor.<span class="fn">default</span>(config
       <div class="slabel rv">04 &mdash; Integrations</div>
       <h2 class="stitle" data-split>Works with any agent runtime</h2>
     </div>
-    <p class="sdesc rv d1">Six adapters and three zero-touch auto-instrumenters ship in the box. Anything
+    <p class="sdesc rv d1">Nine adapters and three zero-touch auto-instrumenters ship in the box. Anything
       that speaks HTTP can post events without an adapter at all &mdash; or write your own in under fifty
       lines against a documented protocol.</p>
   </div>
@@ -1192,20 +1056,38 @@ monitor <span class="op">=</span> Monitor.<span class="fn">default</span>(config
       <span class="ds">Crew and task lifecycle mapped onto the canonical step schema.</span>
       <span class="mt">snagline[crewai]</span>
     </div>
+    <div class="row">
+      <span class="no">07</span>
+      <span class="nm"><i></i>OpenAI SDK</span>
+      <span class="ds">Explicit per-client wrappers for raw SDK users who want instrumentation visible at the call site.</span>
+      <span class="mt">snagline[openai]</span>
+    </div>
+    <div class="row">
+      <span class="no">08</span>
+      <span class="nm"><i></i>Anthropic SDK</span>
+      <span class="ds">Same explicit wrappers for Claude message calls, no monkeypatching.</span>
+      <span class="mt">snagline[anthropic]</span>
+    </div>
+    <div class="row">
+      <span class="no">09</span>
+      <span class="nm"><i></i>CONTINUUM</span>
+      <span class="ds">Reads a run's hash-chained event log through its public Storage API. Zero new instrumentation on the host side.</span>
+      <span class="mt">snagline[continuum]</span>
+    </div>
 
     <div class="rgroup">Auto-instrument &middot; <code style="font-family:var(--mono);color:var(--accent)">snagline.auto</code></div>
     <div class="row">
-      <span class="no">07</span><span class="nm"><i></i>OpenAI SDK</span>
+      <span class="no">10</span><span class="nm"><i></i>OpenAI SDK</span>
       <span class="ds">Patch the client once; every completion becomes a monitored step.</span>
       <span class="mt">snagline[openai]</span>
     </div>
     <div class="row">
-      <span class="no">08</span><span class="nm"><i></i>Anthropic SDK</span>
+      <span class="no">11</span><span class="nm"><i></i>Anthropic SDK</span>
       <span class="ds">Same one-line attach for Claude message calls.</span>
       <span class="mt">snagline[anthropic]</span>
     </div>
     <div class="row">
-      <span class="no">09</span><span class="nm"><i></i>LangChain (auto)</span>
+      <span class="no">12</span><span class="nm"><i></i>LangChain (auto)</span>
       <span class="ds">Registers the callback handler globally, no per-chain wiring.</span>
       <span class="mt">snagline[langchain]</span>
     </div>
@@ -1229,7 +1111,7 @@ monitor <span class="op">=</span> Monitor.<span class="fn">default</span>(config
       <div class="slabel rv">05 &mdash; Sinks</div>
       <h2 class="stitle" data-split>Route risk anywhere</h2>
     </div>
-    <p class="sdesc rv d1">Seven sinks ship in the core, and the Slack and PagerDuty ones need no extra
+    <p class="sdesc rv d1">Nine sinks ship in the core, and the Slack and PagerDuty ones need no extra
       dependency &mdash; they are stdlib all the way down. Compose them: wrap a noisy sink in dedup, then
       in batching, and the semantics still hold.</p>
   </div>
@@ -1247,9 +1129,17 @@ monitor <span class="op">=</span> Monitor.<span class="fn">default</span>(config
       <p>Cooldown wrapper that collapses repeat alerts for the same trigger.</p></div>
     <div class="cell"><div class="ic vi">06</div><h3>BatchingSink</h3>
       <p>Async, rate-limited dispatch on a background worker so slow endpoints never touch your agent.</p></div>
+    <div class="cell"><div class="ic cy">07</div><h3>LoggingSink</h3>
+      <p>One JSON record per risk on the <code>snagline</code> logger, so log aggregators get
+        machine-readable lines. Structure only, never content.</p></div>
+    <div class="cell"><div class="ic gr">08</div><h3>HeartbeatSink</h3>
+      <p>Touches a liveness file's mtime on every ingest, so an external supervisor sees a hung host
+        in-band detectors never can.</p></div>
+    <div class="cell"><div class="ic vi">09</div><h3>ContinuumSink</h3>
+      <p>Escalates a risk into a CONTINUUM review through its existing request-human path.</p></div>
   </div>
   <div class="grid3 rv d1" style="margin-top:1px;grid-template-columns:1fr">
-    <div class="cell"><div class="ic gr">07</div><h3>Your own sink</h3>
+    <div class="cell"><div class="ic gr">10</div><h3>Your own sink</h3>
       <p>A sink is one method: <code>emit(risk) -&gt; None</code>. Implement the protocol, register it, and
         the monitor's fail-open contract covers your code too &mdash; if it raises, the exception is caught
         and logged, and the agent keeps running.</p></div>
@@ -1283,14 +1173,16 @@ monitor <span class="op">=</span> Monitor.<span class="fn">default</span>(config
     <div class="evc">
       <div class="lb">Fixture trajectories</div>
       <q>Hand-built trajectory files act as ground truth. Loop, cascade and latency detectors fire on the
-        failing runs, and healthy runs produce zero false positives.</q>
+        failing runs, and healthy runs produce zero false positives. The accuracy corpus is 109 episodes:
+        68 labelled failing plus 41 healthy controls.</q>
       <div class="src">tests/fixtures/trajectories/</div>
     </div>
     <div class="evc">
       <div class="lb">Overhead benchmark</div>
-      <q>200,000 synthetic steps measured end to end. Median 2.08&#181;s per step, p99 2.31&#181;s &mdash;
-        comfortably inside the sub-100-microsecond design target.</q>
-      <div class="src">snagline bench &middot; 2026-08-19</div>
+      <q>200,000 synthetic steps measured end to end. Median 1.53&#181;s per step, p99 1.66&#181;s on Apple
+        M1, independently reproduced at 1.70 / 1.77 on M4. With window auto-scaling the median stays flat
+        at ~2.4&#181;s across a 4x window range &mdash; the O(1) claim measured rather than asserted.</q>
+      <div class="src">snagline bench &middot; 2026-09-20</div>
     </div>
   </div>
 </section>
@@ -1300,11 +1192,12 @@ monitor <span class="op">=</span> Monitor.<span class="fn">default</span>(config
   <div class="shead">
     <div>
       <div class="slabel rv">07 &mdash; Roadmap</div>
-      <h2 class="stitle" data-split>Nineteen phases, all shipped</h2>
+      <h2 class="stitle" data-split>Every phase shipped</h2>
     </div>
-    <p class="sdesc rv d1">Two phases landed deterministic, dependency-free implementations with a heavier
-      optional upgrade still open: an ESN model behind <code>snagline[ml]</code> and sentence embeddings
-      behind <code>snagline[drift]</code>.</p>
+    <p class="sdesc rv d1">The original nineteen phases all shipped. The two heavier optional upgrades landed
+      behind extras rather than in the zero-dependency core: an ESN model behind <code>snagline[ml]</code>
+      and sentence embeddings behind <code>snagline[drift]</code>. Four later phases added the opt-in
+      detectors and the remaining sinks and adapters.</p>
   </div>
 
   <div class="rm rv">
@@ -1323,23 +1216,26 @@ monitor <span class="op">=</span> Monitor.<span class="fn">default</span>(config
     <div class="rmi"><span class="dot"></span><span class="ph">13</span><span class="tx">Framework bridge docs</span></div>
     <div class="rmi"><span class="dot"></span><span class="ph">14</span><span class="tx">Offline replay CLI &mdash; <b>snagline replay</b></span></div>
     <div class="rmi"><span class="dot"></span><span class="ph">15</span><span class="tx">Dedup / cooldown &mdash; <b>DedupSink</b></span></div>
-    <div class="rmi"><span class="dot part"></span><span class="ph">16</span><span class="tx">ML ensemble detector</span><span class="st2">ESN pending</span></div>
-    <div class="rmi"><span class="dot part"></span><span class="ph">17</span><span class="tx">Goal-drift detector</span><span class="st2">embeddings pending</span></div>
+    <div class="rmi"><span class="dot"></span><span class="ph">16</span><span class="tx">ML ensemble detector</span><span class="st2">ESN &middot; snagline[ml]</span></div>
+    <div class="rmi"><span class="dot"></span><span class="ph">17</span><span class="tx">Goal-drift detector</span><span class="st2">embeddings &middot; snagline[drift]</span></div>
     <div class="rmi"><span class="dot"></span><span class="ph">18</span><span class="tx">AutoGen / CrewAI adapters</span></div>
     <div class="rmi"><span class="dot"></span><span class="ph">19</span><span class="tx">Slack + PagerDuty sinks</span></div>
+    <div class="rmi"><span class="dot"></span><span class="ph">20</span><span class="tx">Stagnation, token runaway, meltdown, silent abort</span><span class="st2">opt-in</span></div>
+    <div class="rmi"><span class="dot"></span><span class="ph">21</span><span class="tx">Side-effect guard + compaction tripwire</span><span class="st2">opt-in</span></div>
+    <div class="rmi"><span class="dot"></span><span class="ph">22</span><span class="tx">Logging, heartbeat, CONTINUUM sinks</span></div>
+    <div class="rmi"><span class="dot"></span><span class="ph">23</span><span class="tx">OpenAI / Anthropic / CONTINUUM adapters</span></div>
   </div>
 </section>
 
 <!-- ░░ CTA ░░ -->
 <div class="cta" id="install">
-  <div class="orb2" aria-hidden="true"></div>
   <h2 data-split>Start monitoring in thirty seconds</h2>
   <p class="rv d1">Zero required dependencies. Python 3.10+. MIT licensed.</p>
   <div class="cta-row rv d2">
-    <button class="copyable" data-copy="pip install ." data-mag>
+    <button class="copyable" data-copy="pip install .">
       <span class="p">$</span><span class="c">pip install .</span><span class="hint">copy</span>
     </button>
-    <a href="https://github.com/Cyrax321/SNAGLINE" class="btn btn-fill" data-mag>View on GitHub ↗</a>
+    <a href="https://github.com/Cyrax321/SNAGLINE" class="btn btn-fill">View on GitHub ↗</a>
   </div>
 </div>
 
@@ -1389,6 +1285,9 @@ function split(el){
 $$('[data-split]').forEach(split);
 
 /* ═══════════════ REVEAL ═══════════════ */
+/* Run as soon as the DOM is live. There is no preloader curtain any more, so
+   anything already inside the viewport must get .is-in on the first frame or
+   the hero renders invisible. */
 function initReveals(){
   var io = new IntersectionObserver(function(es){
     es.forEach(function(e){
@@ -1396,40 +1295,12 @@ function initReveals(){
     });
   }, { threshold:0.12, rootMargin:'0px 0px -8% 0px' });
   $$('.rv,[data-split]').forEach(function(el){
-    /* Anything already on screen reveals at once — the hero must not wait on
-       observer scheduling, or it flashes empty on a slow first paint. */
     var r = el.getBoundingClientRect();
     if(r.top < innerHeight * 0.92 && r.bottom > 0) el.classList.add('is-in');
     else io.observe(el);
   });
 }
-
-/* ═══════════════ PRELOADER ═══════════════ */
-(function(){
-  var pre = $('#pre'), num = $('#preNum'), bar = $('#preBar');
-  var finished = false;
-  function finish(){
-    if(finished) return;
-    finished = true;
-    if(pre) pre.classList.add('done');
-    document.body.classList.add('ready');
-    try { initReveals(); } catch(err){ $$('.rv,[data-split]').forEach(function(el){ el.classList.add('is-in'); }); }
-    setTimeout(function(){ if(pre && pre.parentNode) pre.remove(); }, 1100);
-  }
-  /* Failsafe: the curtain covers the whole page, so it must never be able to trap content. */
-  setTimeout(finish, 2200);
-  if(REDUCED || !pre){ if(pre) pre.remove(); finish(); return; }
-  requestAnimationFrame(function(){ pre.classList.add('in'); });
-  var t0 = performance.now(), DUR = 800;
-  (function tick(now){
-    var p = clamp((now - t0)/DUR, 0, 1);
-    var e = 1 - Math.pow(1-p, 3);
-    num.textContent = String(Math.round(e*100)).padStart(2,'0');
-    bar.style.width = (e*100) + '%';
-    if(p < 1){ requestAnimationFrame(tick); return; }
-    finish();
-  })(t0);
-})();
+initReveals();
 
 /* ═══════════════ INERTIA SCROLL ═══════════════ */
 var SS = (function(){
@@ -1473,67 +1344,14 @@ $$('a[href^="#"]').forEach(function(a){
   });
 });
 
-/* ═══════════════ CURSOR + MAGNETIC ═══════════════ */
-(function(){
-  if(!FINE || REDUCED) return;
-  var dot = $('#dot'), ring = $('#ring');
-  document.body.classList.add('cursor-on');
-  var mx = innerWidth/2, my = innerHeight/2, rx = mx, ry = my, idle = 0;
-
-  /* Pointer position only. Measuring every [data-mag] rect on each mousemove
-     forced a synchronous layout per event; magnetism is per-element below. */
-  addEventListener('mousemove', function(e){
-    mx = e.clientX; my = e.clientY; idle = 0;
-    dot.style.transform = 'translate3d(' + mx + 'px,' + my + 'px,0)';
-  }, { passive:true });
-
-  /* Delegated hover state — two events per hover instead of one test per move. */
-  var HOT = 'a,button,.copyable,.dcard,.row,.cell,.evc';
-  addEventListener('mouseover', function(e){
-    if(e.target.closest && e.target.closest(HOT)) ring.classList.add('big');
-  }, { passive:true });
-  addEventListener('mouseout', function(e){
-    if(e.target.closest && e.target.closest(HOT)) ring.classList.remove('big');
-  }, { passive:true });
-
-  $$('[data-mag]').forEach(function(el){
-    var r = null;
-    el.addEventListener('mouseenter', function(){ r = el.getBoundingClientRect(); });
-    el.addEventListener('mousemove', function(e){
-      if(!r) r = el.getBoundingClientRect();
-      el.style.transform = 'translate3d(' + ((e.clientX - (r.left + r.width/2)) * 0.22) + 'px,' +
-                                            ((e.clientY - (r.top + r.height/2)) * 0.34) + 'px,0)';
-    });
-    el.addEventListener('mouseleave', function(){ r = null; el.style.transform = ''; });
-  });
-
-  /* Park the loop once the ring catches up, so an idle tab stops compositing. */
-  (function loop(){
-    var dx = mx - rx, dy = my - ry;
-    if(Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1){
-      rx += dx * 0.2; ry += dy * 0.2;
-      ring.style.transform = 'translate3d(' + rx + 'px,' + ry + 'px,0)';
-      idle = 0;
-    } else if(idle++ > 60){
-      addEventListener('mousemove', function once(){
-        removeEventListener('mousemove', once); idle = 0; loop();
-      }, { once:true, passive:true });
-      return;
-    }
-    requestAnimationFrame(loop);
-  })();
-})();
-
 /* ═══════════════ SCROLL-LINKED ═══════════════ */
 (function(){
-  var prog = $('#prog'), nav = $('#nav'), heroIn = $('#heroIn');
+  var nav = $('#nav'), heroIn = $('#heroIn');
   var lastY = scrollY, acc = 0, hidden = false, solid = false, queued = false;
 
   function frame(){
     queued = false;
     var y = scrollY;
-    var max = document.documentElement.scrollHeight - innerHeight;
-    prog.style.transform = 'scaleX(' + (max > 0 ? y/max : 0) + ')';
 
     if(y > 40 !== solid){ solid = y > 40; nav.classList.toggle('solid', solid); }
 
@@ -2336,150 +2154,6 @@ $$('[data-copy]').forEach(function(el){
   });
 });
 
-/* ═══════════════ BACKGROUND COMET ═══════════════ */
-(function(){
-  if(REDUCED) return;
-  var container = $('#comet-container');
-  if(!container) return;
-
-  function spawnComet(originX, originY, customAngle){
-    var comet = document.createElement('div');
-    comet.className = 'comet';
-
-    var angle = customAngle !== undefined ? customAngle : (50 + Math.random() * 80);
-    var length = 70 + Math.random() * 40;
-    comet.style.width = length + 'px';
-
-    var width = window.innerWidth || document.documentElement.clientWidth || 1200;
-    var startX = originX !== undefined ? originX : (angle < 90 ? Math.random() * (width * 0.55) : (width * 0.45) + Math.random() * (width * 0.55));
-    var startY = originY !== undefined ? originY : (-15 + Math.random() * 30);
-
-    comet.style.left = startX + 'px';
-    comet.style.top = startY + 'px';
-    container.appendChild(comet);
-
-    var travelDistance = 750 + Math.random() * 350;
-    var duration = 1200 + Math.random() * 400;
-
-    if(comet.animate){
-      var anim = comet.animate([
-        { transform: 'rotate(' + angle + 'deg) translateX(0)', opacity: 0 },
-        { opacity: 1, offset: 0.1 },
-        { opacity: 0.85, offset: 0.75 },
-        { transform: 'rotate(' + angle + 'deg) translateX(' + travelDistance + 'px)', opacity: 0 }
-      ], {
-        duration: duration,
-        easing: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
-        fill: 'forwards'
-      });
-      anim.onfinish = function(){ comet.remove(); };
-    } else {
-      comet.style.transition = 'transform ' + duration + 'ms cubic-bezier(0.25, 0.1, 0.25, 1), opacity ' + duration + 'ms';
-      comet.style.opacity = '1';
-      requestAnimationFrame(function(){
-        comet.style.transform = 'rotate(' + angle + 'deg) translateX(' + travelDistance + 'px)';
-        comet.style.opacity = '0';
-      });
-      setTimeout(function(){ comet.remove(); }, duration + 100);
-    }
-  }
-
-  // Initial comet shortly after load, then periodic every 9.5 seconds
-  setTimeout(function(){ spawnComet(); }, 1400);
-  setInterval(function(){ spawnComet(); }, 9500);
-
-  // Interactive burst only on clicking open page background
-  addEventListener('click', function(e){
-    if(e.target.closest('a, button, input, .copyable, .dcard, .panel, .cell, .code, .row, .step, .evc, .st, pre, code, canvas, nav, footer, .pre, .track-sticky')) return;
-    spawnComet(e.clientX - 40, e.clientY - 20, 45 + Math.random() * 30);
-  }, { passive:true });
-})();
-
-/* ═══════════════ TUBE LIGHT LOGO FLICKER ═══════════════ */
-(function(){
-  var brand = $('.brand');
-  if(!brand) return;
-  brand.classList.add('tube-on');
-  if(REDUCED) return;
-
-  var isFlickering = false;
-  var timer = null;
-
-  var PATTERNS = [
-    // Pattern 0: Quick double micro-flicker
-    [ { c: 'tube-dim', d: 40 }, { c: 'tube-spark', d: 55 }, { c: 'tube-dim', d: 35 }, { c: 'tube-spark', d: 60 } ],
-    // Pattern 1: Deep drop re-strike
-    [ { c: 'tube-dim', d: 95 }, { c: 'tube-spark', d: 45 }, { c: 'tube-dim', d: 40 }, { c: 'tube-spark', d: 70 } ],
-    // Pattern 2: Single micro-twitch
-    [ { c: 'tube-dim', d: 30 }, { c: 'tube-spark', d: 40 } ],
-    // Pattern 3: Triple flutter
-    [ { c: 'tube-dim', d: 35 }, { c: 'tube-spark', d: 45 }, { c: 'tube-dim', d: 30 }, { c: 'tube-spark', d: 50 }, { c: 'tube-dim', d: 25 }, { c: 'tube-spark', d: 65 } ],
-    // Pattern 4: Buzz & strike
-    [ { c: 'tube-spark', d: 30 }, { c: 'tube-dim', d: 85 }, { c: 'tube-spark', d: 50 } ]
-  ];
-
-  function setStage(cls){
-    brand.classList.remove('tube-on', 'tube-dim', 'tube-spark');
-    brand.classList.add(cls);
-  }
-
-  function runFlicker(patternIndex, onComplete){
-    if(isFlickering) return;
-    isFlickering = true;
-    var pattern = PATTERNS[patternIndex !== undefined ? patternIndex : Math.floor(Math.random() * PATTERNS.length)];
-    var step = 0;
-
-    function next(){
-      if(step >= pattern.length){
-        setStage('tube-on');
-        isFlickering = false;
-        if(onComplete) onComplete();
-        return;
-      }
-      var cur = pattern[step++];
-      setStage(cur.c);
-      setTimeout(next, cur.d);
-    }
-    next();
-  }
-
-  function scheduleNextFlicker(){
-    if(timer) clearTimeout(timer);
-    var delay = 2200 + Math.random() * 5300;
-    timer = setTimeout(function(){
-      if(document.visibilityState === 'hidden'){
-        scheduleNextFlicker();
-        return;
-      }
-      runFlicker(undefined, function(){
-        scheduleNextFlicker();
-      });
-    }, delay);
-  }
-
-  brand.addEventListener('mouseenter', function(){
-    if(!isFlickering){
-      if(timer) clearTimeout(timer);
-      runFlicker(0, function(){
-        scheduleNextFlicker();
-      });
-    }
-  });
-
-  timer = setTimeout(function(){
-    runFlicker(1, function(){
-      scheduleNextFlicker();
-    });
-  }, 1800);
-
-  document.addEventListener('visibilitychange', function(){
-    if(document.visibilityState === 'visible'){
-      scheduleNextFlicker();
-    } else if(timer){
-      clearTimeout(timer);
-    }
-  });
-})();
 
 /* ═══════════════ PIPELINE FLOW ANIMATION ═══════════════ */
 (function(){
