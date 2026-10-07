@@ -57,6 +57,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   horizontal-swipe pipeline, tube-light logo effect) (#291).
 
 ### Fixed
+- The in-flight POST cap is now scoped per sink instead of process-global.
+  `bounded_post` gated *every* sink POST through one module-level semaphore,
+  and the Monitor's halt webhook drew from the same one, so a single endpoint
+  that accepts the connection and never replies parked enough workers to fill
+  it and every *other* network sink then failed with `SinkBusyError` against a
+  healthy destination of its own — a cross-sink failure indistinguishable in
+  the logs from the healthy sink being broken. Because the enforcement webhook
+  shared the pool, a stalled user-configured sink could also suppress the halt
+  directive. `WebhookSink`, `SlackSink`, `PagerDutySink` and the halt webhook
+  now each hold their own pool (`_MAX_SINK_INFLIGHT_POSTS`, a quarter of the
+  former process-wide ceiling, which four network POST paths sum to), so a dead
+  destination can only exhaust its own delivery budget; the thread and file
+  descriptor bound from #423 is preserved per destination (#559).
 - The network sinks cap the reply body they read and discard. `bounded_post`
   documents its `max_bytes` argument as the guard against an endpoint that
   streams an endless body, but `WebhookSink`, `SlackSink`, `PagerDutySink` and
