@@ -35,7 +35,12 @@ from snagline.config import Config, validate_policy
 from snagline.detectors.base import Detector
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk
-from snagline.sinks.base import AlertSink, bounded_post, redacted_destination
+from snagline.sinks.base import (
+    AlertSink,
+    bounded_post,
+    new_inflight_pool,
+    redacted_destination,
+)
 from snagline.state import StateBackend, default_state_backend
 
 logger = logging.getLogger("snagline")
@@ -318,6 +323,15 @@ class Monitor:
         if fail_open is None:
             fail_open = cfg.fail_open
         self._fail_open = fail_open
+        # The enforcement round trip draws from the monitor's own in-flight
+        # pool, distinct from any sink's: a stalled user-configured escalation
+        # endpoint parks a worker per POST until its deadline, and a worker is
+        # what holds a slot. When the halt webhook shared the sinks' pool, one
+        # dead destination could exhaust the enforcement directive's delivery
+        # budget too -- the halt would be dropped and look in the logs like a
+        # healthy policy failing (issue #559). Built here, once, so it keeps
+        # its identity across a ``_configure_policy`` re-call.
+        self._halt_inflight = new_inflight_pool()
         self._configure_policy(
             policy=policy,
             on_risk=on_risk,
@@ -710,7 +724,9 @@ class Monitor:
         (issue #415). The refusal to follow a redirect matters more here than
         at a sink -- the reply is parsed into an enforcement directive, so a
         followed 3xx would let the decision come from a server the operator
-        never configured (issue #416).
+        never configured (issue #416). The POST draws from the monitor's own
+        in-flight pool rather than the sinks', so a stalled sink endpoint can
+        never exhaust the enforcement directive's delivery budget (issue #559).
         """
         if risk.score < self._min_severity_for_halt:
             return
@@ -730,7 +746,12 @@ class Monitor:
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            body = bounded_post(req, self._halt_timeout_s, _MAX_HALT_RESPONSE_BYTES)
+            body = bounded_post(
+                req,
+                self._halt_timeout_s,
+                _MAX_HALT_RESPONSE_BYTES,
+                pool=self._halt_inflight,
+            )
             parsed = json.loads(body.decode("utf-8"))
             if not isinstance(parsed, dict):
                 raise ValueError("halt response must be a JSON object")

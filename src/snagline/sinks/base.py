@@ -132,8 +132,45 @@ def describe_failure(exc: BaseException) -> str:
 # dead endpoint under sustained load ever walks it up to the ceiling. When it
 # is full a POST is dropped rather than queued: holding an alert behind a wall
 # of dead ones helps no one, and dropping keeps the caller's ingest step fast.
+#
+# The pool is *per caller*, not process-global (issue #559). A dead endpoint
+# accepts the connection and never replies, so each POST it accepts parks a
+# worker until its deadline -- and a worker is what holds the slot. One shared
+# pool therefore lets a single dead destination exhaust the delivery budget of
+# every other network sink in the process, and the monitor's halt webhook was
+# in that same pool: a stalled user-configured escalation endpoint could
+# suppress the enforcement directive, and the symptom looked in the logs like a
+# healthy sink failing. Scoping the pool to each sink -- and giving the halt
+# webhook its own -- means a dead endpoint can only starve itself. The
+# thread/FD bound the cap exists to enforce is preserved: the pools are few
+# (one per configured sink plus the halt webhook, all operator-chosen) and each
+# is bounded, so the total ceiling scales with what was configured rather than
+# with the alert rate.
 _MAX_INFLIGHT_POSTS = 64
+
+# The fallback pool for callers that do not supply their own -- the CLI's ad-hoc
+# forward, and any third-party sink still using the pre-#559 signature. It is
+# per-process and therefore has exactly the cross-caller coupling described
+# above, but it keeps those callers bounded (issue #423) and unchanged; every
+# in-tree network sink and the halt webhook now pass an explicit pool.
 _inflight_posts = threading.BoundedSemaphore(_MAX_INFLIGHT_POSTS)
+
+
+def new_inflight_pool(cap: int | None = None) -> threading.BoundedSemaphore:
+    """Build an in-flight POST pool a sink keeps to itself (issue #559).
+
+    A sink calls this once in its constructor and hands the result to every
+    ``bounded_post`` call, so its parked workers can only ever consume its own
+    delivery budget. ``cap`` defaults to ``_MAX_INFLIGHT_POSTS``; it is read at
+    call time so a test (or a host) can resize it by patching the module
+    global before the sink is built.
+    """
+    if cap is None:
+        cap = _MAX_INFLIGHT_POSTS
+    if cap < 1:
+        cap = 1
+    return threading.BoundedSemaphore(cap)
+
 
 # Cap on how many reply-body bytes a network sink will read (issue #560). The
 # sinks discard the reply, so ``bounded_post`` used to be called with
@@ -162,6 +199,7 @@ def bounded_post(
     request: urllib.request.Request,
     timeout: float,
     max_bytes: int | None = None,
+    pool: threading.BoundedSemaphore | None = None,
 ) -> bytes:
     """POST ``request`` and return the reply body, bounded by a wall-clock deadline.
 
@@ -195,25 +233,33 @@ def bounded_post(
     ``_MAX_SINK_RESPONSE_BYTES`` because they discard the reply anyway; the
     halt webhook passes its own response cap.
 
+    ``pool`` is the in-flight cap this POST draws from, built by
+    ``new_inflight_pool`` and owned by one caller. Passing one is what keeps a
+    dead endpoint from starving the process's other sinks (issue #559): a sink
+    that omits it shares the module fallback ``_inflight_posts`` and is bounded
+    against itself rather than against the whole process.
+
     Raises whatever the exchange raised once that is known, or ``TimeoutError``
     if the deadline passed first. Raises ``SinkBusyError`` without starting the
     POST at all when too many earlier ones are still parked (see
     ``_MAX_INFLIGHT_POSTS``). Callers catch and log.
     """
-    if not _inflight_posts.acquire(blocking=False):
+    inflight = _inflight_posts if pool is None else pool
+    if not inflight.acquire(blocking=False):
         # Every slot is occupied by a POST still parked on a stalled endpoint.
         # Refuse this one now rather than adding another abandoned thread; the
-        # caller logs it fail-open and its ingest step stays fast.
+        # caller logs it fail-open and its ingest step stays fast. The pool is
+        # the caller's own, so this message names no size: a per-sink pool is
+        # not necessarily the shipped default, and the number is not actionable
+        # from a log line anyway (``describe_failure`` carries the class only).
         raise SinkBusyError(
-            f"snagline sink POST pool is full ({_MAX_INFLIGHT_POSTS} in flight); "
-            "dropping this delivery (fail-open)"
+            "snagline sink POST pool is full; dropping this delivery (fail-open)"
         )
     # Bind the pool we acquired from so the worker releases *that* object, not
-    # whatever the module global happens to name when it finally exits: an
-    # abandoned worker can outlive any reassignment of the global, and a
-    # release aimed at a different semaphore than the acquire would corrupt
-    # both counts.
-    pool = _inflight_posts
+    # whatever the caller's reference happens to name when it finally exits: an
+    # abandoned worker can outlive any reassignment, and a release aimed at a
+    # different semaphore than the acquire would corrupt both counts.
+    acquired = inflight
     outcome: dict[str, Any] = {}
 
     def _post() -> None:
@@ -230,7 +276,7 @@ def bounded_post(
             # ago. Releasing here (not in the caller) is what bounds the parked
             # threads to the cap: an abandoned worker keeps its slot until it
             # actually finishes, so the ceiling counts live threads, not calls.
-            pool.release()
+            acquired.release()
 
     # A recognisable name so a parked sink thread is identifiable in a
     # py-spy snapshot of a stuck agent, which is how this gets found.

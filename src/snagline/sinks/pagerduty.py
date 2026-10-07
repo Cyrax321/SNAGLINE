@@ -29,6 +29,7 @@ from snagline.sinks.base import (
     _MAX_SINK_RESPONSE_BYTES,
     bounded_post,
     format_sink_repr,
+    new_inflight_pool,
 )
 
 logger = logging.getLogger("snagline")
@@ -67,6 +68,11 @@ class PagerDutySink:
         self._timeout = timeout
         self._source = source
         self._min = min_severity
+        # This sink's own in-flight cap: a dead PagerDuty endpoint parks a
+        # worker per POST until its deadline, and a worker is what holds a
+        # slot. A pool of its own means that can only ever exhaust this sink's
+        # delivery budget, not every other network sink's (issue #559).
+        self._inflight = new_inflight_pool()
 
     def __repr__(self) -> str:
         """Repr without the routing key, which is a credential (#390)."""
@@ -108,7 +114,9 @@ class PagerDutySink:
             method="POST",
         )
         try:
-            bounded_post(req, self._timeout, _MAX_SINK_RESPONSE_BYTES)
+            bounded_post(
+                req, self._timeout, _MAX_SINK_RESPONSE_BYTES, pool=self._inflight
+            )
         except Exception:
             logger.exception(
                 "snagline PagerDuty sink POST failed; ignoring (fail-open)"

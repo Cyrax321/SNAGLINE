@@ -180,13 +180,15 @@ def test_a_completed_post_frees_its_slot(small_cap) -> None:
 def test_a_sink_logs_a_full_pool_fail_open_without_leaking_the_url(
     small_cap, caplog
 ) -> None:
-    # Drain the pool by hand so the sink's own emit hits a full one, then check
+    # Drain the sink's own pool by hand so its emit hits a full one, then check
     # it is logged fail-open (the sink never raises) and named by class only --
     # the URL carries basic-auth credentials and must not reach the log (#390).
+    # The pool is per-sink since #559, so it is the sink's own that must be
+    # full, not the module fallback.
+    sink = WebhookSink("https://user:s3cret@hooks.example/alerts")
     for _ in range(_CAP):
-        assert base._inflight_posts.acquire(blocking=False)
+        assert sink._inflight.acquire(blocking=False)
     try:
-        sink = WebhookSink("https://user:s3cret@hooks.example/alerts")
         with caplog.at_level("ERROR", logger="snagline"):
             sink.emit(_risk())  # must not raise
         assert "SinkBusyError" in caplog.text, (
@@ -197,4 +199,4 @@ def test_a_sink_logs_a_full_pool_fail_open_without_leaking_the_url(
         )
     finally:
         for _ in range(_CAP):
-            base._inflight_posts.release()
+            sink._inflight.release()
