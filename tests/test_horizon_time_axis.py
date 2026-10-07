@@ -14,6 +14,8 @@ import json
 import logging
 import os
 
+import pytest
+
 from snagline.config import Config
 from snagline.detectors.token_runaway import TokenRunawayDetector
 from snagline.events import StepEvent
@@ -226,7 +228,12 @@ def test_replay_fingerprints_unchanged_when_options_unset() -> None:
         # first-crossing 0.5 -- not the flat 1.0 it was before -- matching the
         # loop fixture's first crossing.
         "injected_error_cascade.jsonl": [("error_cascade", "22", 0.5)],
-        "injected_governance_decay.jsonl": [("loop", "4", 0.5)],
+        # The governance fixture's trailing lookup/write/search calls are three
+        # distinct tools, so under the default config (the compaction tripwire
+        # is opt-in and off) it emits nothing. It used to emit a spurious loop:
+        # the lookup and write rows carried search's action_signature, and
+        # LoopDetector keys on the signature, not the tool name (issue #574).
+        "injected_governance_decay.jsonl": [],
         "injected_latency_spike.jsonl": [
             ("latency_anomaly", str(i), 1.0) for i in range(40, 52)
         ],
@@ -248,6 +255,45 @@ def test_replay_fingerprints_unchanged_when_options_unset() -> None:
         monitor.end_episode(episode)  # type: ignore[arg-type]
         got = [(r.trigger, r.step_id, round(r.score, 4)) for r in sink.risks]
         assert got == expected[name], f"fingerprint changed for {name}"
+
+
+def test_fixture_signatures_match_their_tool_names() -> None:
+    """A fixture's tool_call rows must not share a signature unintentionally.
+
+    LoopDetector keys on ``action_signature``, not ``tool_name``, so two rows
+    that name different tools but carry one digest manufacture a loop the
+    fixture never intended. The governance fixture's lookup and write rows
+    both carried search's signature, so its replay reported a spurious loop
+    instead of the governance decay it was built to show (issue #574).
+
+    The other fixtures are hand-written with a *unique* digest per step
+    (deliberately, so no accidental loop can fire), so the invariant to pin is
+    pairwise-distinctness among a fixture's tool_call rows, not equality with
+    ``make_signature``: hashing the tool name would itself defeat the loop
+    fixture, whose four ``retry`` rows are meant to collide.
+    """
+    for path in sorted(glob.glob("tests/fixtures/trajectories/*.jsonl")):
+        name = os.path.basename(path)
+        seen: dict[str, str] = {}
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                raw = json.loads(line)
+                if raw["action_type"] != "tool_call":
+                    continue
+                sig = raw["action_signature"]
+                tool = raw.get("tool_name")
+                if sig in seen and seen[sig] != tool:
+                    pytest.fail(
+                        f"{name} step {raw['step_id']}: action_signature "
+                        f"{sig[:16]}… is shared with a row named "
+                        f"{seen[sig]!r} but this row names {tool!r}; "
+                        "LoopDetector keys on the signature, so this is a "
+                        "loop the fixture did not intend"
+                    )
+                seen.setdefault(sig, tool)
 
 
 def test_time_axis_fail_open_on_pathological_timestamps(caplog) -> None:

@@ -392,10 +392,18 @@ snagline replay tests/fixtures/trajectories/healthy_run.jsonl --summary
 
 The fifth fixture, `injected_governance_decay.jsonl`, exercises the
 `governance_decay` detector (a short 6-step run with one compaction that
-drops a constraint). It replays the same way --
-`snagline replay tests/fixtures/trajectories/injected_governance_decay.jsonl --summary`
--- but its episode is deliberately too short to be a meaningful accuracy
-sample, so it is not quoted above.
+drops a constraint). That detector is opt-in and off by default
+(`SNAGLINE_COMPACTION_TRIPWIRE_ENABLED`, see the env table above), so the
+command names the flag that turns it on:
+
+```bash
+SNAGLINE_COMPACTION_TRIPWIRE_ENABLED=1 snagline replay tests/fixtures/trajectories/injected_governance_decay.jsonl --summary
+# replayed 6 steps; 1 risk(s) emitted   -> 1 governance_decay FailureRisk line
+```
+
+Without the flag the fixture replays to zero risks -- the plain form is the
+baseline, and its episode is deliberately too short to be a meaningful
+accuracy sample, so it is not quoted alongside the four above.
 
 ### Detection Accuracy Harness
 
