@@ -93,6 +93,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cascade now deepens to a second intercept at `0.8`, where the halt is
   legitimate, and a test pins every score the panel prints to the score the
   detector actually emits for that streak.
+- The landing page's `watch`, `serve` and `baseline` demos still scripted
+  output the package does not emit, in the same way #567 and #580 fixed for
+  the other panels. `watch` claimed "5 detectors online" (a default monitor
+  wires 3), printed a `0.80` cascade score for three consecutive errors (the
+  graded formula emits `0.50`, #538), a "cusum 4.12 > h=3.0" line the latency
+  detector never prints (`cusum_h` defaults to `5.0`), and an ENSEMBLE risk
+  from `ml_ensemble`, which is opt-in and not in the default monitor. `serve`
+  posted event bodies missing the required `timestamp` and `action_signature`
+  fields, so the real server rejects each one with a 400, and printed the
+  pre-fix flat risk score. `baseline` listed a per-tool p95 breakdown the
+  command does not produce and advertised a `snagline load_baseline` command
+  that does not exist. Every scripted line is now taken from a real run, and
+  three tests replay the panels through the actual monitor / CLI and assert
+  each claimed detector name, score and detail is what it really emits (#565).
 - `TokenRunawayDetector.load_state` now publishes its restored state only once
   the whole snapshot has parsed, so a malformed entry leaves the detector on
   its live state like every other detector (#417 hardened them; this one was
