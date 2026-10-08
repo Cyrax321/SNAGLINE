@@ -416,4 +416,14 @@ misbehavior this exists to prevent. Every shipped detector implements it
 `meltdown`, `ml_ensemble`, `goal_drift`, `stagnation`,
 `side_effect_guard`, and `compaction_tripwire` -- the last two added by
 issue #149), and `DedupSink` persists cooldowns when used with its default
-key function.
+key function. The optional ESN under `ml_ensemble` participates too (issue
+#581): `EsnCusumDetector.dump_state` carries the readout fitted by `fit()` so
+a restart keeps the healthy-run model instead of re-learning the live stream,
+plus each live episode's reservoir, CUSUM accumulator, and half-finished
+warm-up system.
+
+**Restart cost, stated honestly:** the ESN's warm-up is `warmup_steps` steps
+of deliberate silence, and a snapshot written with a different
+`reservoir_size` is dropped rather than reshaped, so a restart onto a
+differently-configured host costs a cold start on the ESN leg. The
+deterministic detectors have no such gap.
