@@ -30,6 +30,7 @@ from snagline.sinks.base import (
     _MAX_SINK_RESPONSE_BYTES,
     bounded_post,
     describe_failure,
+    make_post_pool,
     redacted_destination,
 )
 
@@ -58,6 +59,10 @@ class SlackSink:
         self._url = webhook_url
         self._timeout = timeout
         self._min = min_severity
+        # A private in-flight pool: a dead Slack endpoint must only exhaust its
+        # own delivery budget, not the one every other network sink draws from
+        # (issue #559).
+        self._post_pool = make_post_pool()
 
     def __repr__(self) -> str:
         """Repr without the webhook URL, which is a credential (#390)."""
@@ -84,7 +89,9 @@ class SlackSink:
             method="POST",
         )
         try:
-            bounded_post(req, self._timeout, _MAX_SINK_RESPONSE_BYTES)
+            bounded_post(
+                req, self._timeout, _MAX_SINK_RESPONSE_BYTES, pool=self._post_pool
+            )
         except Exception as exc:
             # The URL is the credential -- a Slack incoming webhook embeds its
             # secret as the final path segment -- and a failed POST is the
