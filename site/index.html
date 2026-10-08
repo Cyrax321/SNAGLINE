@@ -847,7 +847,7 @@ footer{border-top:1px solid var(--line);padding:2.75rem var(--pad);max-width:150
 
 <!-- ░░ STATS ░░ -->
 <div class="stats" id="stats">
-  <div class="st"><div class="n" data-to="1.53" data-dec="2">0.00<u>&#181;s</u></div><div class="l">Median per step</div></div>
+  <div class="st"><div class="n" data-to="1.53" data-dec="2">0.00<u>&#181;s</u></div><div class="l">Median per step, Apple M1</div></div>
   <div class="st"><div class="n" data-to="0">0</div><div class="l">Required dependencies</div></div>
   <div class="st"><div class="n" data-to="11">0</div><div class="l">Detectors shipped</div></div>
   <div class="st"><div class="n" data-to="1550">0</div><div class="l">Tests in the suite</div></div>
@@ -1009,7 +1009,7 @@ footer{border-top:1px solid var(--line);padding:2.75rem var(--pad);max-width:150
       <div class="body">
         <p>Every registered detector sees every event. O(1) amortised per step, no network calls, no LLM
           calls, no embeddings. Detectors reason over hashes, counts and timings only.</p>
-        <div class="chip">1.53&#181;s median &middot; 1.66&#181;s p99</div>
+        <div class="chip">1.53&#181;s median &middot; 1.66&#181;s p99 &middot; 200k steps, Apple M1 &mdash; see verification below</div>
       </div>
     </div>
     <div class="step rv">
@@ -1375,7 +1375,7 @@ monitor <span class="op">=</span> Monitor.<span class="fn">default</span>(config
       <q>200,000 synthetic steps measured end to end. Median 1.53&#181;s per step, p99 1.66&#181;s on Apple
         M1, independently reproduced at 1.70 / 1.77 on M4. With window auto-scaling the median stays flat
         at ~2.4&#181;s across a 4x window range &mdash; the O(1) claim measured rather than asserted.</q>
-      <div class="src">snagline bench &middot; 2026-09-20</div>
+      <div class="src">snagline bench &middot; 200,000 steps &middot; Apple M1, arm64, CPython 3.13.5, commit b667169 (2026-09-20). Reproduce: <code>python benchmarks/overhead_benchmark.py</code>. Hardware-dependent &mdash; a slower machine reports more.</div>
     </div>
   </div>
 </section>
@@ -1387,10 +1387,17 @@ monitor <span class="op">=</span> Monitor.<span class="fn">default</span>(config
       <div class="slabel rv">07 &mdash; Roadmap</div>
       <h2 class="stitle" data-split>Every phase shipped</h2>
     </div>
-    <p class="sdesc rv d1">The original nineteen phases all shipped. The two heavier optional upgrades landed
-      behind extras rather than in the zero-dependency core: an ESN model behind <code>snagline[ml]</code>
-      and sentence embeddings behind <code>snagline[drift]</code>. Four later phases added the opt-in
-      detectors and the remaining sinks and adapters.</p>
+    <p class="sdesc rv d1">The original nineteen phases all shipped, and four later phases followed them: the
+      opt-in detectors, the remaining sinks and adapters, and the CONTINUUM integration. The two heavier
+      optional upgrades landed behind extras rather than in the zero-dependency core: an ESN model behind
+      <code>snagline[ml]</code> and sentence embeddings behind <code>snagline[drift]</code>.</p>
+    <p class="sdesc rv d2">Verification status is stated, not implied. The zero-dependency core is exercised by
+      the full suite on every push. The <code>ml</code> extra has its own CI leg that installs numpy and
+      scikit-learn, so its import-guard and fail-open behaviour run on real installs; the <code>drift</code>
+      extra's embeddings path is covered by tests that skip when its dependency is absent, so it is
+      verified against source, not by a runtime leg. This page's detector, sink and adapter descriptions
+      were checked against the code for this release; the benchmark figures above are the provenance-labelled
+      numbers from one machine, reproducible with <code>snagline bench</code>.</p>
   </div>
 
   <div class="rm rv">
