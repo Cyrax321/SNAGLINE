@@ -1719,18 +1719,19 @@ $$('a[href^="#"]').forEach(function(a){
   /* ───── COMMAND: WATCH ───── */
   var WATCH_STREAM = [
     ['<span class="dm">$</span> snagline watch --follow agent.log', 360],
-    ['<span class="ok">+</span> monitoring episode <span class="ac">ep-001</span> <span class="dm">(5 detectors online)</span>', 400],
+    ['<span class="ok">+</span> monitoring episode <span class="ac">ep-001</span> <span class="dm">(3 detectors online)</span>', 400],
     ['<span class="dm">|</span> tool_call:search <span class="ok">ok</span> <span class="dm">120ms</span>', 320],
     ['<span class="dm">|</span> tool_call:search <span class="ok">ok</span> <span class="dm">130ms</span>', 320],
     ['<span class="dm">|</span> tool_call:search <span class="ok">ok</span> <span class="dm">110ms</span>', 460],
     ['<span class="wa">!</span> <span class="wa">LOOP</span> action repeated 3x in last 3 steps <span class="dm">score 0.50</span>', 540],
+    ['<span class="dm">|</span> tool_call:search <span class="ok">ok</span> <span class="dm">125ms</span>', 300],
+    ['<span class="dm">|</span> tool_call:search <span class="ok">ok</span> <span class="dm">118ms</span>', 300],
     ['<span class="dm">|</span> tool_call:db_write <span class="er">err</span> <span class="dm">timeout</span>', 300],
     ['<span class="dm">|</span> tool_call:db_write <span class="er">err</span> <span class="dm">timeout</span>', 300],
     ['<span class="dm">|</span> tool_call:db_write <span class="er">err</span> <span class="dm">timeout</span>', 460],
-    ['<span class="er">!</span> <span class="er">CASCADE</span> 3 consecutive errors <span class="dm">score 0.80</span>', 500],
-    ['<span class="dm">|</span> tool_call:search <span class="ok">ok</span> <span class="dm">412ms</span>', 320],
-    ['<span class="wa">!</span> <span class="wa">LATENCY</span> cusum 4.12 &gt; h=3.0 <span class="dm">score 0.65</span>', 520],
-    ['<span class="vi">!</span> <span class="vi">ENSEMBLE</span> noisy-OR across 3 signals <span class="dm">score 0.97</span>', 900]
+    ['<span class="er">!</span> <span class="er">CASCADE</span> 3 consecutive errors <span class="dm">score 0.50</span>', 500],
+    ['<span class="dm">|</span> tool_call:search <span class="ok">ok</span> <span class="dm">900ms</span>', 520],
+    ['<span class="vi">!</span> <span class="vi">LATENCY</span> latency 900ms deviates from baseline (mean 121ms) <span class="dm">score 1.00</span>', 700]
   ];
 
   function runWatch(isInitial){
@@ -1774,11 +1775,15 @@ $$('a[href^="#"]').forEach(function(a){
     { text: '<span class="dm">|</span> step 03 &middot; tool:fetch_url("https://api.external.com") <span class="er">err</span> <span class="dm">429 RateLimit</span>', delay: 380 },
     { text: '<span class="dm">|</span> step 04 &middot; tool:fetch_url("https://api.external.com") <span class="er">err</span> <span class="dm">429 RateLimit (retry 1)</span>', delay: 380 },
     { text: '<span class="dm">|</span> step 05 &middot; tool:fetch_url("https://api.external.com") <span class="er">err</span> <span class="dm">429 RateLimit (retry 2)</span>', delay: 420 },
-    { text: '<span class="er">!</span> <span class="er">SNAG INTERCEPT</span> <span class="ac">error_cascade</span> fired @ step 5 <span class="dm">(trigger=error_cascade, streak=3, score=1.00)</span>', delay: 550 },
+    { text: '<span class="er">!</span> <span class="er">SNAG INTERCEPT</span> <span class="ac">error_cascade</span> fired @ step 5 <span class="dm">(trigger=error_cascade, streak=3, score=0.50)</span>', delay: 550 },
+    { text: '<span class="dm">|</span> step 06 &middot; tool:fetch_url("https://api.external.com") <span class="er">err</span> <span class="dm">429 RateLimit (retry 3)</span>', delay: 360 },
+    { text: '<span class="dm">|</span> step 07 &middot; tool:fetch_url("https://api.external.com") <span class="er">err</span> <span class="dm">429 RateLimit (retry 4)</span>', delay: 360 },
+    { text: '<span class="dm">|</span> step 08 &middot; tool:fetch_url("https://api.external.com") <span class="er">err</span> <span class="dm">429 RateLimit (retry 5)</span>', delay: 400 },
+    { text: '<span class="er">!</span> <span class="er">SNAG INTERCEPT</span> <span class="ac">error_cascade</span> fired @ step 8 <span class="dm">(trigger=error_cascade, streak=6, score=0.80)</span>', delay: 550 },
     { text: '<span class="vi">⚡</span> <span class="vi">ACTION</span> Dispatched <span class="ac">AGENT_HALT</span> & saved checkpoint snapshot', delay: 480 },
     { text: '<span class="ok">✓</span> <span class="ok">SAVED</span> 13 runaway retry loops prevented <span class="dm">(~$14.20 OpenAI API spend avoided)</span>', delay: 420 },
     { text: '<span class="dm">──────────────────────────────────────────────────────────</span>', delay: 200 },
-    { text: '<span class="dm">Replay complete in 3.9ms &middot; 1 Snag Intercepted &middot; Overhead: 1.94µs/step</span>', delay: 300 }
+    { text: '<span class="dm">Replay complete in 3.9ms &middot; 2 Snags Intercepted &middot; Overhead: 1.94µs/step</span>', delay: 300 }
   ];
 
   function runReplay(targetFile){
@@ -1961,10 +1966,13 @@ $$('a[href^="#"]').forEach(function(a){
   /* ───── COMMAND: SERVE ───── */
   var SERVE_LINES = [
     { text: '<span class="ok">+</span> snagline serve: listening on <span class="ac">http://127.0.0.1:8787</span> <span class="dm">(POST /events, GET /health)</span>', delay: 320 },
-    { text: '<span class="dm">|</span> <span class="ac">POST /events</span> &lt; <span class="ac">{"episode_id":"ep-1","step_id":"s-1","tool_name":"search","action_type":"tool_call","latency_ms":124}</span>', delay: 300 },
-    { text: '<span class="dm">|</span> <span class="ac">POST /events</span> &lt; <span class="ac">{"episode_id":"ep-1","step_id":"s-2","tool_name":"search","action_type":"tool_call","latency_ms":131}</span>', delay: 280 },
-    { text: '<span class="dm">|</span> <span class="ac">POST /events</span> &lt; <span class="ac">{"episode_id":"ep-1","step_id":"s-3","tool_name":"fetch_url","action_type":"tool_call","error":true,"latency_ms":4021}</span>', delay: 340 },
-    { text: '<span class="dm">|</span> <span class="er">!</span> latency_anomaly <span class="er">risk 0.84</span> &middot; fetch_url 4.0s vs 128ms baseline <span class="dm">(k=3.0 sigma)</span>', delay: 420 },
+    { text: '<span class="dm">|</span> <span class="ac">POST /events</span> &lt; <span class="ac">{"episode_id":"ep-1","step_id":"s-1","timestamp":1.0,"action_type":"tool_call","action_signature":"a3f0c12d9e7b4a58","tool_name":"fetch_url","latency_ms":128}</span>', delay: 260 },
+    { text: '<span class="dm">|</span> <span class="ac">POST /events</span> &lt; <span class="ac">{"episode_id":"ep-1","step_id":"s-2","timestamp":2.0,"action_type":"tool_call","action_signature":"a3f0c12d9e7b4a58","tool_name":"fetch_url","latency_ms":131}</span>', delay: 240 },
+    { text: '<span class="dm">|</span> <span class="ac">POST /events</span> &lt; <span class="ac">{"episode_id":"ep-1","step_id":"s-3","timestamp":3.0,"action_type":"tool_call","action_signature":"a3f0c12d9e7b4a58","tool_name":"fetch_url","latency_ms":127}</span>', delay: 240 },
+    { text: '<span class="dm">|</span> <span class="ac">POST /events</span> &lt; <span class="ac">{"episode_id":"ep-1","step_id":"s-4","timestamp":4.0,"action_type":"tool_call","action_signature":"a3f0c12d9e7b4a58","tool_name":"fetch_url","latency_ms":124}</span>', delay: 240 },
+    { text: '<span class="dm">|</span> <span class="ac">POST /events</span> &lt; <span class="ac">{"episode_id":"ep-1","step_id":"s-5","timestamp":5.0,"action_type":"tool_call","action_signature":"a3f0c12d9e7b4a58","tool_name":"fetch_url","latency_ms":130}</span>', delay: 280 },
+    { text: '<span class="dm">|</span> <span class="ac">POST /events</span> &lt; <span class="ac">{"episode_id":"ep-1","step_id":"s-6","timestamp":6.0,"action_type":"tool_call","action_signature":"a3f0c12d9e7b4a58","tool_name":"fetch_url","error":true,"latency_ms":4021}</span>', delay: 380 },
+    { text: '<span class="dm">|</span> <span class="er">!</span> latency_anomaly <span class="er">risk 1.00</span> &middot; latency 4021ms deviates from baseline (mean 128ms)', delay: 440 },
     { text: '<span class="dm">|</span> <span class="ac">GET /health</span> &rarr; <span class="ok">200</span> <span class="dm">{"status":"ok"}</span>', delay: 260 },
     { text: '<span class="dm">|</span> <span class="ac">GET /metrics</span> &rarr; <span class="ok">200</span> <span class="dm">prometheus exposition</span>', delay: 260 },
     { text: '<span class="dm">──────────────────────────────────────────────────────────</span>', delay: 180 },
@@ -2035,12 +2043,14 @@ $$('a[href^="#"]').forEach(function(a){
 
   /* ───── COMMAND: BASELINE ───── */
   var BASELINE_LINES = [
-    { text: '<span class="ok">+</span> fitting healthy baseline from <span class="ac">healthy_run.jsonl</span> <span class="dm">(109 steps)</span>', delay: 320 },
-    { text: '<span class="dm">|</span> tool:search        n=42  mean=128.4ms   p95=210ms', delay: 260 },
-    { text: '<span class="dm">|</span> tool:summarize     n=18  mean=204.1ms   p95=302ms', delay: 260 },
-    { text: '<span class="dm">|</span> tool:fetch_url     n=12  mean=890.7ms   p95=1400ms', delay: 260 },
+    { text: '<span class="ok">+</span> snagline baseline: fitted <span class="ac">5 tool(s)</span> from <span class="ac">24 step(s)</span>', delay: 320 },
+    { text: '<span class="dm">|</span> calc: n=5 mean=50.0ms std=0.0ms errors=0', delay: 240 },
+    { text: '<span class="dm">|</span> lookup: n=5 mean=50.0ms std=0.0ms errors=0', delay: 240 },
+    { text: '<span class="dm">|</span> search: n=5 mean=50.0ms std=0.0ms errors=0', delay: 240 },
+    { text: '<span class="dm">|</span> summarize: n=4 mean=50.0ms std=0.0ms errors=0', delay: 240 },
+    { text: '<span class="dm">|</span> write: n=5 mean=50.0ms std=0.0ms errors=1', delay: 280 },
     { text: '<span class="dm">──────────────────────────────────────────────────────────</span>', delay: 180 },
-    { text: '<span class="ok">✓</span> wrote <span class="ac">baseline.json</span> <span class="dm">-- load it with snagline load_baseline for goal-drift + latency calibration</span>', delay: 340 }
+    { text: '<span class="ok">✓</span> wrote <span class="ac">baseline.json</span> <span class="dm">-- point SNAGLINE_CALIBRATION_BASELINE_PATH at it for goal-drift + latency calibration</span>', delay: 340 }
   ];
 
   function runBaseline(){

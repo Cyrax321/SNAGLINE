@@ -539,3 +539,331 @@ def test_bench_panel_reports_live_numbers_not_hardcoded_results():
         "the bench badge is still hardcoded to a published figure rather than "
         "the measurement it just took"
     )
+
+
+# ---------------------------------------------------------------- #538 -----
+# The replay demo prints the cascade's score where it intercepts. The detector
+# grades that score now (issue #538), so the panel must print what the detector
+# actually emits for that streak, not the flat 1.00 the graded formula
+# replaced.
+
+
+def _replay_steps_block(text: str) -> str:
+    """The REPLAY_STEPS array body the terminal types out."""
+    return text.split("var REPLAY_STEPS = [")[1].split("];")[0]
+
+
+def _replay_intercept_scores(block: str) -> list[tuple[int, float]]:
+    """``[(streak, score)]`` for every cascade intercept in the block."""
+    return [
+        (int(m.group(1)), float(m.group(2)))
+        for m in re.finditer(r"streak=(\d+), score=([0-9.]+)", block)
+    ]
+
+
+def _detector_score_for_streak(streak: int) -> float:
+    """The score the shipped detector emits once a cascade reaches ``streak``
+    consecutive tool errors under the Config defaults -- derived by running the
+    detector, not by restating its grading formula.
+    """
+    from snagline.detectors.error_cascade import ErrorCascadeDetector
+    from snagline.events import StepEvent
+
+    detector = ErrorCascadeDetector()
+    last = None
+    for i in range(1, streak + 1):
+        risk = detector.observe(
+            StepEvent(str(i), "ep", float(i), "tool_call", "tool:fetch_url", error=True)
+        )
+        if risk is not None:
+            last = risk
+    assert last is not None, f"no cascade fired after {streak} consecutive errors"
+    return last.score
+
+
+def test_replay_panel_prints_the_graded_cascade_score():
+    """Each intercept's score must be the one the detector emits for that
+    streak (issue #538). The panel printed a flat 1.00 at the first crossing,
+    which is a 0.50 warning now -- and which could never have halted.
+    """
+    if not SITE_INDEX.is_file():
+        pytest.skip(f"{SITE_INDEX} not present in this checkout")
+
+    scores = _replay_intercept_scores(
+        _replay_steps_block(SITE_INDEX.read_text(encoding="utf-8"))
+    )
+    assert scores, "the replay panel no longer prints a cascade intercept"
+
+    for streak, printed in scores:
+        emitted = _detector_score_for_streak(streak)
+        assert printed == emitted, (
+            f"the replay panel prints score={printed} at streak={streak} but "
+            f"the detector emits {emitted}"
+        )
+
+
+def test_replay_panel_halts_only_once_the_cascade_reaches_the_halt_band():
+    """The AGENT_HALT the panel dispatches must follow an intercept inside the
+    halt band: ``min_severity_for_halt`` is what gates the webhook, so a panel
+    that halts on a 0.50 warning demonstrates a path the package never takes.
+    """
+    if not SITE_INDEX.is_file():
+        pytest.skip(f"{SITE_INDEX} not present in this checkout")
+
+    block = _replay_steps_block(SITE_INDEX.read_text(encoding="utf-8"))
+    halt = block.find("AGENT_HALT")
+    if halt < 0:
+        pytest.skip("the replay panel no longer dispatches a halt")
+    before_halt = _replay_intercept_scores(block[:halt])
+    assert before_halt, "no cascade intercept precedes the halt"
+    best = max(score for _, score in before_halt)
+    cfg = Config()
+    assert best >= cfg.min_severity_for_halt, (
+        f"the replay panel dispatches AGENT_HALT but the cascade in view tops "
+        f"out at {best}, below min_severity_for_halt={cfg.min_severity_for_halt}"
+    )
+
+
+# ------------------------------------------- site: watch/serve/baseline ---
+# The remaining scripted panels type out detector output and CLI output line
+# by line. Each line must be something the package actually emits -- the same
+# contract #567 established for audit/bench and #580 for replay. These three
+# panels still invented a detector count (5, the default monitor wires 3), a
+# cascade score (0.80 for three consecutive errors; the graded formula emits
+# 0.50, #538), a "cusum 4.12 > h=3.0" line the latency detector never prints
+# (h defaults to 5.0), an ENSEMBLE risk from an opt-in detector, a p95
+# breakdown the baseline command never produces, and a `snagline load_baseline`
+# command that does not exist.
+
+
+def _panel_block(text: str, marker: str) -> str:
+    """The body of one scripted panel array, e.g. ``var WATCH_STREAM = [...]``."""
+    return text.split(f"var {marker} = [")[1].split("];")[0]
+
+
+class _RecordingSink:
+    """Collects what the monitor dispatches, so a scripted panel can be
+    replayed and its claims compared against real emissions.
+    """
+
+    def __init__(self) -> None:
+        self.risks: list = []
+
+    def emit(self, risk) -> None:
+        self.risks.append(risk)
+
+    def reset(self, episode_id: str) -> None:
+        self.risks.clear()
+
+
+# The uppercase risk labels the watch stream prints -> the wire trigger names.
+_WATCH_LABELS = {
+    "LOOP": "loop",
+    "CASCADE": "error_cascade",
+    "LATENCY": "latency_anomaly",
+}
+
+_RISK_LABEL_RE = r'!</span> <span class="\w+">([A-Z][A-Z_]+)</span>'
+
+
+def test_watch_panel_reports_the_real_default_detector_count():
+    """The panel states "N detectors online"; N must be the count
+    ``Monitor.default()`` actually wires, not a larger marketing number.
+    """
+    if not SITE_INDEX.is_file():
+        pytest.skip(f"{SITE_INDEX} not present in this checkout")
+
+    from snagline.monitor import Monitor
+
+    block = _panel_block(SITE_INDEX.read_text(encoding="utf-8"), "WATCH_STREAM")
+    m = re.search(r"\((\d+) detectors online\)", block)
+    assert m, "the watch panel no longer states a detector count"
+    monitor = Monitor.default()
+    assert int(m.group(1)) == len(monitor._detectors), (
+        f"the watch panel claims {m.group(1)} detectors online but "
+        f"Monitor.default() wires {len(monitor._detectors)}: "
+        f"{[d.name for d in monitor._detectors]}"
+    )
+
+
+def test_watch_panel_only_names_detectors_a_plain_watch_runs():
+    """Every risk label in the default stream must be one of the detectors a
+    plain ``snagline watch`` runs. ``ml_ensemble`` is opt-in, so an ENSEMBLE
+    line in the default stream is machinery the watcher does not have.
+    """
+    if not SITE_INDEX.is_file():
+        pytest.skip(f"{SITE_INDEX} not present in this checkout")
+
+    from snagline.monitor import Monitor
+
+    block = _panel_block(SITE_INDEX.read_text(encoding="utf-8"), "WATCH_STREAM")
+    default = {d.name for d in Monitor.default()._detectors}
+    labels = re.findall(_RISK_LABEL_RE, block)
+    assert labels, "could not read any risk label from the watch panel"
+    for label in labels:
+        trigger = _WATCH_LABELS.get(label)
+        assert trigger is not None, (
+            f"the watch panel labels a risk {label!r} that this test does not "
+            "map to a trigger; add the mapping and confirm it is a default "
+            "detector before allowing it"
+        )
+        assert trigger in default, (
+            f"the watch panel presents {label} in the default stream, but "
+            f"{trigger} is not among the default detectors {sorted(default)}"
+        )
+
+
+def test_watch_panel_scores_are_what_the_detectors_actually_emit():
+    """Replay the panel's own typed-out step sequence through the real monitor
+    and assert every (trigger, score) the panel claims really fires for it.
+    """
+    if not SITE_INDEX.is_file():
+        pytest.skip(f"{SITE_INDEX} not present in this checkout")
+
+    from snagline.events import StepEvent, make_signature
+    from snagline.monitor import Monitor
+
+    block = _panel_block(SITE_INDEX.read_text(encoding="utf-8"), "WATCH_STREAM")
+
+    # Rebuild the episode the panel types out: "tool_call:<name> ok|err [Nms]".
+    # The spans are colour markup only, so strip them before parsing the text.
+    visible = re.sub(r"<[^>]+>", "", block)
+    sequence = re.findall(r"tool_call:(\w+)\s+(ok|err)(?:\s+(\d+)ms)?", visible)
+    assert sequence, "could not parse any steps from the watch panel"
+
+    sink = _RecordingSink()
+    monitor = Monitor.default(Config(), sinks=[sink])
+    for i, (tool, outcome, ms) in enumerate(sequence, start=1):
+        monitor.ingest(
+            StepEvent(
+                step_id=str(i),
+                episode_id="ep",
+                timestamp=float(i),
+                action_type="tool_call",
+                action_signature=make_signature("tool_call", tool),
+                tool_name=tool,
+                latency_ms=float(ms) if ms else 50.0,
+                error=(outcome == "err"),
+            )
+        )
+    fired = {(r.trigger, r.score) for r in sink.risks}
+
+    for label, score in re.findall(_RISK_LABEL_RE + r".*?score ([0-9.]+)", block):
+        claimed = (_WATCH_LABELS[label], float(score))
+        assert claimed in fired, (
+            f"the watch panel claims {label} at score {score} for the exact "
+            f"sequence it types out, but the monitor emits {sorted(fired)}"
+        )
+
+
+def test_serve_panel_posts_bodies_the_server_accepts():
+    """The panel is labelled "demo of the real server", so every body it POSTs
+    must construct a ``StepEvent`` the way the server does (``StepEvent(**obj)``)
+    -- it used to omit ``timestamp`` and ``action_signature``, which have no
+    defaults, so the real server answers 400 to every one of them.
+    """
+    if not SITE_INDEX.is_file():
+        pytest.skip(f"{SITE_INDEX} not present in this checkout")
+
+    import json
+
+    from snagline.events import StepEvent
+
+    block = _panel_block(SITE_INDEX.read_text(encoding="utf-8"), "SERVE_LINES")
+    bodies = re.findall(
+        r"POST /events</span> &lt; <span class=\"ac\">(.*?)</span>", block
+    )
+    assert bodies, "could not parse any POST body from the serve panel"
+    for body in bodies:
+        StepEvent(**json.loads(body))  # must not raise
+
+
+def test_serve_panel_risk_is_what_the_detectors_actually_emit():
+    """Replay the panel's POSTed bodies and assert the risk it shows really
+    fires, with the score the panel prints. It claimed a latency_anomaly at
+    0.84 off a single 4.0s spike with an invented "(k=3.0 sigma)" -- one spike
+    after two fast steps fires nothing, and ``cusum_k`` defaults to 0.5.
+    """
+    if not SITE_INDEX.is_file():
+        pytest.skip(f"{SITE_INDEX} not present in this checkout")
+
+    import json
+
+    from snagline.events import StepEvent
+    from snagline.monitor import Monitor
+
+    block = _panel_block(SITE_INDEX.read_text(encoding="utf-8"), "SERVE_LINES")
+    bodies = re.findall(
+        r"POST /events</span> &lt; <span class=\"ac\">(.*?)</span>", block
+    )
+    assert bodies, "could not parse any POST body from the serve panel"
+
+    sink = _RecordingSink()
+    monitor = Monitor.default(Config(), sinks=[sink])
+    for body in bodies:
+        monitor.ingest(StepEvent(**json.loads(body)))
+    fired = {(r.trigger, r.score): r.detail for r in sink.risks}
+
+    visible = re.sub(r"<[^>]+>", "", block)
+    m = re.search(r"latency_anomaly risk ([0-9.]+)", visible)
+    if m is None:
+        pytest.skip("the serve panel no longer claims a latency risk")
+    claimed = ("latency_anomaly", float(m.group(1)))
+    assert claimed in fired, (
+        f"the serve panel claims {claimed[0]} at score {claimed[1]} for the "
+        f"events it POSTs, but the monitor emits {sorted(fired)}"
+    )
+    # The detail the panel prints must also be the detector's real detail.
+    # [^'] stops at the JS string terminator, not the end of the block.
+    detail = re.search(r"risk [0-9.]+ &middot; ([^']+)", visible)
+    assert detail is not None, "could not read the panel's risk detail text"
+    assert detail.group(1).strip() == fired[claimed], (
+        f"the serve panel prints {detail.group(1)!r} but the detector emits "
+        f"{fired[claimed]!r}"
+    )
+
+
+def test_baseline_panel_mirrors_the_real_command(capsys, tmp_path):
+    """Every per-tool row the panel prints must appear in the real command's
+    output on the real fixture. The panel showed an invented p95 breakdown for
+    tools the fixture never calls, at a step count it does not have.
+    """
+    if not SITE_INDEX.is_file():
+        pytest.skip(f"{SITE_INDEX} not present in this checkout")
+
+    fixture = REPO_ROOT / "tests" / "fixtures" / "trajectories" / "healthy_run.jsonl"
+    if not fixture.is_file():
+        pytest.skip(f"{fixture} not present in this checkout")
+
+    out = tmp_path / "baseline.json"
+    rc = main(["baseline", str(fixture), "--output", str(out)])
+    assert rc == 0, f"`snagline baseline` exited {rc}"
+    real = capsys.readouterr().out
+
+    block = _panel_block(SITE_INDEX.read_text(encoding="utf-8"), "BASELINE_LINES")
+    visible = re.sub(r"<[^>]+>", "", block)
+    rows = re.findall(r"\|\s*(\S+: n=\d+ [^']+)", visible)
+    assert rows, "could not parse any per-tool rows from the baseline panel"
+    for row in rows:
+        assert row in real, (
+            f"the baseline panel prints {row!r}, which the real command never "
+            f"emits on this fixture:\n{real}"
+        )
+
+
+def test_baseline_panel_advertises_only_real_subcommands():
+    """The panel used to send the reader to ``snagline load_baseline``, which is
+    not a subcommand. Any ``snagline <word>`` the panel names must be real.
+    """
+    if not SITE_INDEX.is_file():
+        pytest.skip(f"{SITE_INDEX} not present in this checkout")
+
+    block = _panel_block(SITE_INDEX.read_text(encoding="utf-8"), "BASELINE_LINES")
+    choices = re.search(r"\{([^}]*)\}", _build_parser().format_help())
+    assert choices, "could not read the parser's subcommands"
+    real = set(choices.group(1).split(","))
+    for word in re.findall(r"snagline ([a-z_]+)", block):
+        assert word in real, (
+            f"the baseline panel sends the reader to `snagline {word}`, which "
+            f"is not one of the real subcommands {sorted(real)}"
+        )
