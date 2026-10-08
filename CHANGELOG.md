@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `EsnCusumDetector` (the `snagline[ml]` extra) now participates in
+  `Monitor.snapshot()`/`restore()`. It had no `dump_state`/`load_state`, and
+  `MLOrchestrator.dump_state` reaches its bases with a `getattr` guard, so the
+  omission was silent: a restart lost both the readout fitted by `fit()` and
+  every live episode's reservoir and CUSUM accumulator. The restored detector
+  re-warmed from the live stream -- assuming it healthy -- so an anomaly
+  shorter than `warmup_steps` was swallowed whole instead of alarming. In a
+  probe with the model fitted on a healthy trajectory, a 15-step anomaly the
+  continuous monitor reported 3 times produced zero risks after a
+  snapshot/restore; it now matches. The snapshot also carries the fitted
+  readout, so a host that trained on a known-healthy run keeps that model
+  across the restart instead of re-learning the live stream (#581).
+
 ### Added
 - `silent_abort_output_action_types` is now a `Config` field
   (`SNAGLINE_SILENT_ABORT_OUTPUT_ACTION_TYPES`, comma-separated), read by

@@ -41,6 +41,7 @@ from __future__ import annotations
 import logging
 import math
 from collections.abc import Iterable
+from typing import Any
 
 try:
     import numpy as np
@@ -261,6 +262,128 @@ class EsnCusumDetector:
     def reset(self, episode_id: str) -> None:
         """Drop all per-episode state (reservoir, warm-up, CUSUM)."""
         self._episodes.pop(episode_id, None)
+
+    # --- restart survivability (issue #581) --------------------------------
+    #
+    # The readout fitted by fit() is the whole point of that setup-time call:
+    # it takes a known-healthy trajectory and is the alternative to learning
+    # the live stream's dynamics during warm-up. Without these two methods
+    # MLOrchestrator.dump_state silently skipped this detector (it guards with
+    # getattr), so a snapshot/restore lost both the fitted readout and every
+    # live episode's reservoir + CUSUM. The restored detector re-warmed from
+    # the live stream -- assuming it healthy -- and an anomaly shorter than
+    # warmup_steps was swallowed whole instead of alarming.
+
+    def dump_state(self) -> dict[str, Any] | None:
+        """Serialize the fitted readout and every live episode's reservoir."""
+        from snagline.detectors.base import snapshot_items
+
+        payload: dict[str, Any] = {
+            "reservoir_size": self._w.shape[0],
+            "episodes": [
+                (ep, self._state_to_dict(st))
+                for ep, st in snapshot_items(self._episodes)
+            ],
+        }
+        if self._fitted_beta is not None:
+            payload["fitted"] = {
+                "beta": self._fitted_beta.tolist(),
+                "res_mu": self._fitted_res_mu,
+                "res_sigma": self._fitted_res_sigma,
+                "res_n": self._fitted_res_n,
+            }
+        return payload
+
+    def load_state(self, state: dict[str, Any]) -> None:
+        """Restore state previously produced by :meth:`dump_state`.
+
+        The live configuration owns the reservoir shape (``reservoir_size`` is
+        a constructor knob, not per-episode state): a mismatch is tolerated by
+        dropping the episode reservoirs rather than rebuilding them at the
+        wrong dimensionality, while the fitted readout is dropped for the same
+        reason -- :meth:`_new_state` copies it into new episodes verbatim, so
+        a beta sized for a different reservoir would raise on the next
+        ``observe``. Falling back to warm-up is the documented cold-start
+        behavior, not a silent misconfiguration.
+        """
+        if state.get("reservoir_size") == self._w.shape[0]:
+            for ep, raw in state.get("episodes", []):
+                st = self._new_state()
+                self._state_from_dict(st, raw)
+                self._episodes[ep] = st
+        fitted = state.get("fitted")
+        if fitted is not None and fitted.get("beta") is not None:
+            beta = np.array(fitted["beta"], dtype=float)
+            if beta.shape == self._rhs_shape():
+                self._fitted_beta = beta
+                self._fitted_res_mu = float(fitted.get("res_mu", 0.0))
+                self._fitted_res_sigma = float(fitted.get("res_sigma", 0.0))
+                self._fitted_res_n = int(fitted.get("res_n", 0))
+
+    def _rhs_shape(self) -> tuple[int, ...]:
+        return self._w.shape[0] + 1, _FEATURE_DIM
+
+    def _state_to_dict(self, st: _EpisodeState) -> dict[str, Any]:
+        """One episode's reservoir/CUSUM as JSON-compatible data."""
+        return {
+            "state": np.asarray(st.state, dtype=float).tolist(),
+            "context_prev": (
+                np.asarray(st.context_prev, dtype=float).tolist()
+                if st.context_prev is not None
+                else None
+            ),
+            "beta": np.asarray(st.beta, dtype=float).tolist()
+            if st.beta is not None
+            else None,
+            "cusum": st.cusum,
+            "res_mu": st.res_mu,
+            "res_m2": st.res_m2,
+            "res_n": st.res_n,
+            "warm_n": st.warm_n,
+            # gram/rhs are the accumulating least-squares system behind the
+            # warm-up solve; carrying them keeps a half-warmed episode from
+            # restarting its warm-up, and the warm buffers are the same data
+            # in pair form.
+            "gram": np.asarray(st.gram, dtype=float).tolist(),
+            "rhs": np.asarray(st.rhs, dtype=float).tolist(),
+            # The pair buffers feed _seed_residual_stats at the end of warm-up
+            # (np.vstack over an empty list raises), so they travel too. They
+            # are bounded by warmup_steps and dropped once warm-up completes.
+            "warm_ctx": [np.asarray(c, dtype=float).tolist() for c in st.warm_ctx],
+            "warm_tgt": [np.asarray(t, dtype=float).tolist() for t in st.warm_tgt],
+        }
+
+    def _state_from_dict(self, st: _EpisodeState, raw: dict[str, Any]) -> None:
+        def _arr(key: str) -> np.ndarray | None:
+            val = raw.get(key)
+            return None if val is None else np.array(val, dtype=float)
+
+        state = _arr("state")
+        if state is not None and state.shape == st.state.shape:
+            st.state = state
+        ctx = _arr("context_prev")
+        if (
+            ctx is not None
+            and st.context_prev is not None
+            and ctx.shape == st.context_prev.shape
+        ):
+            st.context_prev = ctx
+        beta = _arr("beta")
+        if beta is not None and st.beta is not None and beta.shape == st.beta.shape:
+            st.beta = beta
+        gram = _arr("gram")
+        rhs = _arr("rhs")
+        if gram is not None and gram.shape == st.gram.shape:
+            st.gram = gram
+        if rhs is not None and rhs.shape == st.rhs.shape:
+            st.rhs = rhs
+        st.cusum = float(raw.get("cusum", 0.0))
+        st.res_mu = float(raw.get("res_mu", 0.0))
+        st.res_m2 = float(raw.get("res_m2", 0.0))
+        st.res_n = int(raw.get("res_n", 0))
+        st.warm_n = int(raw.get("warm_n", 0))
+        st.warm_ctx = [np.array(c, dtype=float) for c in raw.get("warm_ctx", [])]
+        st.warm_tgt = [np.array(t, dtype=float) for t in raw.get("warm_tgt", [])]
 
     # --- internals ---------------------------------------------------------
 
