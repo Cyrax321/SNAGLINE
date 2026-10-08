@@ -1774,11 +1774,15 @@ $$('a[href^="#"]').forEach(function(a){
     { text: '<span class="dm">|</span> step 03 &middot; tool:fetch_url("https://api.external.com") <span class="er">err</span> <span class="dm">429 RateLimit</span>', delay: 380 },
     { text: '<span class="dm">|</span> step 04 &middot; tool:fetch_url("https://api.external.com") <span class="er">err</span> <span class="dm">429 RateLimit (retry 1)</span>', delay: 380 },
     { text: '<span class="dm">|</span> step 05 &middot; tool:fetch_url("https://api.external.com") <span class="er">err</span> <span class="dm">429 RateLimit (retry 2)</span>', delay: 420 },
-    { text: '<span class="er">!</span> <span class="er">SNAG INTERCEPT</span> <span class="ac">error_cascade</span> fired @ step 5 <span class="dm">(trigger=error_cascade, streak=3, score=1.00)</span>', delay: 550 },
+    { text: '<span class="er">!</span> <span class="er">SNAG INTERCEPT</span> <span class="ac">error_cascade</span> fired @ step 5 <span class="dm">(trigger=error_cascade, streak=3, score=0.50)</span>', delay: 550 },
+    { text: '<span class="dm">|</span> step 06 &middot; tool:fetch_url("https://api.external.com") <span class="er">err</span> <span class="dm">429 RateLimit (retry 3)</span>', delay: 360 },
+    { text: '<span class="dm">|</span> step 07 &middot; tool:fetch_url("https://api.external.com") <span class="er">err</span> <span class="dm">429 RateLimit (retry 4)</span>', delay: 360 },
+    { text: '<span class="dm">|</span> step 08 &middot; tool:fetch_url("https://api.external.com") <span class="er">err</span> <span class="dm">429 RateLimit (retry 5)</span>', delay: 400 },
+    { text: '<span class="er">!</span> <span class="er">SNAG INTERCEPT</span> <span class="ac">error_cascade</span> fired @ step 8 <span class="dm">(trigger=error_cascade, streak=6, score=0.80)</span>', delay: 550 },
     { text: '<span class="vi">⚡</span> <span class="vi">ACTION</span> Dispatched <span class="ac">AGENT_HALT</span> & saved checkpoint snapshot', delay: 480 },
     { text: '<span class="ok">✓</span> <span class="ok">SAVED</span> 13 runaway retry loops prevented <span class="dm">(~$14.20 OpenAI API spend avoided)</span>', delay: 420 },
     { text: '<span class="dm">──────────────────────────────────────────────────────────</span>', delay: 200 },
-    { text: '<span class="dm">Replay complete in 3.9ms &middot; 1 Snag Intercepted &middot; Overhead: 1.94µs/step</span>', delay: 300 }
+    { text: '<span class="dm">Replay complete in 3.9ms &middot; 2 Snags Intercepted &middot; Overhead: 1.94µs/step</span>', delay: 300 }
   ];
 
   function runReplay(targetFile){

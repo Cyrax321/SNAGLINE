@@ -539,3 +539,86 @@ def test_bench_panel_reports_live_numbers_not_hardcoded_results():
         "the bench badge is still hardcoded to a published figure rather than "
         "the measurement it just took"
     )
+
+
+# ---------------------------------------------------------------- #538 -----
+# The replay demo prints the cascade's score where it intercepts. The detector
+# grades that score now (issue #538), so the panel must print what the detector
+# actually emits for that streak, not the flat 1.00 the graded formula
+# replaced.
+
+
+def _replay_steps_block(text: str) -> str:
+    """The REPLAY_STEPS array body the terminal types out."""
+    return text.split("var REPLAY_STEPS = [")[1].split("];")[0]
+
+
+def _replay_intercept_scores(block: str) -> list[tuple[int, float]]:
+    """``[(streak, score)]`` for every cascade intercept in the block."""
+    return [
+        (int(m.group(1)), float(m.group(2)))
+        for m in re.finditer(r"streak=(\d+), score=([0-9.]+)", block)
+    ]
+
+
+def _detector_score_for_streak(streak: int) -> float:
+    """The score the shipped detector emits once a cascade reaches ``streak``
+    consecutive tool errors under the Config defaults -- derived by running the
+    detector, not by restating its grading formula.
+    """
+    from snagline.detectors.error_cascade import ErrorCascadeDetector
+    from snagline.events import StepEvent
+
+    detector = ErrorCascadeDetector()
+    last = None
+    for i in range(1, streak + 1):
+        risk = detector.observe(
+            StepEvent(str(i), "ep", float(i), "tool_call", "tool:fetch_url", error=True)
+        )
+        if risk is not None:
+            last = risk
+    assert last is not None, f"no cascade fired after {streak} consecutive errors"
+    return last.score
+
+
+def test_replay_panel_prints_the_graded_cascade_score():
+    """Each intercept's score must be the one the detector emits for that
+    streak (issue #538). The panel printed a flat 1.00 at the first crossing,
+    which is a 0.50 warning now -- and which could never have halted.
+    """
+    if not SITE_INDEX.is_file():
+        pytest.skip(f"{SITE_INDEX} not present in this checkout")
+
+    scores = _replay_intercept_scores(
+        _replay_steps_block(SITE_INDEX.read_text(encoding="utf-8"))
+    )
+    assert scores, "the replay panel no longer prints a cascade intercept"
+
+    for streak, printed in scores:
+        emitted = _detector_score_for_streak(streak)
+        assert printed == emitted, (
+            f"the replay panel prints score={printed} at streak={streak} but "
+            f"the detector emits {emitted}"
+        )
+
+
+def test_replay_panel_halts_only_once_the_cascade_reaches_the_halt_band():
+    """The AGENT_HALT the panel dispatches must follow an intercept inside the
+    halt band: ``min_severity_for_halt`` is what gates the webhook, so a panel
+    that halts on a 0.50 warning demonstrates a path the package never takes.
+    """
+    if not SITE_INDEX.is_file():
+        pytest.skip(f"{SITE_INDEX} not present in this checkout")
+
+    block = _replay_steps_block(SITE_INDEX.read_text(encoding="utf-8"))
+    halt = block.find("AGENT_HALT")
+    if halt < 0:
+        pytest.skip("the replay panel no longer dispatches a halt")
+    before_halt = _replay_intercept_scores(block[:halt])
+    assert before_halt, "no cascade intercept precedes the halt"
+    best = max(score for _, score in before_halt)
+    cfg = Config()
+    assert best >= cfg.min_severity_for_halt, (
+        f"the replay panel dispatches AGENT_HALT but the cascade in view tops "
+        f"out at {best}, below min_severity_for_halt={cfg.min_severity_for_halt}"
+    )
