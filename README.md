@@ -113,7 +113,7 @@ The full architecture reference is in [docs/ADAPTER_GUIDE.md](docs/ADAPTER_GUIDE
 | **Stagnation detector** (opt-in) | Busy-but-discovering-nothing episodes | Tracks the share of never-before-seen action signatures in a sliding window; when novelty collapses below a floor for several consecutive windows it fires once. Complements the loop detector, which requires exact repeats: near-duplicate argument-varying actions evade exact matching but still exhaust the agent's template space. | O(1) amortized |
 | **Token runaway detector** (opt-in) | Unbounded token consumption | Tracks per-episode token counts against a budget envelope; fires when cumulative tokens exceed the budget or when the trajectory shows runaway growth. | O(1) amortized |
 | **Meltdown detector** (opt-in) | Pathological tool churn | Measures entropy of tool usage in a window; fires when entropy is too low (stuck on one tool) or too high (thrashing across many tools). | O(1) amortized |
-| **Silent abort detector** (opt-in) | Abandoned episodes | Checks at end-of-episode for expected completion signals; fires when an episode ends without a terminal tool call or explicit success. | O(1) amortized |
+| **Silent abort detector** (opt-in) | Abandoned episodes | Checks at end-of-episode for expected completion signals; fires when an episode's last step was an error-free bare tool call instead of an output step. Which action types count as output is host-specific, so tune `silent_abort_output_action_types` -- the shipped default matches only the LangChain adapter (see [DETECTOR_GUIDE](docs/DETECTOR_GUIDE.md)). | O(1) amortized |
 | **Side effect guard detector** (opt-in) | Duplicate non-idempotent actions | Counts per-episode occurrences of (episode_id, tool_name, action_signature) for steps marked side_effect=True; fires on the second occurrence. | O(1) amortized |
 | **Compaction tripwire detector** (opt-in) | Governance decay after compaction | Tracks adapter-defined compaction pins; fires governance_decay when a pin is not re-confirmed within the grace window. | O(1) amortized |
 
@@ -284,6 +284,7 @@ the path variant below.
 | `SNAGLINE_MELTDOWN_HIGH_ENTROPY` | `meltdown_high_entropy` | 3.4 | Above this many bits the window is thrash |
 | `SNAGLINE_MELTDOWN_REARM_STEPS` | `meltdown_rearm_steps` | 10 | In-band steps before re-arming |
 | `SNAGLINE_SILENT_ABORT_ENABLED` | `silent_abort_enabled` | False | Silent-abort check at end of episode |
+| `SNAGLINE_SILENT_ABORT_OUTPUT_ACTION_TYPES` | `silent_abort_output_action_types` | message,plan_step | Action types that count as an episode's output step (comma-separated). Host-specific: the Claude Code bridge, the OpenAI/Anthropic auto-wrappers, the LangGraph adapter and CrewAI/AutoGen do not end on either default, so the stock value pages on every healthy episode -- see [DETECTOR_GUIDE](docs/DETECTOR_GUIDE.md) |
 | `SNAGLINE_SIDE_EFFECT_GUARD_ENABLED` | `side_effect_guard_enabled` | False | Enable SideEffectGuardDetector (duplicate non-idempotent actions) |
 | `SNAGLINE_SIDE_EFFECT_ALLOWED_REPEATS` | `side_effect_allowed_repeats` | 1 | Occurrences tolerated before firing `side_effect_duplicate` |
 | `SNAGLINE_SIDE_EFFECT_SCORE` | `side_effect_score` | 0.9 | Score for a duplicate side effect (routes as critical) |

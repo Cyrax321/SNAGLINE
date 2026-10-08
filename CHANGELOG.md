@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `silent_abort_output_action_types` is now a `Config` field
+  (`SNAGLINE_SILENT_ABORT_OUTPUT_ACTION_TYPES`, comma-separated), read by
+  `Monitor.default()`. `SilentAbortDetector` documents its
+  `output_action_types` as operator configuration (issue #347), but until now
+  `Monitor.default()` hardcoded the built-in default and `Config` had no field
+  for it, so the documented escape hatch did not exist. It is also the only
+  way to make the detector usable on most shipped integrations: only the
+  LangChain adapter ends a healthy episode on a member of the default
+  `{"message", "plan_step"}`. The Claude Code bridge ends on a `tool_call`
+  (it drops the `Stop` hook), the OpenAI/Anthropic auto-wrappers label every
+  LLM call `tool_call`, the LangGraph adapter emits `node_run`, and
+  CrewAI/AutoGen emit `agent_step` -- so the stock value paged `silent_abort`
+  at end-of-episode on essentially every successful run. `DETECTOR_GUIDE` now
+  carries the per-integration table (#578).
 - The landing-page terminal now runs `serve`, `hook`, and `baseline`, the
   three subcommands its own simulated `--help` and its "command not
   recognized" fallback advertised but did not dispatch: typing one of them
