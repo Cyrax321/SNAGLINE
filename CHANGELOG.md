@@ -98,6 +98,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   former process-wide ceiling, which four network POST paths sum to), so a dead
   destination can only exhaust its own delivery budget; the thread and file
   descriptor bound from #423 is preserved per destination (#559).
+- `injected_governance_decay.jsonl` no longer reports a loop it was never
+  built to show. Its trailing `lookup` and `write` rows carried `search`'s
+  `action_signature`, and `LoopDetector` keys on the signature rather than the
+  tool name, so the three distinct tools read as one action repeated and the
+  fixture's own README demo command answered with a `loop` risk instead of the
+  `governance_decay` risk it was written to exhibit. The digests now match
+  their rows, and a test asserts no fixture's `tool_call` rows share a
+  signature across different tool names, so the list and the loop detector's
+  keying cannot drift apart again. The README also names the flag the demo
+  needs: the tripwire is opt-in and off by default, so the bare replay command
+  it quoted emitted nothing (#574).
 - The network sinks cap the reply body they read and discard. `bounded_post`
   documents its `max_bytes` argument as the guard against an endpoint that
   streams an endless body, but `WebhookSink`, `SlackSink`, `PagerDutySink` and
