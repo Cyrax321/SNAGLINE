@@ -371,6 +371,47 @@ a detector implements the duck-typed `finalize(episode_id)` method
 (`detectors.base.EpisodeFinalizer`); `end_episode` discovers it by attribute,
 so ordinary detectors are unaffected and fail-open applies as always.
 
+**Which action types count as "output" is host-specific** (issue #578). The
+check compares the final step's `action_type` against
+`Config.silent_abort_output_action_types`, which defaults to
+`{"message", "plan_step"}` -- the types the *LangChain* adapter emits for a
+completed turn. Of the shipped integrations, only that one ends a healthy
+episode on a member of the default set:
+
+| integration | action type of a healthy episode's final step | in the default set? |
+| --- | --- | --- |
+| `adapters/langchain_adapter` | `plan_step` (`on_chain_end`) or `message` (`on_llm_end`) | yes |
+| `adapters/claude_code` | `tool_call` (the `Stop` hook is dropped as lifecycle noise) | no |
+| `auto/openai`, `auto/anthropic` | `tool_call` (every LLM call is wrapped the same way) | no |
+| `adapters/langgraph_adapter` | `node_run` | no |
+| `adapters/crewai` | `tool_call` or `agent_step` | no |
+| `adapters/autogen` | `agent_step` | no |
+
+So with the stock default, enabling this detector on any integration below
+the first row pages `silent_abort` at end-of-episode on essentially every
+*successful* run -- the exact false-positive storm rule 5 says gets a
+detector uninstalled. Set the knob to the types your host actually terminates
+on, in code, from the environment, or in a config file:
+
+```python
+Config(
+    silent_abort_enabled=True,
+    silent_abort_output_action_types=frozenset({"tool_call"}),
+)
+```
+
+```bash
+SNAGLINE_SILENT_ABORT_ENABLED=1 \
+SNAGLINE_SILENT_ABORT_OUTPUT_ACTION_TYPES=tool_call,node_run snagline watch ...
+```
+
+A value that names nothing (`""`, a lone comma) is rejected at construction
+and on `resolve()` rather than silently clearing the set, because an empty set
+makes every episode look abandoned. The detector's own `output_action_types`
+constructor argument still exists and still wins over the snapshot when
+restoring state (issue #347); `Config` is simply the surface
+`Monitor.default()` reads.
+
 ### `CompactionTripwireDetector` (`compaction_tripwire_enabled=True`, issue #90)
 
 Governance-decay detection across context compactions. Motivation comes from

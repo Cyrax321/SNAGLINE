@@ -1366,7 +1366,16 @@ class Monitor:
         if cfg.meltdown_enabled:
             base.append(MeltdownDetector(config=cfg))
         if cfg.silent_abort_enabled:
-            base.append(SilentAbortDetector(config=cfg))
+            # The output types are host-specific -- the shipped adapters end a
+            # healthy episode on six different action types -- so the Config
+            # field is the operator surface, not the detector's built-in
+            # default (issue #578).
+            base.append(
+                SilentAbortDetector(
+                    config=cfg,
+                    output_action_types=cfg.silent_abort_output_action_types,
+                )
+            )
         # Side-effect guard is opt-in (issue #88): duplicate non-idempotent
         # action detection, default-off so the zero-dependency preset and the
         # published bench numbers are untouched.
