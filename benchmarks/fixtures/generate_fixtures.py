@@ -3,16 +3,29 @@
 Writes two JSONL files next to this script:
 
 * ``labeled_episodes.jsonl``  -- four episodes per shipped trigger, each line's
-  ``label.trigger`` naming the failure shape injected into that trajectory.
-  Since issue #118 the ``goal_drift`` and ``ml_ensemble`` episodes additionally
+  ``label.trigger`` naming the failure shape injected into that trajectory and
+  ``label.onset_step`` naming the zero-based index of the first event that
+  intentionally introduces it (issue #82 stage 2: detection latency). Since
+  issue #118 the ``goal_drift`` and ``ml_ensemble`` episodes additionally
   carry a ``config`` envelope field naming the harness config variant they
   replay under (see benchmarks/detection_accuracy.py).
 * ``healthy_controls.jsonl``  -- ``label: null`` trajectories, including
   deliberately tricky near-threshold cases (two repeats then recovery,
   warmup-window latency jitter, tool-choice entropy near 2.3 bits). The last
   few controls replay under the ``ml_ensemble`` / ``goal_drift`` variants.
+  Nothing is injected, so they carry no onset step.
 * ``goal_drift_baseline.json`` -- the committed healthy BaselineProfile the
   ``goal_drift`` variant replays against (issue #118).
+
+Onset semantics: ``onset_step`` is the FIRST STEP AT WHICH THE FAILURE
+CONDITION IS INTRODUCED, not the first step at which a detector could notice
+it. For repeat/threshold-driven shapes it is the first of the injected
+repeats, even though the detector only fires once the threshold is crossed;
+for cumulative shapes (meltdown, stagnation, cycle, wall_clock_budget,
+goal-drift latency blowout) the whole trajectory is the failure and the onset
+is step 0; for silent_abort it is the deliberately-unclosed final step. Latency
+against this value therefore includes the detector's own threshold delay,
+which is exactly what stage 2 set out to measure.
 
 Every episode replays through ``Monitor.default()`` plus the opt-in flags the
 labels require (token_runaway, meltdown, silent_abort, and a fixed episode
@@ -139,17 +152,41 @@ def _tc(
 
 
 class _Builder:
-    """Per-episode event accumulator with deterministic arg uniquing."""
+    """Per-episode event accumulator with deterministic arg uniquing.
+
+    ``onset`` is the failure-injection onset (stage 2): the zero-based index of
+    the FIRST event that intentionally introduces the labeled failure
+    condition. Builders call :meth:`mark_onset` immediately before adding that
+    event, so the value is derived from the construction sequence rather than
+    hand-written per episode. Builders whose whole trajectory IS the failure
+    mark step 0 explicitly, so an unmarked labeled builder fails loudly in
+    main() instead of silently reporting onset ``None``.
+    """
 
     def __init__(self, ep: str, rng: random.Random) -> None:
         self.ep = ep
         self.rng = rng
         self.events: list[dict] = []
         self._n = 0
+        self.onset: int | None = None
 
     def add(self, tool: str, args: str, **kw) -> None:
         self.events.append(_tc(self.ep, self._n, tool, args, **kw))
         self._n += 1
+
+    def mark_onset(self) -> None:
+        """Record that the NEXT event added is the failure-injection onset."""
+        self.onset = self._n
+
+    def result(self) -> tuple[list[dict], int | None]:
+        """Return ``(events, onset)``.
+
+        Every builder -- labeled and healthy -- returns this pair so the onset
+        is derived from the construction sequence rather than maintained in a
+        separate table. Healthy builders never call :meth:`mark_onset`, so
+        their onset is ``None``.
+        """
+        return self.events, self.onset
 
     def finish_with_output(self) -> list[dict]:
         """Close the episode on a message step so silent_abort stays silent."""
@@ -166,7 +203,7 @@ def _cycle_tool(i: int) -> str:
 # --------------------------------------------------------------------------
 
 
-def build_loop(ep: str, rng: random.Random) -> list[dict]:
+def build_loop(ep: str, rng: random.Random) -> tuple[list[dict], int | None]:
     """Three identical retry calls inside the 12-signature loop window.
 
     Total tool calls stays below the 20-slot meltdown window so the entropy
@@ -176,25 +213,33 @@ def build_loop(ep: str, rng: random.Random) -> list[dict]:
     b = _Builder(ep, rng)
     for i in range(4):
         b.add(_cycle_tool(i), f"q={rng.randrange(10**6)}")
+    # Onset: the first of the three identical retries (step 4). Three copies
+    # must exist before the repeat threshold is crossed, but the failure is
+    # introduced by the first deliberate repeat.
+    b.mark_onset()
     # The loop: same tool, same args, hence one identical signature x3.
     for _ in range(3):
         b.add("fetch_record", "id=42")
     b.add(_cycle_tool(1), f"q={rng.randrange(10**6)}")
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
-def build_error_cascade(ep: str, rng: random.Random) -> list[dict]:
+def build_error_cascade(ep: str, rng: random.Random) -> tuple[list[dict], int | None]:
     """Three consecutive erroring tool calls trip the consecutive rule (3)."""
     b = _Builder(ep, rng)
     for i in range(3):
         b.add(_cycle_tool(i), f"req={rng.randrange(10**6)}")
+    # Onset: the first of the three erroring calls (step 3).
+    b.mark_onset()
     for i in range(3):
         b.add("deploy_service", f"svc-{i}", error=True, error_type="TimeoutError")
     b.add(_cycle_tool(4), f"req={rng.randrange(10**6)}")
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
-def build_latency_anomaly(ep: str, rng: random.Random) -> list[dict]:
+def build_latency_anomaly(ep: str, rng: random.Random) -> tuple[list[dict], int | None]:
     """Stable 5-call baseline freezes mu0~=400ms/sigma0=20ms, then spikes.
 
     Baseline [400, 395, 405, 398, 402] has std ~= 3.5, so the relative floor
@@ -204,12 +249,15 @@ def build_latency_anomaly(ep: str, rng: random.Random) -> list[dict]:
     b = _Builder(ep, rng)
     for ms in (400.0, 395.0, 405.0, 398.0, 402.0):
         b.add("search_web", f"q={rng.randrange(10**6)}", latency_ms=ms)
+    # Onset: the first spike (step 5), immediately after the frozen baseline.
+    b.mark_onset()
     for ms in (2500.0, 2400.0):
         b.add("search_web", f"q={rng.randrange(10**6)}", latency_ms=ms)
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
-def build_token_runaway(ep: str, rng: random.Random) -> list[dict]:
+def build_token_runaway(ep: str, rng: random.Random) -> tuple[list[dict], int | None]:
     """Sustained-burn shift after the 20-sample warmup; envelope never fires.
 
     Steps 1..20 carry 900 tokens each (freeze at n=20: mu0=900, std=0, floor
@@ -229,6 +277,8 @@ def build_token_runaway(ep: str, rng: random.Random) -> list[dict]:
             tokens_in=700,
             tokens_out=200,
         )
+    # Onset: the first above-baseline burn (step 20), right after warmup.
+    b.mark_onset()
     for i in range(6):
         b.add(
             _cycle_tool(20 + i),
@@ -236,10 +286,11 @@ def build_token_runaway(ep: str, rng: random.Random) -> list[dict]:
             tokens_in=2300,
             tokens_out=300,
         )
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
-def build_budget_breach(ep: str, rng: random.Random) -> list[dict]:
+def build_budget_breach(ep: str, rng: random.Random) -> tuple[list[dict], int | None]:
     """Jump straight across the warn fraction so only budget_breach fires.
 
     Thirty baseline steps at 1,000 tokens accumulate 30,000 (< 40,000 warn).
@@ -254,6 +305,8 @@ def build_budget_breach(ep: str, rng: random.Random) -> list[dict]:
         b.add(
             _cycle_tool(i), f"row={rng.randrange(10**6)}", tokens_in=800, tokens_out=200
         )
+    # Onset: the single oversized step (step 30) that crosses the budget.
+    b.mark_onset()
     b.add(_cycle_tool(30), "bulk_export=huge", tokens_in=21_000, tokens_out=0)
     for i in range(2):
         b.add(
@@ -262,10 +315,11 @@ def build_budget_breach(ep: str, rng: random.Random) -> list[dict]:
             tokens_in=800,
             tokens_out=200,
         )
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
-def build_meltdown_low(ep: str, rng: random.Random) -> list[dict]:
+def build_meltdown_low(ep: str, rng: random.Random) -> tuple[list[dict], int | None]:
     """Rote collapse: one tool identity, unique args, entropy -> 0 bits.
 
     The meltdown window reasons about tool_name, the loop detector about
@@ -273,20 +327,27 @@ def build_meltdown_low(ep: str, rng: random.Random) -> list[dict]:
     collapse fires once the 20-call window fills (H = 0 < 0.4 bits).
     """
     b = _Builder(ep, rng)
+    # Onset: step 0 -- the rote collapse is the entire trajectory, so the
+    # first event is where the failure condition begins.
+    b.mark_onset()
     for i in range(22):
         b.add("scrape_page", f"page_{i}")
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
-def build_meltdown_high(ep: str, rng: random.Random) -> list[dict]:
+def build_meltdown_high(ep: str, rng: random.Random) -> tuple[list[dict], int | None]:
     """Churn: strict 12-tool cycle puts every full 20-window at ~3.52 bits."""
     b = _Builder(ep, rng)
+    # Onset: step 0 -- the churn shape is the whole trajectory.
+    b.mark_onset()
     for i in range(24):
         b.add(CHURN_POOL[i % len(CHURN_POOL)], f"call-{i}-{rng.randrange(10**6)}")
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
-def build_silent_abort(ep: str, rng: random.Random) -> list[dict]:
+def build_silent_abort(ep: str, rng: random.Random) -> tuple[list[dict], int | None]:
     """Clean run whose LAST step is an error-free bare tool call.
 
     finalize() at end_episode sees a non-output final action and fires; during
@@ -296,8 +357,12 @@ def build_silent_abort(ep: str, rng: random.Random) -> list[dict]:
     b = _Builder(ep, rng)
     for i in range(5):
         b.add(_cycle_tool(i), f"k={rng.randrange(10**6)}")
+    # Onset: the final non-output step (step 5). The injected failure is the
+    # ABSENCE of a closing output step after it, so this is the event from
+    # which the trajectory diverges from a healthy run.
+    b.mark_onset()
     b.add("write_report", "draft=v1")  # ends mid-work, never emits output
-    return b.events  # deliberately NOT closed with a message step
+    return b.result()  # deliberately NOT closed with a message step
 
 
 # --------------------------------------------------------------------------
@@ -306,7 +371,7 @@ def build_silent_abort(ep: str, rng: random.Random) -> list[dict]:
 # --------------------------------------------------------------------------
 
 
-def build_stagnation(ep: str, rng: random.Random) -> list[dict]:
+def build_stagnation(ep: str, rng: random.Random) -> tuple[list[dict], int | None]:
     """Novelty collapse: 6 signatures reused randomly for 100 steps, 0.5s gaps.
 
     Window 50, min_novelty 0.05, patience 2: need two consecutive windows with
@@ -317,6 +382,8 @@ def build_stagnation(ep: str, rng: random.Random) -> list[dict]:
     complete.
     """
     b = _Builder(ep, rng)
+    # Onset: step 0 -- the low-novelty sequence is the whole trajectory.
+    b.mark_onset()
     sigs = [(f"st_tool_{i}", f"fixed_{i}") for i in range(6)]
     for i in range(100):
         # Random pick among 6 keeps novelty low but not periodic
@@ -336,10 +403,12 @@ def build_stagnation(ep: str, rng: random.Random) -> list[dict]:
         )
     )
     b._n += 1
-    return b.events
+    return b.result()
 
 
-def build_side_effect_duplicate(ep: str, rng: random.Random) -> list[dict]:
+def build_side_effect_duplicate(
+    ep: str, rng: random.Random
+) -> tuple[list[dict], int | None]:
     """Second identical side_effect=True fires side_effect_duplicate.
 
     Two identical (tool_name, signature) with side_effect=True. First is
@@ -349,16 +418,23 @@ def build_side_effect_duplicate(ep: str, rng: random.Random) -> list[dict]:
     b = _Builder(ep, rng)
     for i in range(3):
         b.add(_cycle_tool(i), f"init={rng.randrange(10**6)}")
+    # Onset: the first of the duplicated charges (step 3). Only the second
+    # identical side-effect crosses allowed_repeats, but the injected failure
+    # is the duplicated pair, which starts here.
+    b.mark_onset()
     # First charge
     b.add("charge_card", "amt=10", side_effect=True)
     b.add(_cycle_tool(3), f"mid={rng.randrange(10**6)}")
     # Duplicate charge, same signature
     b.add("charge_card", "amt=10", side_effect=True)
     b.add(_cycle_tool(4), f"tail={rng.randrange(10**6)}")
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
-def build_governance_decay(ep: str, rng: random.Random) -> list[dict]:
+def build_governance_decay(
+    ep: str, rng: random.Random
+) -> tuple[list[dict], int | None]:
     """Compaction with pinned hashes, 3 grace steps without confirmation.
 
     Grace 3: compaction at ordinal n, deadline n+3. After 3 steps with pins
@@ -370,6 +446,10 @@ def build_governance_decay(ep: str, rng: random.Random) -> list[dict]:
     b = _Builder(ep, rng)
     for i in range(2):
         b.add(_cycle_tool(i), f"pre={rng.randrange(10**6)}")
+    # Onset: the compaction step (step 2) that pins constraints the run never
+    # confirms. The decay is only DECIDABLE once grace expires, but it is
+    # introduced by the pinning.
+    b.mark_onset()
     pin_a = hashlib.sha256(b"constraint-a").hexdigest()
     pin_b = hashlib.sha256(b"constraint-b").hexdigest()
     # Compaction pins two constraints
@@ -382,10 +462,11 @@ def build_governance_decay(ep: str, rng: random.Random) -> list[dict]:
     # Three grace steps, none confirm the pins
     for i in range(3):
         b.add(_cycle_tool(i), f"grace={rng.randrange(10**6)}")
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
-def build_cycle(ep: str, rng: random.Random) -> list[dict]:
+def build_cycle(ep: str, rng: random.Random) -> tuple[list[dict], int | None]:
     """Period-6 cycle across 24 steps fires LoopDetector cycle but not loop.
 
     Window 12, min_period 2, max_period 6: period 6 is inside band, and 12
@@ -395,14 +476,17 @@ def build_cycle(ep: str, rng: random.Random) -> list[dict]:
     36s <120s, gap 1.5s, no idle.
     """
     b = _Builder(ep, rng)
+    # Onset: step 0 -- the period-6 cycle is the whole trajectory.
+    b.mark_onset()
     cyc = [(f"c_tool_{i}", f"c-arg-{i}") for i in range(6)]
     for i in range(24):
         tool, args = cyc[i % 6]
         b.add(tool, args)
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
-def build_stall(ep: str, rng: random.Random) -> list[dict]:
+def build_stall(ep: str, rng: random.Random) -> tuple[list[dict], int | None]:
     """25 consecutive identical signatures fires LoopDetector stall.
 
     Stall threshold 25. Use single tool/args repeated. Keep preceding steps
@@ -415,12 +499,15 @@ def build_stall(ep: str, rng: random.Random) -> list[dict]:
     b = _Builder(ep, rng)
     for i in range(2):
         b.add(_cycle_tool(i), f"warm={rng.randrange(10**6)}")
+    # Onset: the first of the 25 identical calls (step 2).
+    b.mark_onset()
     for _ in range(25):
         b.add("stalled_tool", "repeat-id-99")
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
-def build_idle_gap(ep: str, rng: random.Random) -> list[dict]:
+def build_idle_gap(ep: str, rng: random.Random) -> tuple[list[dict], int | None]:
     """One gap >=10s between consecutive ingests fires idle_gap.
 
     Five steps at 1.5s gaps, then a 15s jump, then 3 more at 1.5s. Idle
@@ -431,6 +518,8 @@ def build_idle_gap(ep: str, rng: random.Random) -> list[dict]:
     b = _Builder(ep, rng)
     for i in range(5):
         b.add(_cycle_tool(i), f"q={rng.randrange(10**6)}")
+    # Onset: the step whose timestamp jumps 15s (step 5) -- the injected gap.
+    b.mark_onset()
     # Create a gap by bumping the next event's timestamp by 15s.
     # _Builder uses i*1.5, so we manually adjust the timestamp of the next
     # event after building it.
@@ -446,19 +535,25 @@ def build_idle_gap(ep: str, rng: random.Random) -> list[dict]:
     # Final output message must stay after the gap, at +1.5s
     b.add("__output__", f"final-answer-{ep}", action_type="message")
     b.events[-1]["timestamp"] = gap_base + 4 * STEP_GAP_S
-    return b.events
+    return b.result()
 
 
-def build_wall_clock_budget(ep: str, rng: random.Random) -> list[dict]:
+def build_wall_clock_budget(
+    ep: str, rng: random.Random
+) -> tuple[list[dict], int | None]:
     """Total wall >=120s fires wall_clock_budget (warning at 96s, breach at 120s).
 
     85 steps at 1.5s gaps = 126s wall, triggers breach once. No idle gaps.
     Keep 5-tool cycle for meltdown silence, no side_effect, no compaction.
     """
     b = _Builder(ep, rng)
+    # Onset: step 0 -- the budget burn accumulates across the whole run, so
+    # the clock starts at the first event.
+    b.mark_onset()
     for i in range(85):
         b.add(_cycle_tool(i), f"w={rng.randrange(10**6)}")
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
 # --------------------------------------------------------------------------
@@ -497,7 +592,9 @@ def _goal_drift_variant(ep: str) -> int:
     return int(ep.rsplit("-", 1)[1])
 
 
-def _build_goal_drift_latency_shape(ep: str, rng: random.Random) -> list[dict]:
+def _build_goal_drift_latency_shape(
+    ep: str, rng: random.Random
+) -> tuple[list[dict], int | None]:
     """Latency blowout: live per-tool mean doubles the healthy reference.
 
     Twelve search_web calls at exactly 200ms against a baseline frozen at
@@ -512,12 +609,18 @@ def _build_goal_drift_latency_shape(ep: str, rng: random.Random) -> list[dict]:
     tool calls never fill the 20-slot meltdown window.
     """
     b = _Builder(ep, rng)
+    # Onset: step 0 -- every call sits above the healthy reference, so the
+    # drift begins with the first event.
+    b.mark_onset()
     for _ in range(12):
         b.add("search_web", f"q={rng.randrange(10**6)}", latency_ms=200.0)
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
-def _build_goal_drift_unseen_shape(ep: str, rng: random.Random) -> list[dict]:
+def _build_goal_drift_unseen_shape(
+    ep: str, rng: random.Random
+) -> tuple[list[dict], int | None]:
     """Unseen-capability drift: a tool absent from the healthy baseline.
 
     Nine calls cycle the three baseline tools at their exact healthy
@@ -537,11 +640,15 @@ def _build_goal_drift_unseen_shape(ep: str, rng: random.Random) -> list[dict]:
     for i in range(9):
         tool, ms = GOAL_DRIFT_BASELINE_TOOLS[i % len(GOAL_DRIFT_BASELINE_TOOLS)]
         b.add(tool, f"req={rng.randrange(10**6)}", latency_ms=ms)
+    # Onset: the first call to a tool absent from the healthy baseline (step
+    # 9); the preceding nine calls match the reference exactly.
+    b.mark_onset()
     b.add("deploy_canary", f"env={rng.randrange(10**6)}", latency_ms=70.0)
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
-def build_goal_drift(ep: str, rng: random.Random) -> list[dict]:
+def build_goal_drift(ep: str, rng: random.Random) -> tuple[list[dict], int | None]:
     """Dispatch labeled goal_drift episodes across both deviation shapes."""
     shape = _goal_drift_variant(ep)
     if shape in (0, 1):
@@ -562,9 +669,14 @@ def _ml_loop_signal(b: _Builder) -> None:
 
 
 def _ml_latency_spike(b: _Builder) -> None:
-    """Post-warmup spike: cusum (2500-400)/20 - 0.5 = 104.5 > h = 5."""
+    """Post-warmup spike: cusum (2500-400)/20 - 0.5 = 104.5 > h = 5.
+
+    The five warmup samples only freeze the CUSUM baseline; the spike is the
+    injected failure, so the onset is marked here, immediately before it.
+    """
     for ms in (400.0, 395.0, 405.0, 398.0, 402.0):
         b.add("search_web", f"q={b.rng.randrange(10**6)}", latency_ms=ms)
+    b.mark_onset()
     b.add("search_web", f"q={b.rng.randrange(10**6)}", latency_ms=2500.0)
 
 
@@ -575,7 +687,7 @@ def _ml_cascade_signal(b: _Builder) -> None:
     b.add("deploy_service", "svc-c", error=True, error_type="TimeoutError")
 
 
-def build_ml_ensemble(ep: str, rng: random.Random) -> list[dict]:
+def build_ml_ensemble(ep: str, rng: random.Random) -> tuple[list[dict], int | None]:
     """Labeled ml_ensemble episodes; the variant picks the base signals.
 
     Under the ``ml_ensemble`` harness variant Monitor.default wraps every
@@ -605,12 +717,16 @@ def build_ml_ensemble(ep: str, rng: random.Random) -> list[dict]:
     if shape == 0:
         for i in range(2):
             b.add(_cycle_tool(i), f"q={rng.randrange(10**6)}")
+        # Onset: the first of the three identical calls (step 2).
+        b.mark_onset()
         _ml_loop_signal(b)
         b.add(_cycle_tool(2), f"q={rng.randrange(10**6)}")
     elif shape == 1:
         _ml_latency_spike(b)
     elif shape == 2:
         b.add(_cycle_tool(0), f"q={rng.randrange(10**6)}")
+        # Onset: the first of the three erroring calls (step 1).
+        b.mark_onset()
         _ml_cascade_signal(b)
         b.add(_cycle_tool(1), f"q={rng.randrange(10**6)}")
     else:
@@ -618,10 +734,14 @@ def build_ml_ensemble(ep: str, rng: random.Random) -> list[dict]:
         # the spike step is ALSO the third id=9 occurrence.
         for args, ms in (("a=1", 400.0), ("a=2", 395.0), ("a=3", 405.0)):
             b.add("search_web", args, latency_ms=ms)
+        # Onset: the first id=9 repeat (step 3). The three id=9 calls ARE the
+        # injected loop signal, and the third also carries the latency spike.
+        b.mark_onset()
         b.add("search_web", "id=9", latency_ms=398.0)
         b.add("search_web", "id=9", latency_ms=402.0)  # warmup sample n=5
         b.add("search_web", "id=9", latency_ms=2500.0)  # loop x3 + spike
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
 LABELED_BUILDERS = {
@@ -661,14 +781,19 @@ LABELED_TRIGGER_VARIANTS = {
 # --------------------------------------------------------------------------
 
 
-def healthy_plain(ep: str, rng: random.Random, n_calls: int = 12) -> list[dict]:
+def healthy_plain(
+    ep: str, rng: random.Random, n_calls: int = 12
+) -> tuple[list[dict], int | None]:
     b = _Builder(ep, rng)
     for i in range(n_calls):
         b.add(_cycle_tool(i), f"q={rng.randrange(10**6)}")
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
-def healthy_repeat_pair_recovery(ep: str, rng: random.Random) -> list[dict]:
+def healthy_repeat_pair_recovery(
+    ep: str, rng: random.Random
+) -> tuple[list[dict], int | None]:
     """Two repeats of one signature then recovery: under the threshold of 3.
 
     A second pair appears later, still never a third copy. Fewer than 20 tool
@@ -682,10 +807,11 @@ def healthy_repeat_pair_recovery(ep: str, rng: random.Random) -> list[dict]:
     b.add("search_web", "q=pair2")
     b.add("search_web", "q=pair2")  # another pair, still only 2
     b.add(_cycle_tool(4), f"q={rng.randrange(10**6)}")
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
-def healthy_warmup_jitter(ep: str, rng: random.Random) -> list[dict]:
+def healthy_warmup_jitter(ep: str, rng: random.Random) -> tuple[list[dict], int | None]:
     """Jittery samples absorbed during warmup cannot alarm after freeze.
 
     Variant 1: warmup [380,430,395,460,370] freezes mu0=407, sigma0~=37.4;
@@ -699,10 +825,13 @@ def healthy_warmup_jitter(ep: str, rng: random.Random) -> list[dict]:
         b.add("search_web", f"q={rng.randrange(10**6)}", latency_ms=ms)
     for i in range(2):
         b.add(_cycle_tool(i + 1), f"q={rng.randrange(10**6)}")
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
-def healthy_warmout_wide_jitter(ep: str, rng: random.Random) -> list[dict]:
+def healthy_warmout_wide_jitter(
+    ep: str, rng: random.Random
+) -> tuple[list[dict], int | None]:
     """Wide warmup spread inflates sigma0 so ordinary variation stays quiet.
 
     Warmup [350,480,390,460,370]: mu0=410, sample std ~= 57.0 (> floors);
@@ -715,10 +844,13 @@ def healthy_warmout_wide_jitter(ep: str, rng: random.Random) -> list[dict]:
     for ms in (420.0, 400.0, 430.0):
         b.add("search_web", f"j={rng.randrange(10**6)}", latency_ms=ms)
     b.add(_cycle_tool(2), f"j={rng.randrange(10**6)}")
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
-def healthy_near_threshold_entropy(ep: str, rng: random.Random) -> list[dict]:
+def healthy_near_threshold_entropy(
+    ep: str, rng: random.Random
+) -> tuple[list[dict], int | None]:
     """Strict five-tool cycle: every full 20-window sits at 2.32 bits.
 
     That is 0.48 bits below the 2.8 thrash threshold and far above the 0.4
@@ -727,10 +859,13 @@ def healthy_near_threshold_entropy(ep: str, rng: random.Random) -> list[dict]:
     b = _Builder(ep, rng)
     for i in range(24):
         b.add(_cycle_tool(i), f"c{i}-{rng.randrange(10**6)}")
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
-def healthy_isolated_errors(ep: str, rng: random.Random) -> list[dict]:
+def healthy_isolated_errors(
+    ep: str, rng: random.Random
+) -> tuple[list[dict], int | None]:
     """Two spaced single errors: consecutive count never passes 1 and any
     10-step window holds at most 2 counted errors (threshold 3)."""
     b = _Builder(ep, rng)
@@ -741,10 +876,11 @@ def healthy_isolated_errors(ep: str, rng: random.Random) -> list[dict]:
     b.add("send_email", "to=ops", error=True, error_type="SMTPError")
     for i in range(3):
         b.add(_cycle_tool(i + 2), f"r={rng.randrange(10**6)}")
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
-def healthy_steady_tokens(ep: str, rng: random.Random) -> list[dict]:
+def healthy_steady_tokens(ep: str, rng: random.Random) -> tuple[list[dict], int | None]:
     """Steady ~1,000 tokens/step on the five-tool cycle.
 
     Freeze at n=20 gives mu0=1000 and sigma0=max(std~=51, 50)=~51;
@@ -761,10 +897,13 @@ def healthy_steady_tokens(ep: str, rng: random.Random) -> list[dict]:
             tokens_in=vol - 200,
             tokens_out=200,
         )
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
-def healthy_jitter_plus_error(ep: str, rng: random.Random) -> list[dict]:
+def healthy_jitter_plus_error(
+    ep: str, rng: random.Random
+) -> tuple[list[dict], int | None]:
     """Warmup jitter AND one isolated error: neither signal reaches a rule."""
     b = _Builder(ep, rng)
     for ms in (380.0, 430.0, 395.0, 460.0, 370.0):
@@ -774,10 +913,13 @@ def healthy_jitter_plus_error(ep: str, rng: random.Random) -> list[dict]:
         b.add("search_web", f"m={rng.randrange(10**6)}", latency_ms=ms)
     for i in range(3):
         b.add(_cycle_tool(i + 1), f"m={rng.randrange(10**6)}")
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
-def healthy_moderate_jitter(ep: str, rng: random.Random) -> list[dict]:
+def healthy_moderate_jitter(
+    ep: str, rng: random.Random
+) -> tuple[list[dict], int | None]:
     """Moderate warmup spread freezes sigma0~=31.9; post-freeze values give
     increments <= -0.12 against h=5. Warmup [380,420,360,440,390]:
     mu0=398, sample std ~= 31.9 (> both floors)."""
@@ -787,19 +929,23 @@ def healthy_moderate_jitter(ep: str, rng: random.Random) -> list[dict]:
     for ms in (410.0, 380.0):
         b.add("search_web", f"w={rng.randrange(10**6)}", latency_ms=ms)
     b.add(_cycle_tool(3), f"w={rng.randrange(10**6)}")
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
-def healthy_long_cycle(ep: str, rng: random.Random) -> list[dict]:
+def healthy_long_cycle(ep: str, rng: random.Random) -> tuple[list[dict], int | None]:
     """Thirty calls on the five-tool cycle: the meltdown window fills and
     slides repeatedly while entropy holds at 2.32 bits the whole way."""
     b = _Builder(ep, rng)
     for i in range(30):
         b.add(_cycle_tool(i), f"L={rng.randrange(10**6)}")
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
-def healthy_eight_tool_long(ep: str, rng: random.Random) -> list[dict]:
+def healthy_eight_tool_long(
+    ep: str, rng: random.Random
+) -> tuple[list[dict], int | None]:
     """Regression for #180: 30 calls cycling over eight tools, entropy ~2.97
     bits, comfortably below the 3.4 high threshold. A healthy ReAct agent
     with a broad toolbelt must stay quiet; the old 2.8 threshold fired here."""
@@ -807,10 +953,13 @@ def healthy_eight_tool_long(ep: str, rng: random.Random) -> list[dict]:
     b = _Builder(ep, rng)
     for i in range(30):
         b.add(eight_pool[i % len(eight_pool)], f"q={rng.randrange(10**6)}")
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
-def healthy_spaced_errors_wide(ep: str, rng: random.Random) -> list[dict]:
+def healthy_spaced_errors_wide(
+    ep: str, rng: random.Random
+) -> tuple[list[dict], int | None]:
     """Two errors nine steps apart: never adjacent, at most 2 in any window."""
     b = _Builder(ep, rng)
     for i in range(2):
@@ -821,10 +970,13 @@ def healthy_spaced_errors_wide(ep: str, rng: random.Random) -> list[dict]:
     b.add("sync_contacts", "scope=all", error=True, error_type="HTTP401")
     for i in range(3):
         b.add(_cycle_tool(i), f"s={rng.randrange(10**6)}")
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
-def healthy_jitter_and_tokens(ep: str, rng: random.Random) -> list[dict]:
+def healthy_jitter_and_tokens(
+    ep: str, rng: random.Random
+) -> tuple[list[dict], int | None]:
     """Latency jitter and steady token burn together, each signal quiet."""
     b = _Builder(ep, rng)
     for ms in (380.0, 430.0, 395.0, 460.0, 370.0):
@@ -843,10 +995,13 @@ def healthy_jitter_and_tokens(ep: str, rng: random.Random) -> list[dict]:
             tokens_in=750,
             tokens_out=200,
         )
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
-def healthy_pair_plus_tokens(ep: str, rng: random.Random) -> list[dict]:
+def healthy_pair_plus_tokens(
+    ep: str, rng: random.Random
+) -> tuple[list[dict], int | None]:
     """A repeat pair plus steady token volume: both signals stay sub-threshold."""
     b = _Builder(ep, rng)
     for i in range(6):
@@ -861,10 +1016,11 @@ def healthy_pair_plus_tokens(ep: str, rng: random.Random) -> list[dict]:
     b.add("translate_text", "lang=fr")  # pair, count 2
     for i in range(4):
         b.add(_cycle_tool(i + 1), f"p={rng.randrange(10**6)}")
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
-def _healthy_long(ep: str, rng: random.Random, n: int) -> list[dict]:
+def _healthy_long(ep: str, rng: random.Random, n: int) -> tuple[list[dict], int | None]:
     """Long healthy run with high novelty and 5-tool entropy, 50-100 range.
 
     Uses random args so every signature is novel (novelty 1.0, stagnation
@@ -926,7 +1082,9 @@ HEALTHY_BUILDERS = [
 # --------------------------------------------------------------------------
 
 
-def healthy_goal_drift_steady(ep: str, rng: random.Random) -> list[dict]:
+def healthy_goal_drift_steady(
+    ep: str, rng: random.Random
+) -> tuple[list[dict], int | None]:
     """Baseline-indistinguishable traffic under the goal_drift variant.
 
     Twelve calls cycle ONLY baseline tools at their exact healthy latencies:
@@ -939,10 +1097,13 @@ def healthy_goal_drift_steady(ep: str, rng: random.Random) -> list[dict]:
     for i in range(12):
         tool, ms = GOAL_DRIFT_BASELINE_TOOLS[i % len(GOAL_DRIFT_BASELINE_TOOLS)]
         b.add(tool, f"ok={rng.randrange(10**6)}", latency_ms=ms)
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
-def healthy_goal_drift_near_k(ep: str, rng: random.Random) -> list[dict]:
+def healthy_goal_drift_near_k(
+    ep: str, rng: random.Random
+) -> tuple[list[dict], int | None]:
     """Latency above baseline but inside goal_drift_latency_k stays silent.
 
     Live means sit exactly two sigmas above their references (below k = 3),
@@ -960,7 +1121,8 @@ def healthy_goal_drift_near_k(ep: str, rng: random.Random) -> list[dict]:
             f"nk={rng.randrange(10**6)}",
             latency_ms=GOAL_DRIFT_NEAR_K_LATENCIES[tool],
         )
-    return b.finish_with_output()
+    b.finish_with_output()
+    return b.result()
 
 
 # Reused under the ml_ensemble variant: both builders already keep every
@@ -984,10 +1146,14 @@ def main(argv: list[str] | None = None) -> int:
         for variant_no in range(4):
             ep = f"{trigger}-{variant_no:02d}"
             rng = random.Random(f"{ep}/seed")
-            events = builder(ep, rng)
+            events, onset = builder(ep, rng)
+            # mark_onset() is part of every labeled builder's contract; a
+            # None here means a builder was written without one, which would
+            # silently drop latency coverage for that trigger.
+            assert onset is not None, f"{ep} has no marked failure onset"
             record: dict = {
                 "episode_id": ep,
-                "label": {"trigger": trigger},
+                "label": {"trigger": trigger, "onset_step": onset},
                 "events": events,
             }
             # Only variant episodes carry the field so pre-#118 lines stay
@@ -1009,11 +1175,12 @@ def main(argv: list[str] | None = None) -> int:
         for builder in builders:
             ep = f"healthy-{idx:02d}"
             rng = random.Random(f"{ep}/seed")
-            events = builder(ep, rng)
-            record: dict = {"episode_id": ep, "label": None, "events": events}
+            # Healthy controls carry no onset: no failure is injected.
+            events, _onset = builder(ep, rng)
+            healthy_record: dict = {"episode_id": ep, "label": None, "events": events}
             if variant != "standard":
-                record["config"] = variant
-            healthy_lines.append(json.dumps(record, sort_keys=True))
+                healthy_record["config"] = variant
+            healthy_lines.append(json.dumps(healthy_record, sort_keys=True))
             idx += 1
 
     save_baseline(build_goal_drift_baseline(), str(ns.out / "goal_drift_baseline.json"))
