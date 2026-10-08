@@ -259,9 +259,12 @@ def test_every_scalar_config_field_is_documented_in_readme_env_table():
     for f in dataclasses.fields(Config):
         hint = hints.get(f.name, f.type)
         # _coercible_hint unwraps X|None where X is scalar; non-scalar
-        # unions stay as-is and will not match the scalar set.
+        # unions stay as-is and will not match the scalar set. It also reduces
+        # frozenset[str]/set[str] to frozenset, which _coerce builds from a
+        # comma-separated env value, so those are env-settable too (issue
+        # #578).
         coerced = _coercible_hint(hint)
-        if coerced in (bool, int, float, str):
+        if coerced in (bool, int, float, str, frozenset):
             scalar_fields.add(f.name)
 
     # Parse the README env-var table: only the first table under
@@ -308,11 +311,18 @@ def test_every_scalar_config_field_is_documented_in_readme_env_table():
         # README shows booleans as True/False, numbers as 12/0.5, strings as
         # text/manual/prometheus without quotes.
         cleaned = readme_raw.strip("`")
-        try:
-            readme_value = ast.literal_eval(cleaned)
-        except (ValueError, SyntaxError):
-            # String defaults without quotes (e.g. all-MiniLM-L6-v2, text)
-            readme_value = cleaned
+        if isinstance(cfg_default, (frozenset, set)):
+            # A string-collection default is documented comma-separated
+            # (issue #578); compare as a set so order does not matter.
+            readme_value: object = frozenset(
+                part.strip() for part in cleaned.split(",") if part.strip()
+            )
+        else:
+            try:
+                readme_value = ast.literal_eval(cleaned)
+            except (ValueError, SyntaxError):
+                # String defaults without quotes (e.g. all-MiniLM-L6-v2, text)
+                readme_value = cleaned
         assert readme_value == cfg_default, (
             f"README default for {field} is {readme_raw!r} but "
             f"Config.{field} default is {cfg_default!r}"

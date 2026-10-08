@@ -35,7 +35,12 @@ from snagline.config import Config, validate_policy
 from snagline.detectors.base import Detector
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk
-from snagline.sinks.base import AlertSink, bounded_post, redacted_destination
+from snagline.sinks.base import (
+    AlertSink,
+    bounded_post,
+    make_post_pool,
+    redacted_destination,
+)
 from snagline.state import StateBackend, default_state_backend
 
 logger = logging.getLogger("snagline")
@@ -377,6 +382,18 @@ class Monitor:
         self._on_risk = on_risk
         self._halt_url = halt_url
         self._halt_timeout_s = halt_timeout_s
+        # The enforcement directive gets its own in-flight pool: it shares the
+        # sinks' process-global pool before #559, so a single stalled
+        # user-configured sink could park enough workers to suppress the halt
+        # directive itself. Isolating it keeps the escalation path live while a
+        # misconfigured sink starves only itself.
+        # Built once, not per call: _configure_policy is re-callable
+        # (Monitor.default re-runs it after __init__), and rebuilding the pool
+        # would strand the permits of any halt POST still parked on the old one,
+        # so the in-flight bound it exists to enforce would not hold across a
+        # reconfigure.
+        if getattr(self, "_halt_pool", None) is None:
+            self._halt_pool = make_post_pool()
         self._min_severity_for_halt = min_severity_for_halt
         self._directive_lock = threading.Lock()
         self._last_directive = HaltDirective()
@@ -730,7 +747,12 @@ class Monitor:
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            body = bounded_post(req, self._halt_timeout_s, _MAX_HALT_RESPONSE_BYTES)
+            body = bounded_post(
+                req,
+                self._halt_timeout_s,
+                _MAX_HALT_RESPONSE_BYTES,
+                pool=self._halt_pool,
+            )
             parsed = json.loads(body.decode("utf-8"))
             if not isinstance(parsed, dict):
                 raise ValueError("halt response must be a JSON object")
@@ -1366,7 +1388,16 @@ class Monitor:
         if cfg.meltdown_enabled:
             base.append(MeltdownDetector(config=cfg))
         if cfg.silent_abort_enabled:
-            base.append(SilentAbortDetector(config=cfg))
+            # The output types are host-specific -- the shipped adapters end a
+            # healthy episode on six different action types -- so the Config
+            # field is the operator surface, not the detector's built-in
+            # default (issue #578).
+            base.append(
+                SilentAbortDetector(
+                    config=cfg,
+                    output_action_types=cfg.silent_abort_output_action_types,
+                )
+            )
         # Side-effect guard is opt-in (issue #88): duplicate non-idempotent
         # action detection, default-off so the zero-dependency preset and the
         # published bench numbers are untouched.

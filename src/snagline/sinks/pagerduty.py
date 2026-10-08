@@ -28,7 +28,9 @@ from snagline.risk import (
 from snagline.sinks.base import (
     _MAX_SINK_RESPONSE_BYTES,
     bounded_post,
+    describe_failure,
     format_sink_repr,
+    make_post_pool,
 )
 
 logger = logging.getLogger("snagline")
@@ -67,6 +69,10 @@ class PagerDutySink:
         self._timeout = timeout
         self._source = source
         self._min = min_severity
+        # A private in-flight pool: a stalled PagerDuty must only exhaust its
+        # own delivery budget, not the one every other network sink draws from
+        # (issue #559).
+        self._post_pool = make_post_pool()
 
     def __repr__(self) -> str:
         """Repr without the routing key, which is a credential (#390)."""
@@ -108,8 +114,17 @@ class PagerDutySink:
             method="POST",
         )
         try:
-            bounded_post(req, self._timeout, _MAX_SINK_RESPONSE_BYTES)
-        except Exception:
-            logger.exception(
-                "snagline PagerDuty sink POST failed; ignoring (fail-open)"
+            bounded_post(
+                req, self._timeout, _MAX_SINK_RESPONSE_BYTES, pool=self._post_pool
+            )
+        except Exception as exc:
+            # The routing key is the credential and it rides in the body, not
+            # the URL -- but a ``URLError`` embeds the destination in its
+            # reason for some failures, and ``logger.exception`` writes it into
+            # the log through the traceback. Webhook and Slack already name the
+            # failure by class only for this reason; this matches them, so the
+            # escalation path logs the same shape everywhere (issue #390).
+            logger.error(
+                "snagline PagerDuty sink POST failed (%s); ignoring (fail-open)",
+                describe_failure(exc),
             )

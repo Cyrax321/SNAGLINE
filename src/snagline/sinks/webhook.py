@@ -32,6 +32,7 @@ from snagline.sinks.base import (
     _MAX_SINK_RESPONSE_BYTES,
     bounded_post,
     describe_failure,
+    make_post_pool,
     redacted_destination,
 )
 
@@ -60,6 +61,10 @@ class WebhookSink:
         self._url = url
         self._timeout = timeout
         self._min = min_severity
+        # A private in-flight pool: a dead webhook must only exhaust its own
+        # delivery budget, not the one every other network sink draws from
+        # (issue #559).
+        self._post_pool = make_post_pool()
 
     def __repr__(self) -> str:
         """Repr without the destination URL, which is a credential (#390)."""
@@ -88,7 +93,9 @@ class WebhookSink:
             method="POST",
         )
         try:
-            bounded_post(req, self._timeout, _MAX_SINK_RESPONSE_BYTES)
+            bounded_post(
+                req, self._timeout, _MAX_SINK_RESPONSE_BYTES, pool=self._post_pool
+            )
         except Exception as exc:
             # The URL is the credential -- it can carry basic auth
             # (``user:pass@host``) and, for some providers, a secret path

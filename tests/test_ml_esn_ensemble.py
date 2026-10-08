@@ -637,3 +637,198 @@ def test_valid_knobs_do_not_trip_the_validation() -> None:
     assert det._k == 0.25
     for event in _healthy(40):
         assert det.observe(event) is None
+
+
+def _esn_of(monitor: Monitor) -> EsnCusumDetector:
+    """The ESN leg of the orchestrator Monitor.default() builds."""
+    orch = monitor._detectors[0]
+    assert isinstance(orch, MLOrchestrator)
+    esn = orch._base[-1]
+    assert isinstance(esn, EsnCusumDetector)
+    return esn
+
+
+# --- Restart survivability (issue #581) -------------------------------------
+#
+# Before #581 EsnCusumDetector had no dump_state/load_state, so
+# MLOrchestrator.dump_state silently skipped it (it guards with getattr) and a
+# snapshot/restore lost both the fitted readout and every live episode's
+# reservoir + CUSUM. The restored detector re-warmed from the live stream --
+# assuming it healthy -- and an anomaly shorter than warmup_steps was
+# swallowed whole instead of alarming.
+
+
+def test_dump_state_round_trips_the_fitted_readout():
+    det = _fast()
+    det.fit(_healthy(40))
+    assert det._fitted_beta is not None
+    dumped = det.dump_state()
+    assert dumped is not None
+    reborn = _fast()
+    reborn.load_state(dumped)
+    assert reborn._fitted_beta is not None
+    assert np.allclose(det._fitted_beta, reborn._fitted_beta)
+    assert reborn._fitted_res_n == det._fitted_res_n
+
+
+def test_dump_state_round_trips_a_live_episodes_reservoir_and_cusum():
+    det = _fast()
+    det.fit(_healthy(40))
+    for event in _healthy(30):
+        assert det.observe(event) is None
+    st = det._episodes["ep"]
+    # Push the CUSUM partway so the accumulator is non-trivial to carry.
+    for event in _unhealthy(3, 40):
+        det.observe(event)
+    dumped = det.dump_state()
+    assert dumped is not None
+    reborn = _fast()
+    reborn.fit(_healthy(40))
+    reborn.load_state(dumped)
+    st2 = reborn._episodes["ep"]
+    assert np.allclose(st.state, st2.state)
+    assert np.allclose(st.gram, st2.gram)
+    assert np.allclose(st.rhs, st2.rhs)
+    assert st.cusum == st2.cusum
+    assert st.res_n == st2.res_n
+    assert st.warm_n == st2.warm_n
+
+
+def test_dump_state_is_json_compatible():
+    import json
+
+    det = _fast()
+    det.fit(_healthy(40))
+    for event in _healthy(10):
+        det.observe(event)
+    # A snapshot is stdlib JSON, never pickle (StatefulDetector contract).
+    json.dumps(det.dump_state())
+
+
+def test_load_state_tolerates_a_reservoir_size_mismatch():
+    """The live config owns the reservoir shape. A snapshot written by a
+    differently-sized reservoir must not restore arrays that would raise on
+    the next observe; the detector falls back to warm-up instead."""
+    det = EsnCusumDetector(reservoir_size=16, warmup_steps=5, cusum_h=1.0)
+    det.fit(_healthy(40))
+    for event in _healthy(10):
+        det.observe(event)
+    dumped = det.dump_state()
+    assert dumped is not None
+    assert dumped["reservoir_size"] == 16
+
+    other = EsnCusumDetector(reservoir_size=32, warmup_steps=5, cusum_h=1.0)
+    other.load_state(dumped)
+    # Nothing was adopted, but nothing raised either.
+    assert other._episodes == {}
+    assert other._fitted_beta is None
+    # And the detector still works from cold.
+    for event in _healthy(30):
+        assert other.observe(event) is None
+
+
+def test_load_state_defaults_an_absent_snapshot_cleanly():
+    """An empty/foreign payload must leave a working cold-start detector."""
+    det = _fast()
+    det.load_state({})
+    assert det._episodes == {}
+    for event in _healthy(30):
+        assert det.observe(event) is None
+
+
+def test_ml_orchestrator_now_carries_the_esn_substate():
+    """The delegation gap: MLOrchestrator.dump_state must reach this detector,
+    not skip it for lacking the protocol."""
+    det = _fast()
+    det.fit(_healthy(40))
+    for event in _healthy(10):
+        det.observe(event)
+    orch = MLOrchestrator([det])
+    dumped = orch.dump_state()
+    assert dumped is not None
+    assert "esn_cusum" in dumped
+    reborn = MLOrchestrator([_fast()])
+    reborn.load_state(dumped)
+    assert "ep" in reborn._base[0]._episodes
+
+
+def test_monitor_snapshot_restore_preserves_the_fitted_readout():
+    cfg = Config(ml_ensemble_enabled=True)
+    m = Monitor.default(config=cfg, sinks=[_Collector()])
+    esn = _esn_of(m)
+    esn.fit(_healthy(40))
+    for event in _healthy(20):
+        m.ingest(event)
+    snap = m.snapshot_dict()
+
+    fresh = Monitor.default(config=cfg, sinks=[_Collector()])
+    fresh.restore_dict(snap)
+    esn2 = _esn_of(fresh)
+    assert esn2._fitted_beta is not None
+    assert np.allclose(esn._fitted_beta, esn2._fitted_beta)
+
+
+def test_a_short_anomaly_is_not_swallowed_after_a_restart():
+    """The failure this exists to prevent: an anomaly shorter than
+    warmup_steps was missed entirely once the detector re-warmed from the live
+    stream after a restore.
+
+    The stream is built so the ESN is the only base that can produce a signal:
+    unique signatures keep the loop detector quiet, no errors keep the cascade
+    quiet, and the latency band barely moves so the latency CUSUM stays under
+    threshold -- the anomaly is a token-side distribution shift, which only
+    the one-class reservoir sees.
+    """
+    cfg = Config(ml_ensemble_enabled=True)
+    tools = ["search", "lookup", "write", "calc", "fetch", "store", "parse", "render"]
+
+    def step(i, latency, tokens_out):
+        return StepEvent(
+            step_id=f"s{i}",
+            episode_id="ep",
+            timestamp=float(i),
+            action_type="tool_call",
+            action_signature=f"sig-{i}",
+            tool_name=tools[i % len(tools)],
+            latency_ms=latency,
+            tokens_in=100,
+            tokens_out=tokens_out,
+        )
+
+    healthy = [step(i, 10.0, 40) for i in range(60)]
+    # Fewer steps than warmup_steps (20): before #581 the re-warm swallowed it.
+    anomaly = [step(i, 12.0, 9000) for i in range(60, 75)]
+
+    def build():
+        m = Monitor.default(config=cfg, sinks=[_Collector()])
+        _esn_of(m).fit(healthy)
+        return m
+
+    continuous = build()
+    for event in healthy:
+        continuous.ingest(event)
+    for event in anomaly:
+        continuous.ingest(event)
+    continuous.end_episode("ep")
+    fired_continuous = sum(
+        1 for r in continuous._sinks[0].risks if r.trigger == "ml_ensemble"
+    )
+
+    checkpointed = build()
+    for event in healthy:
+        checkpointed.ingest(event)
+    snap = checkpointed.snapshot_dict()
+    restored = build()
+    restored.restore_dict(snap)
+    for event in anomaly:
+        restored.ingest(event)
+    restored.end_episode("ep")
+    fired_restored = sum(
+        1 for r in restored._sinks[0].risks if r.trigger == "ml_ensemble"
+    )
+
+    assert fired_continuous > 0, "the probe must produce a signal to lose"
+    assert fired_restored == fired_continuous, (
+        "a restart mid-episode must not blind the ensemble: "
+        f"{fired_restored} vs {fired_continuous} ml_ensemble risks"
+    )

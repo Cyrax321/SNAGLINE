@@ -42,7 +42,14 @@ def _coercible_hint(hint: Any) -> Any:
     issue #101) be set from environment variables like plain scalars, while
     non-scalar optionals (object references such as a BaselineProfile) stay
     out of reach of string coercion.
+
+    A ``set[str]`` / ``frozenset[str]`` hint reduces to ``frozenset``, which
+    ``_coerce`` builds from a comma-separated string (issue #578).
     """
+    if get_origin(hint) in (frozenset, set):
+        element = get_args(hint)
+        if len(element) == 1 and element[0] is str:
+            return frozenset
     args = _union_args(hint)
     if args is None or len(args) != 2 or type(None) not in args:
         return hint
@@ -50,6 +57,39 @@ def _coercible_hint(hint: Any) -> Any:
     if other in (bool, int, float, str):
         return other
     return hint
+
+
+def _coerce_str_collection(name: str, value: Any) -> frozenset[str]:
+    """Build a ``frozenset[str]`` from a config value (issue #578).
+
+    Env values are one comma-separated string; file values arrive as a native
+    JSON/TOML list. An empty result is rejected rather than silently clearing
+    the field, which would disable the knob's detector the same way a bad
+    scalar silently deadens one (see ``_coerce`` on non-finite floats,
+    issue #383).
+    """
+    if isinstance(value, str):
+        parts = [p.strip() for p in value.split(",")]
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        parts = list(value)
+    else:
+        raise TypeError(
+            f"config field {name!r} expects a list of strings; the value "
+            f"{value!r} is {type(value).__name__}"
+        )
+    bad = [p for p in parts if not isinstance(p, str) or not p.strip()]
+    if bad:
+        raise ValueError(
+            f"config field {name!r} expects non-empty strings; rejecting {bad!r}"
+        )
+    items = frozenset(p.strip() for p in parts if isinstance(p, str))
+    if not items:
+        raise ValueError(
+            f"config field {name!r} needs at least one action type; an empty "
+            f"set disables the detector, which fires on every episode when "
+            f"nothing counts as output"
+        )
+    return items
 
 
 def _coerce(hint: type, value: str) -> Any:
@@ -95,6 +135,10 @@ def _coerce_file_value(name: str, hint: Any, value: Any) -> Any:
     of reach for the same reason.
     """
     scalar = _coercible_hint(hint)
+    if scalar is frozenset:
+        # A string-collection field: the file may carry a native list, and a
+        # str value is parsed as a comma-separated list like the env path.
+        return _coerce_str_collection(name, value)
     if scalar not in (bool, int, float, str):
         return value  # non-scalar: unchanged behaviour
     if type(value) is scalar:
@@ -360,6 +404,39 @@ def _validated_side_effect_guard(cfg: Config) -> None:
             "fractional value can never be equal and silently disables the "
             "duplicate non-idempotent action detector for the whole run; "
             f"got {value!r}"
+        )
+
+
+def _validated_silent_abort(cfg: Config) -> None:
+    """Validate the silent-abort completion check's output action types.
+
+    ``SilentAbortDetector.finalize`` asks one question -- was the episode's
+    last step an action type this host counts as "the agent produced its
+    result"? An empty set makes every episode look abandoned: the detector
+    fires at end_episode on every healthy run, which is the exact
+    false-positive storm DETECTOR_GUIDE rule 5 says gets a detector
+    uninstalled. An empty *element* (``""`` or whitespace) is a typo that
+    can never match an ``action_type``, silently narrowing the set, and a
+    non-string element compares unequal to every ``action_type`` for the
+    same reason.
+    """
+    types = cfg.silent_abort_output_action_types
+    if len(types) == 0:
+        raise ValueError(
+            "silent_abort_output_action_types must name at least one action "
+            "type; an empty set makes nothing count as output so the "
+            "detector fires on every episode"
+        )
+    bad = [
+        t
+        for t in types
+        if not isinstance(t, str) or not t or not t.strip() or t != t.strip()
+    ]
+    if bad:
+        raise ValueError(
+            "silent_abort_output_action_types must be non-empty stripped "
+            f"strings; an entry can never match an action_type otherwise; "
+            f"rejecting {bad!r}"
         )
 
 
@@ -800,6 +877,18 @@ class Config:
     # tool call instead of an output step -- the completion check from
     # arXiv:2608.02464 that caught 7/7 organic failures-of-omission there.
     silent_abort_enabled: bool = False
+    # Which action types count as "the agent produced its result". The default
+    # names the types the LangChain adapter emits for a completed turn; six of
+    # the seven shipped integrations end a healthy episode on something else
+    # (claude_code ends on a tool_call because it drops the Stop hook, the
+    # OpenAI/Anthropic auto-wrappers label every LLM call tool_call, langgraph
+    # emits node_run, crewai/autogen emit agent_step), and for those the stock
+    # default means the completion check fires on *every* successful run. This
+    # field is the operator surface for that -- see _validated_silent_abort and
+    # docs/DETECTOR_GUIDE.md (issue #578).
+    silent_abort_output_action_types: frozenset[str] = frozenset(
+        {"message", "plan_step"}
+    )
 
     # --- Side-effect guard detector (issue #88, opt-in) ----------------------
     # Duplicate detection for host-declared non-idempotent actions
@@ -982,6 +1071,9 @@ class Config:
         # integer occurrence count it is compared against, so the duplicate
         # non-idempotent action detector never fires at all.
         _validated_side_effect_guard(self)
+        # Issue #578: an empty or malformed output-type set either fires the
+        # completion check on every episode or can never match an action_type.
+        _validated_silent_abort(self)
         # Issue #421: the CUSUM slack. A negative value inverts the accumulator
         # and storms healthy traffic (see _validated_cusum_slack).
         _validated_cusum_slack(self)
@@ -1032,7 +1124,15 @@ class Config:
             if name not in hints:
                 continue
             hint = _coercible_hint(hints[name])
-            if hint in (bool, int, float, str):
+            if hint is frozenset:
+                # A string-collection field, read as a comma-separated list
+                # (issue #578). A value that fails to parse is warned about
+                # and dropped, like any other malformed value here.
+                try:
+                    overrides[name] = _coerce_str_collection(name, value)
+                except (ValueError, TypeError):
+                    logger.warning("snagline: ignoring bad env %s=%r", key, value)
+            elif hint in (bool, int, float, str):
                 try:
                     overrides[name] = _coerce(hint, value)
                 except ValueError:
@@ -1188,6 +1288,10 @@ class Config:
         # fractional value in a config file must abort startup with a clear
         # error, not silently blind the duplicate-action guard for the run.
         _validated_side_effect_guard(cfg)
+        # Same re-validation for the output action types (issue #578): an env
+        # or file value that empties the set must abort startup with a clear
+        # error, not page on every healthy episode.
+        _validated_silent_abort(cfg)
         # Issue #421: SNAGLINE_CUSUM_K=-1.0 must abort startup with a clear
         # error, not storm false positives from the first post-warm-up step.
         _validated_cusum_slack(cfg)

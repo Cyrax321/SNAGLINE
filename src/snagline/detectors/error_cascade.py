@@ -39,10 +39,13 @@ def _graded_cascade_score(observed: int, threshold: int) -> float:
     that keeps going still reaches critical, which is what the halt policy
     (``min_severity_for_halt``, default 0.8) is calibrated against.
 
-    Bands are multiples of the threshold rather than a continuous ratio: the
-    dedupe flag means the live path only ever fires at exactly
-    ``observed == threshold``, so any continuous scaling would collapse to one
-    value there and a real outage could never halt.
+    Bands are multiples of the threshold rather than a continuous ratio.
+    Dedupe suppresses only while the new score is at most the last one the
+    episode already alerted on, so a continuous ratio -- strictly increasing
+    with every further error -- would re-fire on every step and flood the
+    episode, defeating the point of issue #4. Discrete bands bound a live
+    cascade to one alert per band (0.5 at the crossing, 0.8 at twice the
+    threshold, 1.0 at three times) while still escalating into the halt band.
     """
     floor = max(int(threshold), 1)
     ratio = observed / floor

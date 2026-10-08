@@ -7,7 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `EsnCusumDetector` (the `snagline[ml]` extra) now participates in
+  `Monitor.snapshot()`/`restore()`. It had no `dump_state`/`load_state`, and
+  `MLOrchestrator.dump_state` reaches its bases with a `getattr` guard, so the
+  omission was silent: a restart lost both the readout fitted by `fit()` and
+  every live episode's reservoir and CUSUM accumulator. The restored detector
+  re-warmed from the live stream -- assuming it healthy -- so an anomaly
+  shorter than `warmup_steps` was swallowed whole instead of alarming. In a
+  probe with the model fitted on a healthy trajectory, a 15-step anomaly the
+  continuous monitor reported 3 times produced zero risks after a
+  snapshot/restore; it now matches. The snapshot also carries the fitted
+  readout, so a host that trained on a known-healthy run keeps that model
+  across the restart instead of re-learning the live stream (#581).
+
 ### Added
+- `silent_abort_output_action_types` is now a `Config` field
+  (`SNAGLINE_SILENT_ABORT_OUTPUT_ACTION_TYPES`, comma-separated), read by
+  `Monitor.default()`. `SilentAbortDetector` documents its
+  `output_action_types` as operator configuration (issue #347), but until now
+  `Monitor.default()` hardcoded the built-in default and `Config` had no field
+  for it, so the documented escape hatch did not exist. It is also the only
+  way to make the detector usable on most shipped integrations: only the
+  LangChain adapter ends a healthy episode on a member of the default
+  `{"message", "plan_step"}`. The Claude Code bridge ends on a `tool_call`
+  (it drops the `Stop` hook), the OpenAI/Anthropic auto-wrappers label every
+  LLM call `tool_call`, the LangGraph adapter emits `node_run`, and
+  CrewAI/AutoGen emit `agent_step` -- so the stock value paged `silent_abort`
+  at end-of-episode on essentially every successful run. `DETECTOR_GUIDE` now
+  carries the per-integration table (#578).
 - The landing-page terminal now runs `serve`, `hook`, and `baseline`, the
   three subcommands its own simulated `--help` and its "command not
   recognized" fallback advertised but did not dispatch: typing one of them
@@ -57,6 +85,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   horizontal-swipe pipeline, tube-light logo effect) (#291).
 
 ### Fixed
+- The in-flight POST cap is now scoped per sink instead of process-global.
+  `bounded_post` gated *every* sink POST through one module-level semaphore,
+  and the Monitor's halt webhook drew from the same one, so a single endpoint
+  that accepts the connection and never replies parked enough workers to fill
+  it and every *other* network sink then failed with `SinkBusyError` against a
+  healthy destination of its own — a cross-sink failure indistinguishable in
+  the logs from the healthy sink being broken. Because the enforcement webhook
+  shared the pool, a stalled user-configured sink could also suppress the halt
+  directive. `WebhookSink`, `SlackSink`, `PagerDutySink` and the halt webhook
+  now each hold their own pool (`_MAX_SINK_INFLIGHT_POSTS`, a quarter of the
+  former process-wide ceiling, which four network POST paths sum to), so a dead
+  destination can only exhaust its own delivery budget; the thread and file
+  descriptor bound from #423 is preserved per destination (#559).
+- `injected_governance_decay.jsonl` no longer reports a loop it was never
+  built to show. Its trailing `lookup` and `write` rows carried `search`'s
+  `action_signature`, and `LoopDetector` keys on the signature rather than the
+  tool name, so the three distinct tools read as one action repeated and the
+  fixture's own README demo command answered with a `loop` risk instead of the
+  `governance_decay` risk it was written to exhibit. The digests now match
+  their rows, and a test asserts no fixture's `tool_call` rows share a
+  signature across different tool names, so the list and the loop detector's
+  keying cannot drift apart again. The README also names the flag the demo
+  needs: the tripwire is opt-in and off by default, so the bare replay command
+  it quoted emitted nothing (#574).
 - The network sinks cap the reply body they read and discard. `bounded_post`
   documents its `max_bytes` argument as the guard against an endpoint that
   streams an endless body, but `WebhookSink`, `SlackSink`, `PagerDutySink` and
@@ -78,6 +130,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   episode. A first crossing is now a `warning`; a genuine outage still reaches
   `min_severity_for_halt` (`0.8`), which the flat-`1.0` score and a
   first-crossing-only `0.5` both failed to distinguish (#538).
+- Follow-up to that grading (#538). `_graded_cascade_score`'s rationale
+  described the bare-boolean dedupe flag the same change replaced with band
+  tracking -- "the live path only ever fires at exactly
+  `observed == threshold`" -- which the band dedupe it shipped makes false:
+  the live path fires again at each higher band. The docstring now states the
+  real reason the grading is banded, which is that the dedupe suppresses only
+  while the new score is at most the last one the episode alerted on, so a
+  continuous ratio would rise with every further error and re-fire on every
+  step, flooding the episode (issue #4). Separately, the landing page's
+  `replay` demo still printed the pre-fix `score=1.00` at a 3-error crossing
+  and dispatched `AGENT_HALT` off it; a first crossing is a `0.5` warning now,
+  below `min_severity_for_halt`, so that halt could not have fired. The demo's
+  cascade now deepens to a second intercept at `0.8`, where the halt is
+  legitimate, and a test pins every score the panel prints to the score the
+  detector actually emits for that streak.
+- The landing page's `watch`, `serve` and `baseline` demos still scripted
+  output the package does not emit, in the same way #567 and #580 fixed for
+  the other panels. `watch` claimed "5 detectors online" (a default monitor
+  wires 3), printed a `0.80` cascade score for three consecutive errors (the
+  graded formula emits `0.50`, #538), a "cusum 4.12 > h=3.0" line the latency
+  detector never prints (`cusum_h` defaults to `5.0`), and an ENSEMBLE risk
+  from `ml_ensemble`, which is opt-in and not in the default monitor. `serve`
+  posted event bodies missing the required `timestamp` and `action_signature`
+  fields, so the real server rejects each one with a 400, and printed the
+  pre-fix flat risk score. `baseline` listed a per-tool p95 breakdown the
+  command does not produce and advertised a `snagline load_baseline` command
+  that does not exist. Every scripted line is now taken from a real run, and
+  three tests replay the panels through the actual monitor / CLI and assert
+  each claimed detector name, score and detail is what it really emits (#565).
 - `TokenRunawayDetector.load_state` now publishes its restored state only once
   the whole snapshot has parsed, so a malformed entry leaves the detector on
   its live state like every other detector (#417 hardened them; this one was
