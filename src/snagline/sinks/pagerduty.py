@@ -28,6 +28,7 @@ from snagline.risk import (
 from snagline.sinks.base import (
     _MAX_SINK_RESPONSE_BYTES,
     bounded_post,
+    describe_failure,
     format_sink_repr,
     make_post_pool,
 )
@@ -116,7 +117,14 @@ class PagerDutySink:
             bounded_post(
                 req, self._timeout, _MAX_SINK_RESPONSE_BYTES, pool=self._post_pool
             )
-        except Exception:
-            logger.exception(
-                "snagline PagerDuty sink POST failed; ignoring (fail-open)"
+        except Exception as exc:
+            # The routing key is the credential and it rides in the body, not
+            # the URL -- but a ``URLError`` embeds the destination in its
+            # reason for some failures, and ``logger.exception`` writes it into
+            # the log through the traceback. Webhook and Slack already name the
+            # failure by class only for this reason; this matches them, so the
+            # escalation path logs the same shape everywhere (issue #390).
+            logger.error(
+                "snagline PagerDuty sink POST failed (%s); ignoring (fail-open)",
+                describe_failure(exc),
             )

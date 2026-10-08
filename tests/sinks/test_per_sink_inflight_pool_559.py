@@ -19,6 +19,7 @@ destination.
 from __future__ import annotations
 
 import threading
+import urllib.error
 import urllib.request
 from unittest import mock
 
@@ -223,3 +224,55 @@ def test_a_caller_without_a_pool_still_gets_the_global_one() -> None:
     ):
         body = bounded_post(_request("https://hooks.example/ok"), _DEADLINE)
     assert body == b"{}"
+
+
+def test_no_network_sink_leaks_its_credential_on_a_failed_post(caplog) -> None:
+    # The #559 review asked for the security invariant confirmed on the failure
+    # path of every network sink, not just the one #390 covered. Each sink's
+    # credential is different -- the webhook and Slack URLs embed secrets in the
+    # authority/path, PagerDuty's routing key rides in the body -- and a failed
+    # POST is exactly when an operator reads the logs. A ``URLError`` embeds the
+    # destination in its reason for some failures, so a ``logger.exception``
+    # traceback writes it out with the log line: every sink must name the
+    # failure by class only, which is what ``describe_failure`` is for.
+    from snagline.sinks.pagerduty import PagerDutySink
+
+    webhook = WebhookSink("https://user:s3cret@hooks.example/alerts")
+    slack = SlackSink("https://hooks.slack.com/services/T000/B000/the_secret")
+    pagerduty = PagerDutySink("a_routing_key_that_must_not_be_logged")
+
+    class _Fails:
+        """An endpoint that always raises, so each sink hits its except arm."""
+
+        def __enter__(self) -> _Fails:
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+        def read(self, *args: object) -> bytes:
+            raise urllib.error.URLError("no host given: https://leak.example/")
+
+    for sink in (webhook, slack, pagerduty):
+        with mock.patch.object(
+            base._opener, "open", side_effect=lambda req, timeout=None: _Fails()
+        ):
+            with caplog.at_level("ERROR", logger="snagline"):
+                sink.emit(_risk())  # must not raise: fail-open
+
+    # The webhook URLs carry basic auth and a path secret; the routing key is
+    # PagerDuty's credential. None may reach the log, and neither may the
+    # URLError's own text -- which embeds the destination it names and would
+    # ride out on a traceback.
+    for secret in (
+        "s3cret",
+        "user:",
+        "the_secret",
+        "a_routing_key_that_must_not_be_logged",
+        "leak.example",
+        "Traceback (most recent call last)",
+    ):
+        assert secret not in caplog.text, (
+            f"a failed network-sink POST leaked {secret!r} into the log; the "
+            "destination is the credential (issue #390)"
+        )

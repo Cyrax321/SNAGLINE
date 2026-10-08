@@ -387,7 +387,13 @@ class Monitor:
         # user-configured sink could park enough workers to suppress the halt
         # directive itself. Isolating it keeps the escalation path live while a
         # misconfigured sink starves only itself.
-        self._halt_pool = make_post_pool()
+        # Built once, not per call: _configure_policy is re-callable
+        # (Monitor.default re-runs it after __init__), and rebuilding the pool
+        # would strand the permits of any halt POST still parked on the old one,
+        # so the in-flight bound it exists to enforce would not hold across a
+        # reconfigure.
+        if getattr(self, "_halt_pool", None) is None:
+            self._halt_pool = make_post_pool()
         self._min_severity_for_halt = min_severity_for_halt
         self._directive_lock = threading.Lock()
         self._last_directive = HaltDirective()

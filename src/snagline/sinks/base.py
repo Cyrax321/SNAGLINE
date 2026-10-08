@@ -143,11 +143,19 @@ _inflight_posts = threading.BoundedSemaphore(_MAX_INFLIGHT_POSTS)
 # destination of its own. Worse, the enforcement webhook shares that pool, so a
 # stalled user-configured sink could suppress the halt directive. Scoping the
 # cap to one sink means a dead endpoint can only exhaust its own delivery
-# budget. The ceiling that motivated the #423 cap -- parked threads and file
-# descriptors -- is preserved for a typical monitor, whose network POST paths
-# (webhook, slack, pagerduty, halt) sum to the process-wide value above; an
-# operator who wires many more sinks trades that exactness for isolation, which
-# is the point.
+# budget.
+#
+# RESOURCE TRADEOFF (explicit, per the #559 review): the process-wide ceiling of
+# #423 is no longer a hard bound. Each network sink now parks up to this many
+# workers of its own, so the worst case is ``_MAX_SINK_INFLIGHT_POSTS * <number
+# of network sinks>`` threads and file descriptors rather than the fixed 64. A
+# monitor with the four built-in network POST paths (webhook, slack, pagerduty,
+# halt) reproduces the old ceiling exactly, since this is a quarter of it; an
+# operator who wires many more sinks buys isolation with that exactness. That is
+# the deliberate trade, and the mitigation is the per-sink ceiling itself: no
+# one destination can grow past it, so the total scales with *configured* sinks,
+# which the operator controls, rather than with stalled endpoints, which they do
+# not.
 _MAX_SINK_INFLIGHT_POSTS = _MAX_INFLIGHT_POSTS // 4
 
 
@@ -170,8 +178,14 @@ def make_post_pool(limit: int | None = None) -> _PostPool:
 
     Each network sink holds one of these rather than drawing on the
     process-global ``_inflight_posts``, so a dead destination cannot starve a
-    healthy one (issue #559). The default is resolved at call time so a test
-    can shrink it by patching ``_MAX_SINK_INFLIGHT_POSTS``.
+    healthy one (issue #559).
+
+    Resource note for an operator wiring many sinks: the per-sink pools are
+    additive, so the process-wide parked-thread and file-descriptor bound of
+    #423 is a per-destination bound now. See ``_MAX_SINK_INFLIGHT_POSTS``.
+
+    The default is resolved at call time so a test can shrink it by patching
+    ``_MAX_SINK_INFLIGHT_POSTS``.
     """
     return _PostPool(_MAX_SINK_INFLIGHT_POSTS if limit is None else limit)
 
