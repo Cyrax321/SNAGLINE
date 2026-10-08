@@ -9,6 +9,7 @@ numpy-less environments lives in test_ml_extra_guard.py.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import pytest
 
@@ -832,3 +833,147 @@ def test_a_short_anomaly_is_not_swallowed_after_a_restart():
         "a restart mid-episode must not blind the ensemble: "
         f"{fired_restored} vs {fired_continuous} ml_ensemble risks"
     )
+
+
+# --- the restore dropped what it had serialised (#581 follow-up) -------------
+#
+# load_state restored state/gram/rhs by validating the *snapshot's* shapes, but
+# restored beta and context_prev by asking whether the *fresh* state already
+# held them. _new_state() always leaves context_prev None, and leaves beta None
+# on an unfitted detector -- which is the production path, since Monitor.default
+# builds EsnCusumDetector without calling fit(). Both guards were therefore
+# unreachable, and the round-trip silently discarded both fields.
+
+
+def _warmed_unfitted() -> tuple[EsnCusumDetector, dict[str, Any]]:
+    """An episode that solved its own readout during warm-up, no fit() called,
+    paired with its own snapshot.
+
+    This is the shape Monitor.default() produces in production: the detector is
+    constructed unfitted and learns each episode's dynamics from its first
+    warmup_steps steps. The snapshot is returned alongside so callers get the
+    narrowed type; dump_state is typed ``dict | None`` and each test needs the
+    payload.
+    """
+    det = _fast()
+    for event in _healthy(8):
+        assert det.observe(event) is None
+    st = det._episodes["ep"]
+    assert st.beta is not None, "the fixture must be past warm-up"
+    dumped = det.dump_state()
+    assert dumped is not None
+    return det, dumped
+
+
+def test_restore_keeps_a_warm_up_solved_readout_when_the_detector_is_unfitted():
+    det, dumped = _warmed_unfitted()
+    # An unfitted detector is the restore that broke: _new_state() copies beta
+    # only from a fit(), so the fresh episode's beta was None and the guard
+    # dropped the readout the episode had already solved.
+    reborn = _fast()
+    assert reborn._fitted_beta is None, "this must be the unfitted path"
+    reborn.load_state(dumped)
+    st = reborn._episodes["ep"]
+    assert st.beta is not None, "the solved readout was dropped on restore"
+    assert np.allclose(det._episodes["ep"].beta, st.beta)
+
+
+def test_restore_keeps_the_scoring_context():
+    det, dumped = _warmed_unfitted()
+    reborn = _fast()
+    reborn.load_state(dumped)
+    st = reborn._episodes["ep"]
+    # _esn_anomaly scores from the pre-advance context; without it the first
+    # post-restore step returns 0.0 and the episode re-seeds context_prev,
+    # costing one scored step per episode per restart.
+    assert st.context_prev is not None, "context_prev was dropped on restore"
+    assert np.allclose(det._episodes["ep"].context_prev, st.context_prev)
+
+
+def test_restore_does_not_re_seed_residual_statistics_from_one_sample():
+    # With the readout dropped, warm_n was restored past warmup_steps while
+    # warm_ctx/warm_tgt were still empty (they are cleared when a warm-up
+    # completes), so the next observe re-solved from a single new pair and
+    # _seed_residual_stats re-seeded the band from that one residual --
+    # collapsing res_n to 1 and discarding the accumulated statistics.
+    # The live control is fed the same two steps the restored detector sees, so
+    # the comparison is against a legitimately-extended running count.
+    det, dumped = _warmed_unfitted()
+    reborn = _fast()
+    reborn.load_state(dumped)
+    live_two = _healthy(2, start=8)
+    for event in live_two:
+        det.observe(event)
+    for event in live_two:
+        reborn.observe(event)
+    before = det._episodes["ep"]
+    after = reborn._episodes["ep"]
+    assert after.res_n == before.res_n, (
+        f"res_n diverged {before.res_n} -> {after.res_n}; the restored "
+        "residual statistics were re-seeded from a single sample"
+    )
+    assert np.allclose(before.res_mu, after.res_mu)
+    assert np.allclose(before.res_m2, after.res_m2)
+
+
+def test_restored_episode_scores_immediately_without_re_warming():
+    # The readout and context surviving means the episode keeps scoring from
+    # step one after a restart, instead of going silent while it re-warms.
+    # A restored detector must score the *same* anomaly a live one does on the
+    # same step; pre-fix it returned 0.0 for the first post-restore step.
+    det, dumped = _warmed_unfitted()
+    reborn = _fast()
+    reborn.load_state(dumped)
+    live = det._episodes["ep"]
+    restored = reborn._episodes["ep"]
+    assert np.allclose(live.state, restored.state)
+    probe = _ev(8, signature="a0", latency=9000.0)
+    live_score = det._esn_anomaly(live, det._features(probe))
+    restored_score = reborn._esn_anomaly(restored, reborn._features(probe))
+    assert restored_score == live_score, (
+        f"restored scored {restored_score} where live scored {live_score}"
+    )
+    assert live_score > 0.0, "the probe must be an anomaly for the control"
+    assert restored_score > 0.0, (
+        "the restored episode went silent on the first post-restore step"
+    )
+
+
+def test_a_corrupt_warmup_count_does_not_recalibrate_the_band():
+    # warm_n outrunning the carried buffers is unreachable from dump_state, but
+    # a foreign payload must re-warm honestly rather than solving from the
+    # restored gram/rhs and re-seeding the band from one sample.
+    _, dumped = _warmed_unfitted()
+    ep = dumped["episodes"][0][1]
+    # Claim a completed warm-up while the readout and buffers are absent.
+    ep["beta"] = None
+    ep["warm_n"] = 50
+    ep["warm_ctx"] = []
+    ep["warm_tgt"] = []
+    reborn = _fast()
+    reborn.load_state(dumped)
+    st = reborn._episodes["ep"]
+    assert st.beta is None
+    assert st.warm_n == 0, "the count must clamp to the pairs actually carried"
+
+
+def test_monitor_restore_keeps_a_warm_up_readout_on_the_default_path():
+    # The end-to-end case: Monitor.default builds the ESN unfitted, so the
+    # episode's warm-up readout is what a restart must survive. The default
+    # warmup_steps is 20, so the stream must run past that before the snapshot.
+    cfg = Config(ml_ensemble_enabled=True)
+    m = Monitor.default(config=cfg, sinks=[_Collector()])
+    for event in _healthy(30):
+        m.ingest(event)
+    esn = _esn_of(m)
+    assert esn._fitted_beta is None, "the default path must be unfitted"
+    assert esn._episodes["ep"].beta is not None
+    snap = m.snapshot_dict()
+
+    fresh = Monitor.default(config=cfg, sinks=[_Collector()])
+    fresh.restore_dict(snap)
+    esn2 = _esn_of(fresh)
+    assert esn2._episodes["ep"].beta is not None, (
+        "the warm-up readout was lost across a Monitor snapshot/restore"
+    )
+    assert np.allclose(esn._episodes["ep"].beta, esn2._episodes["ep"].beta)
