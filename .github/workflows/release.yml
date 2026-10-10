@@ -85,14 +85,14 @@ jobs:
           VERSION: ${{ env.VERSION }}
         run: |
           python -c "
-import pathlib, re, os
-text = pathlib.Path('CHANGELOG.md').read_text()
-ver = os.environ.get('VERSION', '0.1.0')
-# Escape dots for regex
-pattern = rf'## \[{re.escape(ver)}\].*?(?=\n## \[|\Z)'
-m = re.search(pattern, text, re.S)
-open('RELEASE_NOTES.md','w').write(m.group(0).strip() + '\n' if m else text)
-"
+          import pathlib, re, os
+          text = pathlib.Path('CHANGELOG.md').read_text()
+          ver = os.environ.get('VERSION', '0.1.0')
+          # Escape dots for regex
+          pattern = rf'## \[{re.escape(ver)}\].*?(?=\n## \[|\Z)'
+          m = re.search(pattern, text, re.S)
+          open('RELEASE_NOTES.md','w').write(m.group(0).strip() + '\n' if m else text)
+          "
           cat RELEASE_NOTES.md
 
       - name: Upload dist artifacts
