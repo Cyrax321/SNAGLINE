@@ -123,7 +123,11 @@ HARNESS_TOKEN_BUDGET = 50_000
 # branch on the shape of the results. Bumped whenever the payload structure
 # changes in a way a consumer would need to know about.
 EVALUATION_SCHEMA = "snagline-detection-accuracy/v2"
-EVALUATION_STAGE = 3
+# Stage 4: one high-impact fix (loop-family arbitration) is implemented and the
+# corpus re-measured, so the payload's numbers moved (loop FP 23 -> 9,
+# macro-F1 0.9461 -> 0.9593). The payload STRUCTURE is unchanged, hence the
+# schema staying at v2; the stage marks the evaluation round.
+EVALUATION_STAGE = 4
 
 # Step indexing convention used by every onset / first-detection / latency
 # number this harness emits: the ZERO-BASED position of the event in the
@@ -214,11 +218,21 @@ def risk_to_label_trigger(risk: FailureRisk) -> str:
     ("collapsed" below the low-entropy band, "spiked" above the high band).
     Every other trigger passes through unchanged.
     """
-    if risk.trigger == "meltdown":
-        if "collapsed" in risk.detail:
+    return _label_trigger(risk.trigger, risk.detail)
+
+
+def _label_trigger(trigger: str, detail: str = "") -> str:
+    """Label-space name for a trigger, with the meltdown detail split.
+
+    ``risk_to_label_trigger`` delegates here, and the supersession pass calls
+    this directly on a bare ``TriggerType`` from ``FailureRisk.supersedes``,
+    which carries no detail of its own.
+    """
+    if trigger == "meltdown":
+        if "collapsed" in detail:
             return "meltdown_low"
         return "meltdown_high"
-    return str(risk.trigger)
+    return str(trigger)
 
 
 # --------------------------------------------------------------------------
@@ -390,6 +404,51 @@ class EpisodeOutcome:
     onset_step: int | None = None
 
 
+def reduce_risks(
+    risks: Sequence[FailureRisk],
+    episode_id: str,
+    label_triggers: frozenset[str] | None,
+    step_index: Mapping[str, int] | None = None,
+    onset_step: int | None = None,
+) -> EpisodeOutcome:
+    """Reduce an episode's emitted risks to an outcome.
+
+    This is the single place the corpus's trigger identity is decided, so every
+    replay path in the repo applies the same rules. Passing ``step_index``
+    (``step_id`` -> zero-based event index) also records each trigger's earliest
+    detection step for latency; omitting it counts firings only.
+
+    Loop-family arbitration (detectors/loop.py): ``stall`` and ``cycle`` declare
+    via ``FailureRisk.supersedes`` that they replace the coarser ``loop`` finding
+    on this episode, which fired earlier and named a repetition rather than the
+    shape it became. The superseded set is collected before the loop because the
+    specific trigger can land first or second -- cycle-04 fires ``cycle`` at step
+    9 and ``loop`` at step 10 -- so the substitution must be order-independent.
+    Supersession is metadata, not a retraction: the coarse alert was already
+    dispatched to real-time sinks, and this corrects the episode's recorded
+    identity, not the alert stream.
+    """
+    superseded = {_label_trigger(name) for risk in risks for name in risk.supersedes}
+    outcome = EpisodeOutcome(episode_id, label_triggers, onset_step=onset_step)
+    for risk in risks:
+        trig = risk_to_label_trigger(risk)
+        if trig in superseded:
+            continue
+        outcome.predicted.add(trig)
+        if step_index is None:
+            continue
+        idx = step_index.get(risk.step_id)
+        if idx is None:
+            # A risk whose step_id is not one of this episode's events: the
+            # detection is still counted (predicted), but its step cannot be
+            # pinned, so no latency is reported for it.
+            continue
+        prev = outcome.first_detection.get(trig)
+        if prev is None or idx < prev:
+            outcome.first_detection[trig] = idx
+    return outcome
+
+
 def replay_episode(
     episode: Episode, fixtures_dir: Path | None = None
 ) -> EpisodeOutcome:
@@ -416,22 +475,13 @@ def replay_episode(
     # Finalize pass: judges silent-abort-style completion checks, then tears
     # down per-episode state.
     monitor.end_episode(episode.episode_id)
-    outcome = EpisodeOutcome(
-        episode.episode_id, episode.label_triggers, onset_step=episode.onset_step
+    return reduce_risks(
+        collector.risks,
+        episode.episode_id,
+        episode.label_triggers,
+        step_index=step_index,
+        onset_step=episode.onset_step,
     )
-    for risk in collector.risks:
-        trig = risk_to_label_trigger(risk)
-        outcome.predicted.add(trig)
-        idx = step_index.get(risk.step_id)
-        if idx is None:
-            # A risk whose step_id is not one of this episode's events: the
-            # detection is still counted (predicted), but its step cannot be
-            # pinned, so no latency is reported for it.
-            continue
-        prev = outcome.first_detection.get(trig)
-        if prev is None or idx < prev:
-            outcome.first_detection[trig] = idx
-    return outcome
 
 
 # --------------------------------------------------------------------------

@@ -532,10 +532,13 @@ def _replay(harness: Any, episode: Any, cfg: Config) -> Any:
     for ev in episode.events:
         monitor.ingest(ev)
     monitor.end_episode(episode.episode_id)
-    outcome = harness.EpisodeOutcome(episode.episode_id, episode.label_triggers)
-    for risk in collector.risks:
-        outcome.predicted.add(harness.risk_to_label_trigger(risk))
-    return outcome
+    # Reduce through the harness's shared reducer so this comparison scores
+    # trigger identity exactly as the main harness does -- including loop-family
+    # supersession. A private reduction here would silently score the corpus on
+    # a different basis and the two macro-F1 numbers would disagree.
+    return harness.reduce_risks(
+        collector.risks, episode.episode_id, episode.label_triggers
+    )
 
 
 def _configs_for(harness: Any, episode: Any, baseline: BaselineProfile) -> tuple:

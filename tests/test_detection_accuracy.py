@@ -721,9 +721,12 @@ def test_committed_corpus_separates_cleanly(harness, committed_outcomes) -> None
 
     Stage 3 pinned which triggers may cross-fire, and on how many episodes,
     so a drift here is a detector change to investigate rather than noise:
-    loop <- {stall, stagnation, cycle}, meltdown_low <- stall, cycle <-
-    stagnation (one stagnation episode is periodic enough for the cycle
-    mode's minimal-period scan). See reports/EVAL_FINDINGS.md section 6."""
+    loop <- {stagnation}, meltdown_low <- stall, cycle <- stagnation
+    (one stagnation episode is periodic enough for the cycle mode's
+    minimal-period scan). Stage 4 retired the intra-detector half of that
+    map -- stall and cycle now supersede the plain loop finding on the same
+    episode -- leaving only cross-detector overlap. See
+    reports/EVAL_FINDINGS.md section 6."""
     for outcome in committed_outcomes:
         intended = outcome.label_triggers or set()
         assert intended.issubset(outcome.predicted), (
@@ -740,19 +743,25 @@ def test_committed_corpus_separates_cleanly(harness, committed_outcomes) -> None
         stats = report.per_trigger[trig]
         assert stats.tp == 10 and stats.fn == 0, trig
     # Cross-firing is pinned per trigger: a change in any of these counts is a
-    # detector change to diagnose, not tolerated noise. Sources (see
-    # reports/EVAL_FINDINGS.md section 6): stall is 25 identical consecutive
-    # signatures, which is a strict superset of loop's "3 in 12 steps" and of
-    # meltdown_low's 20-step entropy window; stagnation episodes draw only ~6
-    # distinct signatures over ~100 steps, so 3-in-12 is reached by pigeonhole.
-    assert report.per_trigger["loop"].fp == 23, "stall 10 + stagnation 10 + cycle 3"
+    # detector change to diagnose, not tolerated noise. Stage 4 added
+    # loop-family arbitration (detectors/loop.py: ``stall`` and ``cycle``
+    # declare via FailureRisk.supersedes that they replace the coarser plain
+    # ``loop`` finding on the episode, and replay_episode applies it), so the
+    # 13 loop cross-firings a stall or cycle actually describes are now
+    # attributed to the trigger that names the shape. What remains is
+    # cross-detector overlap, which intra-family arbitration cannot reach:
+    # stagnation still trips the plain loop rule by pigeonhole (7-9 distinct
+    # signatures over ~100 steps), stall still fills meltdown_low's 20-step
+    # entropy window six steps before its own 25-step streak, and
+    # stagnation-09 is still periodic enough for the cycle band.
+    assert report.per_trigger["loop"].fp == 9, "stagnation 9 (cross-detector)"
     assert report.per_trigger["meltdown_low"].fp == 10, "stall"
     assert report.per_trigger["cycle"].fp == 1, "stagnation-09 is periodic"
     for trig in harness.SHIPPED_TRIGGERS:
         if trig not in ("loop", "meltdown_low", "cycle"):
             assert report.per_trigger[trig].fp == 0, trig
-    # Macro may be <1.0 due to those documented overlaps (stall is also a loop).
-    assert report.macro_f1 >= 0.9
+    # Macro may be <1.0 due to those documented cross-detector overlaps.
+    assert report.macro_f1 >= 0.95
     assert report.healthy_fired == 0
 
 

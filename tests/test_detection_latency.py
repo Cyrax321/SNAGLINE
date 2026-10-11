@@ -357,16 +357,22 @@ def test_committed_corpus_reproduces_stage3_aggregates(
     ``test_committed_corpus_separates_cleanly`` and reports/EVAL_FINDINGS.md
     section 6). Every labeled episode still fires its own trigger (FN=0) and
     every healthy control stays silent.
+
+    Stage 4 moved these from Stage 3's (170, 34, 0) / macro-F1 0.9461:
+    loop-family arbitration retires the 13 plain ``loop`` cross-firings a
+    stall or cycle actually describes, so FP 34 -> 20 and macro-F1 0.9461 ->
+    0.9593. The drop is reported here, not hidden, and the remaining 20 FP
+    are cross-detector overlaps the fix does not reach.
     """
     report = harness.score(committed_outcomes)
     tp = sum(s.tp for s in report.per_trigger.values())
     fp = sum(s.fp for s in report.per_trigger.values())
     fn = sum(s.fn for s in report.per_trigger.values())
     tn = sum(s.tn for s in report.per_trigger.values())
-    assert (tp, fp, fn) == (170, 34, 0)
+    assert (tp, fp, fn) == (170, 20, 0)
     assert tn > 0  # TN is the new cell; it was simply not counted before.
     assert report.healthy_fired == 0
-    assert report.macro_f1 == pytest.approx(0.9461, abs=1e-3)
+    assert report.macro_f1 == pytest.approx(0.9593, abs=1e-3)
     assert report.n_labeled == 170 and report.n_healthy == 60
 
 
