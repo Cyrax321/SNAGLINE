@@ -123,7 +123,7 @@ HARNESS_TOKEN_BUDGET = 50_000
 # branch on the shape of the results. Bumped whenever the payload structure
 # changes in a way a consumer would need to know about.
 EVALUATION_SCHEMA = "snagline-detection-accuracy/v2"
-EVALUATION_STAGE = 2
+EVALUATION_STAGE = 3
 
 # Step indexing convention used by every onset / first-detection / latency
 # number this harness emits: the ZERO-BASED position of the event in the
@@ -534,6 +534,16 @@ class TriggerStats:
         return percentile(self.latencies, 95)
 
     @property
+    def n_labeled(self) -> int:
+        """Episodes whose ground-truth label IS this trigger (TP + FN).
+
+        Distinct from :attr:`n_episodes` (the whole corpus, which is the
+        one-vs-rest denominator) and from :attr:`n_detected` (episodes where
+        this trigger fired, expected or not).
+        """
+        return self.tp + self.fn
+
+    @property
     def n_episodes(self) -> int:
         """Every episode contributes to exactly one of the four cells."""
         return self.tp + self.fp + self.tn + self.fn
@@ -542,6 +552,14 @@ class TriggerStats:
     def n_detected(self) -> int:
         """Episodes on which this trigger fired, expected or not."""
         return self.tp + self.fp
+
+    @property
+    def min_latency(self) -> float | None:
+        return min(self.latencies) if self.latencies else None
+
+    @property
+    def max_latency(self) -> float | None:
+        return max(self.latencies) if self.latencies else None
 
 
 @dataclass(slots=True)
@@ -562,6 +580,39 @@ class ScoreReport:
         if not supported:
             return 0.0
         return sum(s.f1 for s in supported) / len(supported)
+
+    @property
+    def macro_precision(self) -> float:
+        supported = [
+            s
+            for t, s in self.per_trigger.items()
+            if t in SHIPPED_TRIGGERS and (s.tp + s.fp + s.fn) > 0
+        ]
+        if not supported:
+            return 0.0
+        return sum(s.precision for s in supported) / len(supported)
+
+    @property
+    def macro_recall(self) -> float:
+        supported = [
+            s
+            for t, s in self.per_trigger.items()
+            if t in SHIPPED_TRIGGERS and (s.tp + s.fp + s.fn) > 0
+        ]
+        if not supported:
+            return 0.0
+        return sum(s.recall for s in supported) / len(supported)
+
+    @property
+    def healthy_false_positive_rate(self) -> float:
+        """Share of healthy controls that emitted at least one trigger.
+
+        The precision counterpart to :attr:`healthy_fired`: a single firing
+        control is one false-positive episode out of the control population,
+        regardless of how many triggers it fired. Zero, not NaN, when the
+        corpus has no healthy controls.
+        """
+        return self.healthy_fired / self.n_healthy if self.n_healthy else 0.0
 
 
 def score(outcomes: Sequence[EpisodeOutcome]) -> ScoreReport:
@@ -681,7 +732,13 @@ def format_table(report: ScoreReport) -> str:
             f" {s.specificity:>11.3f}"
         )
     lines.append("-" * len(header))
+    lines.append(f"macro-precision: {report.macro_precision:.3f}")
+    lines.append(f"macro-recall: {report.macro_recall:.3f}")
     lines.append(f"macro-F1: {report.macro_f1:.3f}")
+    lines.append(
+        f"healthy false-positive rate: {report.healthy_false_positive_rate:.3f}"
+        f" ({report.healthy_fired} of {report.n_healthy} controls fired)"
+    )
     lines.append(
         f"episodes: {report.n_labeled + report.n_healthy} "
         f"({report.n_labeled} labeled, {report.n_healthy} healthy controls)"
@@ -706,9 +763,28 @@ def format_latency_table(report: ScoreReport) -> str:
 
     Printed as its own table (after :func:`format_table`) rather than more
     columns on the confusion table, because most triggers share one latency
-    sample set and the widths would drown the confusion numbers. ``n/a`` means
-    either the trigger never produced a latency sample (never fired as an
-    expected trigger, or its fixtures carry no onset) or the sample is too
+    sample set and the widths would drown the confusion numbers.
+
+    Column semantics -- these are four DIFFERENT populations and must not be
+    conflated (issue #82 stage 3):
+
+    * ``labeled``  -- episodes whose ground-truth label IS this trigger
+      (``TP + FN``). This is the denominator for recall and for the latency
+      statistics.
+    * ``detected`` -- episodes on which this trigger FIRED, expected or not
+      (``TP + FP``). Larger than ``labeled`` when the trigger cross-fires onto
+      other failures' data.
+    * ``samples``  -- the latency sample count: expected-trigger hits on
+      episodes whose fixture records an onset. Equal to ``labeled`` only when
+      every labeled episode both fired and carries an onset.
+    * ``min/median/p95/max`` -- steps from the recorded onset to the first
+      detection, over those samples.
+
+    The CORPUS total is not a per-trigger number, so it is stated once in the
+    table header rather than repeated in a column; reporting it per row made
+    the whole corpus read as if it were each trigger's latency sample size.
+    ``n/a`` means either the trigger produced no latency sample (never fired as
+    an expected trigger, or its fixtures carry no onset) or the sample is too
     small for a percentile to mean anything beyond the maximum.
     """
     width = max(
@@ -717,43 +793,43 @@ def format_latency_table(report: ScoreReport) -> str:
         *(len(t) for t in report.per_trigger),
     )
     header = (
-        f"{'trigger':<{width}} {'episodes':>8} {'detected':>8} {'onset':>6}"
-        f" {'median':>8} {'p95':>8}"
+        f"{'trigger':<{width}} {'labeled':>7} {'detected':>8} {'samples':>7}"
+        f" {'min':>6} {'median':>7} {'p95':>7} {'max':>6}"
     )
     lines: list[str] = [
         "detection latency (first detection step - onset step, "
-        f"{STEP_INDEX_CONVENTION} steps):",
+        f"{STEP_INDEX_CONVENTION} steps);"
+        f" corpus = {report.n_labeled + report.n_healthy} episodes"
+        f" ({report.n_labeled} labeled, {report.n_healthy} healthy controls):",
         header,
         "-" * len(header),
     ]
     for trig in SHIPPED_TRIGGERS:
-        s = report.per_trigger.get(trig, TriggerStats())
-        p95 = (
-            "n/a"
-            if len(s.latencies) < MEANINGFUL_PERCENTILE_N
-            else _fmt_optional(s.p95_latency, digits=1)
-        )
-        lines.append(
-            f"{trig:<{width}} {s.n_episodes:>8} {s.n_detected:>8}"
-            f" {s.n_onset:>6} {_fmt_optional(s.median_latency):>8} {p95:>8}"
-        )
+        lines.append(_latency_row(width, trig, report.per_trigger.get(trig)))
     extra = sorted(set(report.per_trigger) - set(SHIPPED_TRIGGERS))
     for trig in extra:
-        s = report.per_trigger[trig]
-        p95 = (
-            "n/a"
-            if len(s.latencies) < MEANINGFUL_PERCENTILE_N
-            else _fmt_optional(s.p95_latency, digits=1)
-        )
-        lines.append(
-            f"{trig:<{width}} {s.n_episodes:>8} {s.n_detected:>8}"
-            f" {s.n_onset:>6} {_fmt_optional(s.median_latency):>8} {p95:>8}"
-        )
+        lines.append(_latency_row(width, trig, report.per_trigger.get(trig)))
     lines.append(
         f"p95 is reported only with >= {MEANINGFUL_PERCENTILE_N} latency samples"
-        f" (nearest-rank); median needs >= 1"
+        f" (nearest-rank); median/min/max need >= 1"
     )
     return "\n".join(lines)
+
+
+def _latency_row(width: int, trig: str, stats: TriggerStats | None) -> str:
+    """One row of the latency table; absent triggers report all-zero counts."""
+    s = stats if stats is not None else TriggerStats()
+    p95 = (
+        "n/a"
+        if len(s.latencies) < MEANINGFUL_PERCENTILE_N
+        else _fmt_optional(s.p95_latency, digits=1)
+    )
+    return (
+        f"{trig:<{width}} {s.n_labeled:>7} {s.n_detected:>8}"
+        f" {len(s.latencies):>7} {_fmt_optional(s.min_latency, digits=0):>6}"
+        f" {_fmt_optional(s.median_latency):>7} {p95:>7}"
+        f" {_fmt_optional(s.max_latency, digits=0):>6}"
+    )
 
 
 # --------------------------------------------------------------------------
@@ -842,11 +918,17 @@ def report_to_json(
             "fixture_count": report.n_labeled + report.n_healthy,
             "labeled_count": report.n_labeled,
             "healthy_count": report.n_healthy,
-            # Seeds are not persisted in the fixture files (stage-1 finding);
-            # the generator's scheme is documented here so a replay is
-            # reproducible without a per-episode seed field existing.
+            # Seeds ARE persisted: every labeled record carries a ``seed``
+            # field, as do the stage-3 hard healthy controls (healthy-41..59).
+            # The 41 legacy controls deliberately omit it so pre-existing lines
+            # stay byte-identical. The scheme is recorded alongside so a replay
+            # is possible even from a line that does not carry its seed.
             "seeds": {
-                "persisted_in_fixtures": False,
+                "persisted_in_fixtures": True,
+                "scope": (
+                    "all 170 labeled records and healthy-41..59; omitted on the "
+                    "41 legacy controls to keep their bytes unchanged"
+                ),
                 "scheme": (
                     'random.Random(f"{episode_id}/seed") per episode in '
                     "benchmarks/fixtures/generate_fixtures.py"
@@ -865,9 +947,13 @@ def report_to_json(
                 "f1": round(s.f1, 6),
                 "specificity": round(s.specificity, 6),
                 "episodes": s.n_episodes,
+                "labeled": s.n_labeled,
                 "detected": s.n_detected,
                 "with_onset": s.n_onset,
                 "latency_samples": len(s.latencies),
+                "min_latency": (
+                    round(s.min_latency, 6) if s.min_latency is not None else None
+                ),
                 "mean_latency": (
                     round(s.mean_latency, 6) if s.mean_latency is not None else None
                 ),
@@ -877,11 +963,17 @@ def report_to_json(
                 "p95_latency": (
                     round(s.p95_latency, 6) if s.p95_latency is not None else None
                 ),
+                "max_latency": (
+                    round(s.max_latency, 6) if s.max_latency is not None else None
+                ),
                 "p95_meaningful": len(s.latencies) >= MEANINGFUL_PERCENTILE_N,
             }
             for trig, s in sorted(report.per_trigger.items())
         },
         "macro_f1": round(report.macro_f1, 6),
+        "macro_precision": round(report.macro_precision, 6),
+        "macro_recall": round(report.macro_recall, 6),
+        "healthy_false_positive_rate": round(report.healthy_false_positive_rate, 6),
         "confusion": [
             {"true": truth, "predicted": pred, "count": count}
             for (truth, pred), count in sorted(report.confusion.items())
@@ -941,11 +1033,15 @@ TRIGGER_CSV_FIELDS = (
     "f1",
     "specificity",
     "episodes",
+    "labeled",
     "detected",
     "with_onset",
+    "latency_samples",
+    "min_latency",
     "mean_latency",
     "median_latency",
     "p95_latency",
+    "max_latency",
 )
 
 
@@ -1001,11 +1097,15 @@ def trigger_csv_rows(report: ScoreReport) -> list[list]:
                 f"{s.f1:.6f}",
                 f"{s.specificity:.6f}",
                 s.n_episodes,
+                s.n_labeled,
                 s.n_detected,
                 s.n_onset,
+                len(s.latencies),
+                f"{s.min_latency:.6f}" if s.min_latency is not None else "",
                 f"{s.mean_latency:.6f}" if s.mean_latency is not None else "",
                 f"{s.median_latency:.6f}" if s.median_latency is not None else "",
                 f"{s.p95_latency:.6f}" if s.p95_latency is not None else "",
+                f"{s.max_latency:.6f}" if s.max_latency is not None else "",
             ]
         )
     return rows

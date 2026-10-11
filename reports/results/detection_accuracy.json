@@ -1,17 +1,27 @@
 {
   "confusion": [
     {
-      "count": 4,
+      "count": 3,
+      "predicted": "loop",
+      "true": "cycle"
+    },
+    {
+      "count": 1,
+      "predicted": "cycle",
+      "true": "stagnation"
+    },
+    {
+      "count": 10,
       "predicted": "loop",
       "true": "stagnation"
     },
     {
-      "count": 4,
+      "count": 10,
       "predicted": "loop",
       "true": "stall"
     },
     {
-      "count": 4,
+      "count": 10,
       "predicted": "meltdown_low",
       "true": "stall"
     }
@@ -435,6 +445,196 @@
       "onset_step": null
     },
     {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-41",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-42",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-43",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-44",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-45",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-46",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-47",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-48",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-49",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-50",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-51",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-52",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-53",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-54",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-55",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-56",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-57",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-58",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-59",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
       "classification": "TP",
       "detected_triggers": [
         "loop"
@@ -489,6 +689,90 @@
       },
       "first_detection_step": 6,
       "onset_step": 4
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop"
+      ],
+      "detection_latency": 2,
+      "episode_id": "loop-04",
+      "expected_trigger": "loop",
+      "first_detection": {
+        "loop": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 7
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop"
+      ],
+      "detection_latency": 2,
+      "episode_id": "loop-05",
+      "expected_trigger": "loop",
+      "first_detection": {
+        "loop": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 7
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop"
+      ],
+      "detection_latency": 2,
+      "episode_id": "loop-06",
+      "expected_trigger": "loop",
+      "first_detection": {
+        "loop": 4
+      },
+      "first_detection_step": 4,
+      "onset_step": 2
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop"
+      ],
+      "detection_latency": 2,
+      "episode_id": "loop-07",
+      "expected_trigger": "loop",
+      "first_detection": {
+        "loop": 8
+      },
+      "first_detection_step": 8,
+      "onset_step": 6
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop"
+      ],
+      "detection_latency": 2,
+      "episode_id": "loop-08",
+      "expected_trigger": "loop",
+      "first_detection": {
+        "loop": 8
+      },
+      "first_detection_step": 8,
+      "onset_step": 6
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop"
+      ],
+      "detection_latency": 2,
+      "episode_id": "loop-09",
+      "expected_trigger": "loop",
+      "first_detection": {
+        "loop": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 3
     },
     {
       "classification": "TP",
@@ -549,6 +833,90 @@
     {
       "classification": "TP",
       "detected_triggers": [
+        "error_cascade"
+      ],
+      "detection_latency": 2,
+      "episode_id": "error_cascade-04",
+      "expected_trigger": "error_cascade",
+      "first_detection": {
+        "error_cascade": 4
+      },
+      "first_detection_step": 4,
+      "onset_step": 2
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "error_cascade"
+      ],
+      "detection_latency": 2,
+      "episode_id": "error_cascade-05",
+      "expected_trigger": "error_cascade",
+      "first_detection": {
+        "error_cascade": 4
+      },
+      "first_detection_step": 4,
+      "onset_step": 2
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "error_cascade"
+      ],
+      "detection_latency": 2,
+      "episode_id": "error_cascade-06",
+      "expected_trigger": "error_cascade",
+      "first_detection": {
+        "error_cascade": 8
+      },
+      "first_detection_step": 8,
+      "onset_step": 6
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "error_cascade"
+      ],
+      "detection_latency": 2,
+      "episode_id": "error_cascade-07",
+      "expected_trigger": "error_cascade",
+      "first_detection": {
+        "error_cascade": 7
+      },
+      "first_detection_step": 7,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "error_cascade"
+      ],
+      "detection_latency": 2,
+      "episode_id": "error_cascade-08",
+      "expected_trigger": "error_cascade",
+      "first_detection": {
+        "error_cascade": 8
+      },
+      "first_detection_step": 8,
+      "onset_step": 6
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "error_cascade"
+      ],
+      "detection_latency": 2,
+      "episode_id": "error_cascade-09",
+      "expected_trigger": "error_cascade",
+      "first_detection": {
+        "error_cascade": 6
+      },
+      "first_detection_step": 6,
+      "onset_step": 4
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
         "latency_anomaly"
       ],
       "detection_latency": 0,
@@ -605,6 +973,90 @@
     {
       "classification": "TP",
       "detected_triggers": [
+        "latency_anomaly"
+      ],
+      "detection_latency": 0,
+      "episode_id": "latency_anomaly-04",
+      "expected_trigger": "latency_anomaly",
+      "first_detection": {
+        "latency_anomaly": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "latency_anomaly"
+      ],
+      "detection_latency": 0,
+      "episode_id": "latency_anomaly-05",
+      "expected_trigger": "latency_anomaly",
+      "first_detection": {
+        "latency_anomaly": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "latency_anomaly"
+      ],
+      "detection_latency": 0,
+      "episode_id": "latency_anomaly-06",
+      "expected_trigger": "latency_anomaly",
+      "first_detection": {
+        "latency_anomaly": 6
+      },
+      "first_detection_step": 6,
+      "onset_step": 6
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "latency_anomaly"
+      ],
+      "detection_latency": 0,
+      "episode_id": "latency_anomaly-07",
+      "expected_trigger": "latency_anomaly",
+      "first_detection": {
+        "latency_anomaly": 7
+      },
+      "first_detection_step": 7,
+      "onset_step": 7
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "latency_anomaly"
+      ],
+      "detection_latency": 0,
+      "episode_id": "latency_anomaly-08",
+      "expected_trigger": "latency_anomaly",
+      "first_detection": {
+        "latency_anomaly": 7
+      },
+      "first_detection_step": 7,
+      "onset_step": 7
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "latency_anomaly"
+      ],
+      "detection_latency": 0,
+      "episode_id": "latency_anomaly-09",
+      "expected_trigger": "latency_anomaly",
+      "first_detection": {
+        "latency_anomaly": 6
+      },
+      "first_detection_step": 6,
+      "onset_step": 6
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
         "token_runaway"
       ],
       "detection_latency": 0,
@@ -651,6 +1103,90 @@
       ],
       "detection_latency": 0,
       "episode_id": "token_runaway-03",
+      "expected_trigger": "token_runaway",
+      "first_detection": {
+        "token_runaway": 20
+      },
+      "first_detection_step": 20,
+      "onset_step": 20
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "token_runaway"
+      ],
+      "detection_latency": 0,
+      "episode_id": "token_runaway-04",
+      "expected_trigger": "token_runaway",
+      "first_detection": {
+        "token_runaway": 20
+      },
+      "first_detection_step": 20,
+      "onset_step": 20
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "token_runaway"
+      ],
+      "detection_latency": 0,
+      "episode_id": "token_runaway-05",
+      "expected_trigger": "token_runaway",
+      "first_detection": {
+        "token_runaway": 20
+      },
+      "first_detection_step": 20,
+      "onset_step": 20
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "token_runaway"
+      ],
+      "detection_latency": 0,
+      "episode_id": "token_runaway-06",
+      "expected_trigger": "token_runaway",
+      "first_detection": {
+        "token_runaway": 21
+      },
+      "first_detection_step": 21,
+      "onset_step": 21
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "token_runaway"
+      ],
+      "detection_latency": 0,
+      "episode_id": "token_runaway-07",
+      "expected_trigger": "token_runaway",
+      "first_detection": {
+        "token_runaway": 20
+      },
+      "first_detection_step": 20,
+      "onset_step": 20
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "token_runaway"
+      ],
+      "detection_latency": 0,
+      "episode_id": "token_runaway-08",
+      "expected_trigger": "token_runaway",
+      "first_detection": {
+        "token_runaway": 20
+      },
+      "first_detection_step": 20,
+      "onset_step": 20
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "token_runaway"
+      ],
+      "detection_latency": 0,
+      "episode_id": "token_runaway-09",
       "expected_trigger": "token_runaway",
       "first_detection": {
         "token_runaway": 20
@@ -717,6 +1253,90 @@
     {
       "classification": "TP",
       "detected_triggers": [
+        "budget_breach"
+      ],
+      "detection_latency": 0,
+      "episode_id": "budget_breach-04",
+      "expected_trigger": "budget_breach",
+      "first_detection": {
+        "budget_breach": 28
+      },
+      "first_detection_step": 28,
+      "onset_step": 28
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "budget_breach"
+      ],
+      "detection_latency": 0,
+      "episode_id": "budget_breach-05",
+      "expected_trigger": "budget_breach",
+      "first_detection": {
+        "budget_breach": 28
+      },
+      "first_detection_step": 28,
+      "onset_step": 28
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "budget_breach"
+      ],
+      "detection_latency": 0,
+      "episode_id": "budget_breach-06",
+      "expected_trigger": "budget_breach",
+      "first_detection": {
+        "budget_breach": 20
+      },
+      "first_detection_step": 20,
+      "onset_step": 20
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "budget_breach"
+      ],
+      "detection_latency": 0,
+      "episode_id": "budget_breach-07",
+      "expected_trigger": "budget_breach",
+      "first_detection": {
+        "budget_breach": 20
+      },
+      "first_detection_step": 20,
+      "onset_step": 20
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "budget_breach"
+      ],
+      "detection_latency": 0,
+      "episode_id": "budget_breach-08",
+      "expected_trigger": "budget_breach",
+      "first_detection": {
+        "budget_breach": 20
+      },
+      "first_detection_step": 20,
+      "onset_step": 20
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "budget_breach"
+      ],
+      "detection_latency": 0,
+      "episode_id": "budget_breach-09",
+      "expected_trigger": "budget_breach",
+      "first_detection": {
+        "budget_breach": 24
+      },
+      "first_detection_step": 24,
+      "onset_step": 24
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
         "meltdown_low"
       ],
       "detection_latency": 19,
@@ -763,6 +1383,90 @@
       ],
       "detection_latency": 19,
       "episode_id": "meltdown_low-03",
+      "expected_trigger": "meltdown_low",
+      "first_detection": {
+        "meltdown_low": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_low"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_low-04",
+      "expected_trigger": "meltdown_low",
+      "first_detection": {
+        "meltdown_low": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_low"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_low-05",
+      "expected_trigger": "meltdown_low",
+      "first_detection": {
+        "meltdown_low": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_low"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_low-06",
+      "expected_trigger": "meltdown_low",
+      "first_detection": {
+        "meltdown_low": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_low"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_low-07",
+      "expected_trigger": "meltdown_low",
+      "first_detection": {
+        "meltdown_low": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_low"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_low-08",
+      "expected_trigger": "meltdown_low",
+      "first_detection": {
+        "meltdown_low": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_low"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_low-09",
       "expected_trigger": "meltdown_low",
       "first_detection": {
         "meltdown_low": 19
@@ -829,6 +1533,90 @@
     {
       "classification": "TP",
       "detected_triggers": [
+        "meltdown_high"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_high-04",
+      "expected_trigger": "meltdown_high",
+      "first_detection": {
+        "meltdown_high": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_high"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_high-05",
+      "expected_trigger": "meltdown_high",
+      "first_detection": {
+        "meltdown_high": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_high"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_high-06",
+      "expected_trigger": "meltdown_high",
+      "first_detection": {
+        "meltdown_high": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_high"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_high-07",
+      "expected_trigger": "meltdown_high",
+      "first_detection": {
+        "meltdown_high": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_high"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_high-08",
+      "expected_trigger": "meltdown_high",
+      "first_detection": {
+        "meltdown_high": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_high"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_high-09",
+      "expected_trigger": "meltdown_high",
+      "first_detection": {
+        "meltdown_high": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
         "silent_abort"
       ],
       "detection_latency": 0,
@@ -885,6 +1673,90 @@
     {
       "classification": "TP",
       "detected_triggers": [
+        "silent_abort"
+      ],
+      "detection_latency": 0,
+      "episode_id": "silent_abort-04",
+      "expected_trigger": "silent_abort",
+      "first_detection": {
+        "silent_abort": 4
+      },
+      "first_detection_step": 4,
+      "onset_step": 4
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "silent_abort"
+      ],
+      "detection_latency": 0,
+      "episode_id": "silent_abort-05",
+      "expected_trigger": "silent_abort",
+      "first_detection": {
+        "silent_abort": 8
+      },
+      "first_detection_step": 8,
+      "onset_step": 8
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "silent_abort"
+      ],
+      "detection_latency": 0,
+      "episode_id": "silent_abort-06",
+      "expected_trigger": "silent_abort",
+      "first_detection": {
+        "silent_abort": 8
+      },
+      "first_detection_step": 8,
+      "onset_step": 8
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "silent_abort"
+      ],
+      "detection_latency": 0,
+      "episode_id": "silent_abort-07",
+      "expected_trigger": "silent_abort",
+      "first_detection": {
+        "silent_abort": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 9
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "silent_abort"
+      ],
+      "detection_latency": 0,
+      "episode_id": "silent_abort-08",
+      "expected_trigger": "silent_abort",
+      "first_detection": {
+        "silent_abort": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 9
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "silent_abort"
+      ],
+      "detection_latency": 0,
+      "episode_id": "silent_abort-09",
+      "expected_trigger": "silent_abort",
+      "first_detection": {
+        "silent_abort": 10
+      },
+      "first_detection_step": 10,
+      "onset_step": 10
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
         "goal_drift"
       ],
       "detection_latency": 9,
@@ -931,6 +1803,90 @@
       ],
       "detection_latency": 0,
       "episode_id": "goal_drift-03",
+      "expected_trigger": "goal_drift",
+      "first_detection": {
+        "goal_drift": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 9
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "goal_drift"
+      ],
+      "detection_latency": 9,
+      "episode_id": "goal_drift-04",
+      "expected_trigger": "goal_drift",
+      "first_detection": {
+        "goal_drift": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "goal_drift"
+      ],
+      "detection_latency": 0,
+      "episode_id": "goal_drift-05",
+      "expected_trigger": "goal_drift",
+      "first_detection": {
+        "goal_drift": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 9
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "goal_drift"
+      ],
+      "detection_latency": 9,
+      "episode_id": "goal_drift-06",
+      "expected_trigger": "goal_drift",
+      "first_detection": {
+        "goal_drift": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "goal_drift"
+      ],
+      "detection_latency": 0,
+      "episode_id": "goal_drift-07",
+      "expected_trigger": "goal_drift",
+      "first_detection": {
+        "goal_drift": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 9
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "goal_drift"
+      ],
+      "detection_latency": 9,
+      "episode_id": "goal_drift-08",
+      "expected_trigger": "goal_drift",
+      "first_detection": {
+        "goal_drift": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "goal_drift"
+      ],
+      "detection_latency": 0,
+      "episode_id": "goal_drift-09",
       "expected_trigger": "goal_drift",
       "first_detection": {
         "goal_drift": 9
@@ -993,6 +1949,90 @@
       },
       "first_detection_step": 5,
       "onset_step": 3
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "ml_ensemble"
+      ],
+      "detection_latency": 2,
+      "episode_id": "ml_ensemble-04",
+      "expected_trigger": "ml_ensemble",
+      "first_detection": {
+        "ml_ensemble": 3
+      },
+      "first_detection_step": 3,
+      "onset_step": 1
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "ml_ensemble"
+      ],
+      "detection_latency": 0,
+      "episode_id": "ml_ensemble-05",
+      "expected_trigger": "ml_ensemble",
+      "first_detection": {
+        "ml_ensemble": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "ml_ensemble"
+      ],
+      "detection_latency": 2,
+      "episode_id": "ml_ensemble-06",
+      "expected_trigger": "ml_ensemble",
+      "first_detection": {
+        "ml_ensemble": 3
+      },
+      "first_detection_step": 3,
+      "onset_step": 1
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "ml_ensemble"
+      ],
+      "detection_latency": 2,
+      "episode_id": "ml_ensemble-07",
+      "expected_trigger": "ml_ensemble",
+      "first_detection": {
+        "ml_ensemble": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 3
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "ml_ensemble"
+      ],
+      "detection_latency": 2,
+      "episode_id": "ml_ensemble-08",
+      "expected_trigger": "ml_ensemble",
+      "first_detection": {
+        "ml_ensemble": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 3
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "ml_ensemble"
+      ],
+      "detection_latency": 0,
+      "episode_id": "ml_ensemble-09",
+      "expected_trigger": "ml_ensemble",
+      "first_detection": {
+        "ml_ensemble": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 5
     },
     {
       "classification": "TP",
@@ -1061,6 +2101,104 @@
     {
       "classification": "TP",
       "detected_triggers": [
+        "loop",
+        "stagnation"
+      ],
+      "detection_latency": 57,
+      "episode_id": "stagnation-04",
+      "expected_trigger": "stagnation",
+      "first_detection": {
+        "loop": 8,
+        "stagnation": 57
+      },
+      "first_detection_step": 57,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop",
+        "stagnation"
+      ],
+      "detection_latency": 59,
+      "episode_id": "stagnation-05",
+      "expected_trigger": "stagnation",
+      "first_detection": {
+        "loop": 9,
+        "stagnation": 59
+      },
+      "first_detection_step": 59,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop",
+        "stagnation"
+      ],
+      "detection_latency": 54,
+      "episode_id": "stagnation-06",
+      "expected_trigger": "stagnation",
+      "first_detection": {
+        "loop": 7,
+        "stagnation": 54
+      },
+      "first_detection_step": 54,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop",
+        "stagnation"
+      ],
+      "detection_latency": 55,
+      "episode_id": "stagnation-07",
+      "expected_trigger": "stagnation",
+      "first_detection": {
+        "loop": 8,
+        "stagnation": 55
+      },
+      "first_detection_step": 55,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop",
+        "stagnation"
+      ],
+      "detection_latency": 60,
+      "episode_id": "stagnation-08",
+      "expected_trigger": "stagnation",
+      "first_detection": {
+        "loop": 6,
+        "stagnation": 60
+      },
+      "first_detection_step": 60,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "cycle",
+        "loop",
+        "stagnation"
+      ],
+      "detection_latency": 56,
+      "episode_id": "stagnation-09",
+      "expected_trigger": "stagnation",
+      "first_detection": {
+        "cycle": 3,
+        "loop": 9,
+        "stagnation": 56
+      },
+      "first_detection_step": 56,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
         "side_effect_duplicate"
       ],
       "detection_latency": 2,
@@ -1113,6 +2251,90 @@
       },
       "first_detection_step": 5,
       "onset_step": 3
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "side_effect_duplicate"
+      ],
+      "detection_latency": 2,
+      "episode_id": "side_effect_duplicate-04",
+      "expected_trigger": "side_effect_duplicate",
+      "first_detection": {
+        "side_effect_duplicate": 3
+      },
+      "first_detection_step": 3,
+      "onset_step": 1
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "side_effect_duplicate"
+      ],
+      "detection_latency": 5,
+      "episode_id": "side_effect_duplicate-05",
+      "expected_trigger": "side_effect_duplicate",
+      "first_detection": {
+        "side_effect_duplicate": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 4
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "side_effect_duplicate"
+      ],
+      "detection_latency": 3,
+      "episode_id": "side_effect_duplicate-06",
+      "expected_trigger": "side_effect_duplicate",
+      "first_detection": {
+        "side_effect_duplicate": 4
+      },
+      "first_detection_step": 4,
+      "onset_step": 1
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "side_effect_duplicate"
+      ],
+      "detection_latency": 5,
+      "episode_id": "side_effect_duplicate-07",
+      "expected_trigger": "side_effect_duplicate",
+      "first_detection": {
+        "side_effect_duplicate": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 4
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "side_effect_duplicate"
+      ],
+      "detection_latency": 2,
+      "episode_id": "side_effect_duplicate-08",
+      "expected_trigger": "side_effect_duplicate",
+      "first_detection": {
+        "side_effect_duplicate": 6
+      },
+      "first_detection_step": 6,
+      "onset_step": 4
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "side_effect_duplicate"
+      ],
+      "detection_latency": 5,
+      "episode_id": "side_effect_duplicate-09",
+      "expected_trigger": "side_effect_duplicate",
+      "first_detection": {
+        "side_effect_duplicate": 7
+      },
+      "first_detection_step": 7,
+      "onset_step": 2
     },
     {
       "classification": "TP",
@@ -1173,6 +2395,90 @@
     {
       "classification": "TP",
       "detected_triggers": [
+        "governance_decay"
+      ],
+      "detection_latency": 3,
+      "episode_id": "governance_decay-04",
+      "expected_trigger": "governance_decay",
+      "first_detection": {
+        "governance_decay": 7
+      },
+      "first_detection_step": 7,
+      "onset_step": 4
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "governance_decay"
+      ],
+      "detection_latency": 3,
+      "episode_id": "governance_decay-05",
+      "expected_trigger": "governance_decay",
+      "first_detection": {
+        "governance_decay": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 2
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "governance_decay"
+      ],
+      "detection_latency": 3,
+      "episode_id": "governance_decay-06",
+      "expected_trigger": "governance_decay",
+      "first_detection": {
+        "governance_decay": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 2
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "governance_decay"
+      ],
+      "detection_latency": 3,
+      "episode_id": "governance_decay-07",
+      "expected_trigger": "governance_decay",
+      "first_detection": {
+        "governance_decay": 4
+      },
+      "first_detection_step": 4,
+      "onset_step": 1
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "governance_decay"
+      ],
+      "detection_latency": 3,
+      "episode_id": "governance_decay-08",
+      "expected_trigger": "governance_decay",
+      "first_detection": {
+        "governance_decay": 6
+      },
+      "first_detection_step": 6,
+      "onset_step": 3
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "governance_decay"
+      ],
+      "detection_latency": 3,
+      "episode_id": "governance_decay-09",
+      "expected_trigger": "governance_decay",
+      "first_detection": {
+        "governance_decay": 8
+      },
+      "first_detection_step": 8,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
         "cycle"
       ],
       "detection_latency": 11,
@@ -1219,6 +2525,96 @@
       ],
       "detection_latency": 11,
       "episode_id": "cycle-03",
+      "expected_trigger": "cycle",
+      "first_detection": {
+        "cycle": 11
+      },
+      "first_detection_step": 11,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "cycle",
+        "loop"
+      ],
+      "detection_latency": 9,
+      "episode_id": "cycle-04",
+      "expected_trigger": "cycle",
+      "first_detection": {
+        "cycle": 9,
+        "loop": 10
+      },
+      "first_detection_step": 9,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "cycle"
+      ],
+      "detection_latency": 11,
+      "episode_id": "cycle-05",
+      "expected_trigger": "cycle",
+      "first_detection": {
+        "cycle": 11
+      },
+      "first_detection_step": 11,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "cycle",
+        "loop"
+      ],
+      "detection_latency": 5,
+      "episode_id": "cycle-06",
+      "expected_trigger": "cycle",
+      "first_detection": {
+        "cycle": 5,
+        "loop": 6
+      },
+      "first_detection_step": 5,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "cycle"
+      ],
+      "detection_latency": 11,
+      "episode_id": "cycle-07",
+      "expected_trigger": "cycle",
+      "first_detection": {
+        "cycle": 11
+      },
+      "first_detection_step": 11,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "cycle",
+        "loop"
+      ],
+      "detection_latency": 9,
+      "episode_id": "cycle-08",
+      "expected_trigger": "cycle",
+      "first_detection": {
+        "cycle": 9,
+        "loop": 10
+      },
+      "first_detection_step": 9,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "cycle"
+      ],
+      "detection_latency": 11,
+      "episode_id": "cycle-09",
       "expected_trigger": "cycle",
       "first_detection": {
         "cycle": 11
@@ -1301,6 +2697,114 @@
     {
       "classification": "TP",
       "detected_triggers": [
+        "loop",
+        "meltdown_low",
+        "stall"
+      ],
+      "detection_latency": 24,
+      "episode_id": "stall-04",
+      "expected_trigger": "stall",
+      "first_detection": {
+        "loop": 5,
+        "meltdown_low": 21,
+        "stall": 27
+      },
+      "first_detection_step": 27,
+      "onset_step": 3
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop",
+        "meltdown_low",
+        "stall"
+      ],
+      "detection_latency": 24,
+      "episode_id": "stall-05",
+      "expected_trigger": "stall",
+      "first_detection": {
+        "loop": 6,
+        "meltdown_low": 22,
+        "stall": 28
+      },
+      "first_detection_step": 28,
+      "onset_step": 4
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop",
+        "meltdown_low",
+        "stall"
+      ],
+      "detection_latency": 24,
+      "episode_id": "stall-06",
+      "expected_trigger": "stall",
+      "first_detection": {
+        "loop": 7,
+        "meltdown_low": 23,
+        "stall": 29
+      },
+      "first_detection_step": 29,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop",
+        "meltdown_low",
+        "stall"
+      ],
+      "detection_latency": 24,
+      "episode_id": "stall-07",
+      "expected_trigger": "stall",
+      "first_detection": {
+        "loop": 5,
+        "meltdown_low": 21,
+        "stall": 27
+      },
+      "first_detection_step": 27,
+      "onset_step": 3
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop",
+        "meltdown_low",
+        "stall"
+      ],
+      "detection_latency": 24,
+      "episode_id": "stall-08",
+      "expected_trigger": "stall",
+      "first_detection": {
+        "loop": 3,
+        "meltdown_low": 19,
+        "stall": 25
+      },
+      "first_detection_step": 25,
+      "onset_step": 1
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop",
+        "meltdown_low",
+        "stall"
+      ],
+      "detection_latency": 24,
+      "episode_id": "stall-09",
+      "expected_trigger": "stall",
+      "first_detection": {
+        "loop": 6,
+        "meltdown_low": 22,
+        "stall": 28
+      },
+      "first_detection_step": 28,
+      "onset_step": 4
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
         "idle_gap"
       ],
       "detection_latency": 0,
@@ -1347,6 +2851,90 @@
       ],
       "detection_latency": 0,
       "episode_id": "idle_gap-03",
+      "expected_trigger": "idle_gap",
+      "first_detection": {
+        "idle_gap": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "idle_gap"
+      ],
+      "detection_latency": 0,
+      "episode_id": "idle_gap-04",
+      "expected_trigger": "idle_gap",
+      "first_detection": {
+        "idle_gap": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "idle_gap"
+      ],
+      "detection_latency": 0,
+      "episode_id": "idle_gap-05",
+      "expected_trigger": "idle_gap",
+      "first_detection": {
+        "idle_gap": 4
+      },
+      "first_detection_step": 4,
+      "onset_step": 4
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "idle_gap"
+      ],
+      "detection_latency": 0,
+      "episode_id": "idle_gap-06",
+      "expected_trigger": "idle_gap",
+      "first_detection": {
+        "idle_gap": 4
+      },
+      "first_detection_step": 4,
+      "onset_step": 4
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "idle_gap"
+      ],
+      "detection_latency": 0,
+      "episode_id": "idle_gap-07",
+      "expected_trigger": "idle_gap",
+      "first_detection": {
+        "idle_gap": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "idle_gap"
+      ],
+      "detection_latency": 0,
+      "episode_id": "idle_gap-08",
+      "expected_trigger": "idle_gap",
+      "first_detection": {
+        "idle_gap": 6
+      },
+      "first_detection_step": 6,
+      "onset_step": 6
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "idle_gap"
+      ],
+      "detection_latency": 0,
+      "episode_id": "idle_gap-09",
       "expected_trigger": "idle_gap",
       "first_detection": {
         "idle_gap": 5
@@ -1409,22 +2997,109 @@
       },
       "first_detection_step": 64,
       "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "wall_clock_budget"
+      ],
+      "detection_latency": 48,
+      "episode_id": "wall_clock_budget-04",
+      "expected_trigger": "wall_clock_budget",
+      "first_detection": {
+        "wall_clock_budget": 48
+      },
+      "first_detection_step": 48,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "wall_clock_budget"
+      ],
+      "detection_latency": 48,
+      "episode_id": "wall_clock_budget-05",
+      "expected_trigger": "wall_clock_budget",
+      "first_detection": {
+        "wall_clock_budget": 48
+      },
+      "first_detection_step": 48,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "wall_clock_budget"
+      ],
+      "detection_latency": 64,
+      "episode_id": "wall_clock_budget-06",
+      "expected_trigger": "wall_clock_budget",
+      "first_detection": {
+        "wall_clock_budget": 64
+      },
+      "first_detection_step": 64,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "wall_clock_budget"
+      ],
+      "detection_latency": 54,
+      "episode_id": "wall_clock_budget-07",
+      "expected_trigger": "wall_clock_budget",
+      "first_detection": {
+        "wall_clock_budget": 54
+      },
+      "first_detection_step": 54,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "wall_clock_budget"
+      ],
+      "detection_latency": 80,
+      "episode_id": "wall_clock_budget-08",
+      "expected_trigger": "wall_clock_budget",
+      "first_detection": {
+        "wall_clock_budget": 80
+      },
+      "first_detection_step": 80,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "wall_clock_budget"
+      ],
+      "detection_latency": 54,
+      "episode_id": "wall_clock_budget-09",
+      "expected_trigger": "wall_clock_budget",
+      "first_detection": {
+        "wall_clock_budget": 54
+      },
+      "first_detection_step": 54,
+      "onset_step": 0
     }
   ],
   "episodes": {
-    "healthy": 41,
-    "labeled": 68
+    "healthy": 60,
+    "labeled": 170
   },
   "healthy_controls_fired": 0,
-  "macro_f1": 0.95098,
+  "healthy_false_positive_rate": 0.0,
+  "macro_f1": 0.946127,
+  "macro_precision": 0.924242,
+  "macro_recall": 1.0,
   "metadata": {
-    "commit_sha": "4a65af3a9535f0131819471b71fb22dd27ba357a",
+    "commit_sha": "f91b1fd934f20f776778b3ce1b8422d2c2a28bc0",
     "evaluation_schema": "snagline-detection-accuracy/v2",
     "evaluation_stage": 2,
-    "fixture_count": 109,
+    "fixture_count": 230,
     "fixture_directory": "benchmarks\\fixtures",
-    "healthy_count": 41,
-    "labeled_count": 68,
+    "healthy_count": 60,
+    "labeled_count": 170,
     "platform": "Windows-11-10.0.26300-SP0",
     "python_implementation": "CPython",
     "python_version": "3.13.1",
@@ -1436,310 +3111,361 @@
   },
   "per_trigger": {
     "budget_breach": {
-      "detected": 4,
-      "episodes": 109,
+      "detected": 10,
+      "episodes": 230,
       "f1": 1.0,
       "fn": 0,
       "fp": 0,
-      "latency_samples": 4,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 0,
       "mean_latency": 0.0,
       "median_latency": 0.0,
+      "min_latency": 0,
       "p95_latency": 0.0,
-      "p95_meaningful": false,
+      "p95_meaningful": true,
       "precision": 1.0,
       "recall": 1.0,
       "specificity": 1.0,
-      "tn": 105,
-      "tp": 4,
-      "with_onset": 4
+      "tn": 220,
+      "tp": 10,
+      "with_onset": 10
     },
     "cycle": {
-      "detected": 4,
-      "episodes": 109,
-      "f1": 1.0,
+      "detected": 11,
+      "episodes": 230,
+      "f1": 0.952381,
       "fn": 0,
-      "fp": 0,
-      "latency_samples": 4,
-      "mean_latency": 11.0,
+      "fp": 1,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 11,
+      "mean_latency": 10.0,
       "median_latency": 11.0,
+      "min_latency": 5,
       "p95_latency": 11.0,
-      "p95_meaningful": false,
-      "precision": 1.0,
+      "p95_meaningful": true,
+      "precision": 0.909091,
       "recall": 1.0,
-      "specificity": 1.0,
-      "tn": 105,
-      "tp": 4,
-      "with_onset": 4
+      "specificity": 0.995455,
+      "tn": 219,
+      "tp": 10,
+      "with_onset": 10
     },
     "error_cascade": {
-      "detected": 4,
-      "episodes": 109,
+      "detected": 10,
+      "episodes": 230,
       "f1": 1.0,
       "fn": 0,
       "fp": 0,
-      "latency_samples": 4,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 2,
       "mean_latency": 2.0,
       "median_latency": 2.0,
+      "min_latency": 2,
       "p95_latency": 2.0,
-      "p95_meaningful": false,
+      "p95_meaningful": true,
       "precision": 1.0,
       "recall": 1.0,
       "specificity": 1.0,
-      "tn": 105,
-      "tp": 4,
-      "with_onset": 4
+      "tn": 220,
+      "tp": 10,
+      "with_onset": 10
     },
     "goal_drift": {
-      "detected": 4,
-      "episodes": 109,
+      "detected": 10,
+      "episodes": 230,
       "f1": 1.0,
       "fn": 0,
       "fp": 0,
-      "latency_samples": 4,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 9,
       "mean_latency": 4.5,
       "median_latency": 4.5,
+      "min_latency": 0,
       "p95_latency": 9.0,
-      "p95_meaningful": false,
+      "p95_meaningful": true,
       "precision": 1.0,
       "recall": 1.0,
       "specificity": 1.0,
-      "tn": 105,
-      "tp": 4,
-      "with_onset": 4
+      "tn": 220,
+      "tp": 10,
+      "with_onset": 10
     },
     "governance_decay": {
-      "detected": 4,
-      "episodes": 109,
+      "detected": 10,
+      "episodes": 230,
       "f1": 1.0,
       "fn": 0,
       "fp": 0,
-      "latency_samples": 4,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 3,
       "mean_latency": 3.0,
       "median_latency": 3.0,
+      "min_latency": 3,
       "p95_latency": 3.0,
-      "p95_meaningful": false,
+      "p95_meaningful": true,
       "precision": 1.0,
       "recall": 1.0,
       "specificity": 1.0,
-      "tn": 105,
-      "tp": 4,
-      "with_onset": 4
+      "tn": 220,
+      "tp": 10,
+      "with_onset": 10
     },
     "idle_gap": {
-      "detected": 4,
-      "episodes": 109,
+      "detected": 10,
+      "episodes": 230,
       "f1": 1.0,
       "fn": 0,
       "fp": 0,
-      "latency_samples": 4,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 0,
       "mean_latency": 0.0,
       "median_latency": 0.0,
+      "min_latency": 0,
       "p95_latency": 0.0,
-      "p95_meaningful": false,
+      "p95_meaningful": true,
       "precision": 1.0,
       "recall": 1.0,
       "specificity": 1.0,
-      "tn": 105,
-      "tp": 4,
-      "with_onset": 4
+      "tn": 220,
+      "tp": 10,
+      "with_onset": 10
     },
     "latency_anomaly": {
-      "detected": 4,
-      "episodes": 109,
+      "detected": 10,
+      "episodes": 230,
       "f1": 1.0,
       "fn": 0,
       "fp": 0,
-      "latency_samples": 4,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 0,
       "mean_latency": 0.0,
       "median_latency": 0.0,
+      "min_latency": 0,
       "p95_latency": 0.0,
-      "p95_meaningful": false,
+      "p95_meaningful": true,
       "precision": 1.0,
       "recall": 1.0,
       "specificity": 1.0,
-      "tn": 105,
-      "tp": 4,
-      "with_onset": 4
+      "tn": 220,
+      "tp": 10,
+      "with_onset": 10
     },
     "loop": {
-      "detected": 12,
-      "episodes": 109,
-      "f1": 0.5,
+      "detected": 33,
+      "episodes": 230,
+      "f1": 0.465116,
       "fn": 0,
-      "fp": 8,
-      "latency_samples": 4,
+      "fp": 23,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 2,
       "mean_latency": 2.0,
       "median_latency": 2.0,
+      "min_latency": 2,
       "p95_latency": 2.0,
-      "p95_meaningful": false,
-      "precision": 0.333333,
+      "p95_meaningful": true,
+      "precision": 0.30303,
       "recall": 1.0,
-      "specificity": 0.92381,
-      "tn": 97,
-      "tp": 4,
-      "with_onset": 4
+      "specificity": 0.895455,
+      "tn": 197,
+      "tp": 10,
+      "with_onset": 10
     },
     "meltdown_high": {
-      "detected": 4,
-      "episodes": 109,
+      "detected": 10,
+      "episodes": 230,
       "f1": 1.0,
       "fn": 0,
       "fp": 0,
-      "latency_samples": 4,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 19,
       "mean_latency": 19.0,
       "median_latency": 19.0,
+      "min_latency": 19,
       "p95_latency": 19.0,
-      "p95_meaningful": false,
+      "p95_meaningful": true,
       "precision": 1.0,
       "recall": 1.0,
       "specificity": 1.0,
-      "tn": 105,
-      "tp": 4,
-      "with_onset": 4
+      "tn": 220,
+      "tp": 10,
+      "with_onset": 10
     },
     "meltdown_low": {
-      "detected": 8,
-      "episodes": 109,
+      "detected": 20,
+      "episodes": 230,
       "f1": 0.666667,
       "fn": 0,
-      "fp": 4,
-      "latency_samples": 4,
+      "fp": 10,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 19,
       "mean_latency": 19.0,
       "median_latency": 19.0,
+      "min_latency": 19,
       "p95_latency": 19.0,
-      "p95_meaningful": false,
+      "p95_meaningful": true,
       "precision": 0.5,
       "recall": 1.0,
-      "specificity": 0.961905,
-      "tn": 101,
-      "tp": 4,
-      "with_onset": 4
+      "specificity": 0.954545,
+      "tn": 210,
+      "tp": 10,
+      "with_onset": 10
     },
     "ml_ensemble": {
-      "detected": 4,
-      "episodes": 109,
+      "detected": 10,
+      "episodes": 230,
       "f1": 1.0,
       "fn": 0,
       "fp": 0,
-      "latency_samples": 4,
-      "mean_latency": 1.5,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 2,
+      "mean_latency": 1.4,
       "median_latency": 2.0,
+      "min_latency": 0,
       "p95_latency": 2.0,
-      "p95_meaningful": false,
+      "p95_meaningful": true,
       "precision": 1.0,
       "recall": 1.0,
       "specificity": 1.0,
-      "tn": 105,
-      "tp": 4,
-      "with_onset": 4
+      "tn": 220,
+      "tp": 10,
+      "with_onset": 10
     },
     "side_effect_duplicate": {
-      "detected": 4,
-      "episodes": 109,
+      "detected": 10,
+      "episodes": 230,
       "f1": 1.0,
       "fn": 0,
       "fp": 0,
-      "latency_samples": 4,
-      "mean_latency": 2.0,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 5,
+      "mean_latency": 3.0,
       "median_latency": 2.0,
-      "p95_latency": 2.0,
-      "p95_meaningful": false,
+      "min_latency": 2,
+      "p95_latency": 5.0,
+      "p95_meaningful": true,
       "precision": 1.0,
       "recall": 1.0,
       "specificity": 1.0,
-      "tn": 105,
-      "tp": 4,
-      "with_onset": 4
+      "tn": 220,
+      "tp": 10,
+      "with_onset": 10
     },
     "silent_abort": {
-      "detected": 4,
-      "episodes": 109,
+      "detected": 10,
+      "episodes": 230,
       "f1": 1.0,
       "fn": 0,
       "fp": 0,
-      "latency_samples": 4,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 0,
       "mean_latency": 0.0,
       "median_latency": 0.0,
+      "min_latency": 0,
       "p95_latency": 0.0,
-      "p95_meaningful": false,
+      "p95_meaningful": true,
       "precision": 1.0,
       "recall": 1.0,
       "specificity": 1.0,
-      "tn": 105,
-      "tp": 4,
-      "with_onset": 4
+      "tn": 220,
+      "tp": 10,
+      "with_onset": 10
     },
     "stagnation": {
-      "detected": 4,
-      "episodes": 109,
+      "detected": 10,
+      "episodes": 230,
       "f1": 1.0,
       "fn": 0,
       "fp": 0,
-      "latency_samples": 4,
-      "mean_latency": 56.75,
-      "median_latency": 55.5,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 62,
+      "mean_latency": 56.8,
+      "median_latency": 56.0,
+      "min_latency": 54,
       "p95_latency": 62.0,
-      "p95_meaningful": false,
+      "p95_meaningful": true,
       "precision": 1.0,
       "recall": 1.0,
       "specificity": 1.0,
-      "tn": 105,
-      "tp": 4,
-      "with_onset": 4
+      "tn": 220,
+      "tp": 10,
+      "with_onset": 10
     },
     "stall": {
-      "detected": 4,
-      "episodes": 109,
+      "detected": 10,
+      "episodes": 230,
       "f1": 1.0,
       "fn": 0,
       "fp": 0,
-      "latency_samples": 4,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 24,
       "mean_latency": 24.0,
       "median_latency": 24.0,
+      "min_latency": 24,
       "p95_latency": 24.0,
-      "p95_meaningful": false,
+      "p95_meaningful": true,
       "precision": 1.0,
       "recall": 1.0,
       "specificity": 1.0,
-      "tn": 105,
-      "tp": 4,
-      "with_onset": 4
+      "tn": 220,
+      "tp": 10,
+      "with_onset": 10
     },
     "token_runaway": {
-      "detected": 4,
-      "episodes": 109,
+      "detected": 10,
+      "episodes": 230,
       "f1": 1.0,
       "fn": 0,
       "fp": 0,
-      "latency_samples": 4,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 0,
       "mean_latency": 0.0,
       "median_latency": 0.0,
+      "min_latency": 0,
       "p95_latency": 0.0,
-      "p95_meaningful": false,
+      "p95_meaningful": true,
       "precision": 1.0,
       "recall": 1.0,
       "specificity": 1.0,
-      "tn": 105,
-      "tp": 4,
-      "with_onset": 4
+      "tn": 220,
+      "tp": 10,
+      "with_onset": 10
     },
     "wall_clock_budget": {
-      "detected": 4,
-      "episodes": 109,
+      "detected": 10,
+      "episodes": 230,
       "f1": 1.0,
       "fn": 0,
       "fp": 0,
-      "latency_samples": 4,
-      "mean_latency": 64.0,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 80,
+      "mean_latency": 60.4,
       "median_latency": 64.0,
-      "p95_latency": 64.0,
-      "p95_meaningful": false,
+      "min_latency": 48,
+      "p95_latency": 80.0,
+      "p95_meaningful": true,
       "precision": 1.0,
       "recall": 1.0,
       "specificity": 1.0,
-      "tn": 105,
-      "tp": 4,
-      "with_onset": 4
+      "tn": 220,
+      "tp": 10,
+      "with_onset": 10
     }
   }
 }
