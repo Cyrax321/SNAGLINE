@@ -344,22 +344,30 @@ def committed_outcomes(harness) -> list:
     ]
 
 
-def test_committed_corpus_reproduces_stage1_aggregates(
+def test_committed_corpus_reproduces_stage3_aggregates(
     harness, committed_outcomes
 ) -> None:
-    """Stage 1 reported TP=68, FP=12, FN=0, healthy controls firing=0,
-    macro-F1=0.951. Stage 2 must reproduce those exactly: the detector stack
-    and the labels are unchanged, so any drift is an implementation bug."""
+    """The committed corpus is pinned here so a detector or scoring change
+    cannot silently move the published numbers.
+
+    Stage 3 expanded the corpus from 109 to 230 episodes (17 triggers x 10
+    variants, plus 60 healthy controls), so Stage 1's TP=68/FP=12/macro-F1
+    0.951 baseline no longer applies: the new variants make the documented
+    loop/meltdown/stall overlaps fire far more often (see
+    ``test_committed_corpus_separates_cleanly`` and reports/EVAL_FINDINGS.md
+    section 6). Every labeled episode still fires its own trigger (FN=0) and
+    every healthy control stays silent.
+    """
     report = harness.score(committed_outcomes)
     tp = sum(s.tp for s in report.per_trigger.values())
     fp = sum(s.fp for s in report.per_trigger.values())
     fn = sum(s.fn for s in report.per_trigger.values())
     tn = sum(s.tn for s in report.per_trigger.values())
-    assert (tp, fp, fn) == (68, 12, 0)
+    assert (tp, fp, fn) == (170, 34, 0)
     assert tn > 0  # TN is the new cell; it was simply not counted before.
     assert report.healthy_fired == 0
-    assert report.macro_f1 == pytest.approx(0.951, abs=1e-3)
-    assert report.n_labeled == 68 and report.n_healthy == 41
+    assert report.macro_f1 == pytest.approx(0.9461, abs=1e-3)
+    assert report.n_labeled == 170 and report.n_healthy == 60
 
 
 def test_committed_corpus_onset_is_present_and_consistent(harness) -> None:
@@ -380,7 +388,7 @@ def test_committed_corpus_onset_is_present_and_consistent(harness) -> None:
         # of that event must match the index.
         assert ep.events[ep.onset_step].step_id == f"{ep.episode_id}-s{ep.onset_step}"
         labeled += 1
-    assert labeled == 68 and healthy == 41
+    assert labeled == 170 and healthy == 60
 
 
 def test_every_emitted_step_resolves_to_a_fixture_event_index(harness) -> None:
@@ -468,6 +476,87 @@ def test_percentile_nearest_rank_matches_the_documented_method(harness) -> None:
     assert harness.percentile([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 95) == 10
     assert harness.percentile([4.0, 6.0, 8.0], 50) == pytest.approx(6.0)
     assert harness.percentile([], 95) is None
+
+
+def _latency_rows(harness, report):
+    """(header, trigger rows) of the latency table, summary lines stripped."""
+    lines = harness.format_latency_table(report).splitlines()
+    header = next(ln for ln in lines if ln.startswith("trigger"))
+    rule = "-" * len(header)
+    rows = [
+        ln
+        for ln in lines
+        if ln
+        and ln != rule
+        and not ln.startswith(("detection latency", "trigger", "-", "p95 is"))
+    ]
+    return header, rows
+
+
+def test_latency_table_reports_four_distinct_populations(harness) -> None:
+    """The latency table must not present the corpus total as a per-trigger
+    sample size (issue #82 stage 3). ``labeled``, ``detected`` and ``samples``
+    are three different populations and the corpus total belongs in the table
+    header, not a column.
+
+    Built by hand: 3 episodes expect ``loop``; 2 more fire ``loop`` without
+    expecting it; 2 of the 3 labeled episodes record an onset and were
+    detected, so latency has 2 samples while the corpus has 5 episodes.
+    """
+    stats = harness.TriggerStats(tp=2, fp=2, fn=1, tn=0)
+    stats.latencies.extend([3, 7])
+    stats.n_onset = 2
+    report = harness.ScoreReport(
+        per_trigger={"loop": stats},
+        confusion={},
+        healthy_fired=0,
+        n_labeled=3,
+        n_healthy=2,
+    )
+    header, rows = _latency_rows(harness, report)
+    (row,) = [r for r in rows if r.split()[0] == "loop"]
+
+    # The corpus total (5) appears once, in the header -- never in a row.
+    assert "corpus = 5 episodes (3 labeled, 2 healthy controls)" in "\n".join(
+        harness.format_latency_table(report).splitlines()[:1]
+    )
+    assert "5" not in row.split()[1:4], row
+
+    # labeled == TP + FN == 3; detected == TP + FP == 4; samples == 2.
+    cols = header.split()
+    idx = {name: cols.index(name) for name in ("labeled", "detected", "samples")}
+    vals = row.split()
+    assert int(vals[idx["labeled"]]) == 3
+    assert int(vals[idx["detected"]]) == 4
+    assert int(vals[idx["samples"]]) == 2
+    # detected > labeled is the visible signature of cross-firing.
+    assert int(vals[idx["detected"]]) > int(vals[idx["labeled"]])
+    assert int(vals[idx["samples"]]) < int(vals[idx["labeled"]])
+
+
+def test_latency_table_hides_percentiles_below_the_meaningful_sample_count(
+    harness,
+) -> None:
+    """p95 of a 4-sample column would just be the maximum, so the table prints
+    n/a and keeps the raw value in JSON only."""
+    stats = harness.TriggerStats(tp=4, fp=0, fn=0)
+    stats.latencies.extend([1, 2, 3, 40])
+    report = harness.ScoreReport(
+        per_trigger={"loop": stats},
+        confusion={},
+        healthy_fired=0,
+        n_labeled=4,
+        n_healthy=0,
+    )
+    header, rows = _latency_rows(harness, report)
+    (row,) = [r for r in rows if r.split()[0] == "loop"]
+    p95 = row.split()[header.split().index("p95")]
+    assert p95 == "n/a", "4 < MEANINGFUL_PERCENTILE_N (5)"
+    assert harness.TriggerStats(latencies=[1, 2, 3, 40]).p95_latency == 40
+    # median/min/max are still reported on the same row.
+    vals = row.split()
+    assert int(vals[header.split().index("min")]) == 1
+    assert int(vals[header.split().index("max")]) == 40
 
 
 # --------------------------------------------------------------------------
