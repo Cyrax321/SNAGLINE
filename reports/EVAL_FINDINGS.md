@@ -724,7 +724,7 @@ alerting path was touched.
 | goal_drift TPs are structural, not semantic | instrumentation of `GoalDriftDetector._drift_score` (scores 1.000 / 0.600) |
 | healthy-control margins (2 vs 3; 4 of 60 timed) | computed from `benchmarks/fixtures/healthy_controls.jsonl` at shipped thresholds |
 | calibration adds 3 latency_anomaly firings | `tests/test_calibration.py::TestFixtureCorpusGate::test_auto_is_never_worse_than_manual` (pinned set) |
-| suite green | `1630 passed, 1 skipped`, coverage 92.42% |
+| suite green | `1670 passed, 1 skipped`, coverage 92.45% |
 
 ---
 
