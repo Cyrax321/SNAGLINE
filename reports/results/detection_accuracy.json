@@ -1,24 +1,14 @@
 {
   "confusion": [
     {
-      "count": 3,
-      "predicted": "loop",
-      "true": "cycle"
-    },
-    {
       "count": 1,
       "predicted": "cycle",
       "true": "stagnation"
     },
     {
-      "count": 10,
+      "count": 9,
       "predicted": "loop",
       "true": "stagnation"
-    },
-    {
-      "count": 10,
-      "predicted": "loop",
-      "true": "stall"
     },
     {
       "count": 10,
@@ -2182,7 +2172,6 @@
       "classification": "TP",
       "detected_triggers": [
         "cycle",
-        "loop",
         "stagnation"
       ],
       "detection_latency": 56,
@@ -2190,7 +2179,6 @@
       "expected_trigger": "stagnation",
       "first_detection": {
         "cycle": 3,
-        "loop": 9,
         "stagnation": 56
       },
       "first_detection_step": 56,
@@ -2535,15 +2523,13 @@
     {
       "classification": "TP",
       "detected_triggers": [
-        "cycle",
-        "loop"
+        "cycle"
       ],
       "detection_latency": 9,
       "episode_id": "cycle-04",
       "expected_trigger": "cycle",
       "first_detection": {
-        "cycle": 9,
-        "loop": 10
+        "cycle": 9
       },
       "first_detection_step": 9,
       "onset_step": 0
@@ -2565,15 +2551,13 @@
     {
       "classification": "TP",
       "detected_triggers": [
-        "cycle",
-        "loop"
+        "cycle"
       ],
       "detection_latency": 5,
       "episode_id": "cycle-06",
       "expected_trigger": "cycle",
       "first_detection": {
-        "cycle": 5,
-        "loop": 6
+        "cycle": 5
       },
       "first_detection_step": 5,
       "onset_step": 0
@@ -2595,15 +2579,13 @@
     {
       "classification": "TP",
       "detected_triggers": [
-        "cycle",
-        "loop"
+        "cycle"
       ],
       "detection_latency": 9,
       "episode_id": "cycle-08",
       "expected_trigger": "cycle",
       "first_detection": {
-        "cycle": 9,
-        "loop": 10
+        "cycle": 9
       },
       "first_detection_step": 9,
       "onset_step": 0
@@ -2625,7 +2607,6 @@
     {
       "classification": "TP",
       "detected_triggers": [
-        "loop",
         "meltdown_low",
         "stall"
       ],
@@ -2633,7 +2614,6 @@
       "episode_id": "stall-00",
       "expected_trigger": "stall",
       "first_detection": {
-        "loop": 4,
         "meltdown_low": 20,
         "stall": 26
       },
@@ -2643,7 +2623,6 @@
     {
       "classification": "TP",
       "detected_triggers": [
-        "loop",
         "meltdown_low",
         "stall"
       ],
@@ -2651,7 +2630,6 @@
       "episode_id": "stall-01",
       "expected_trigger": "stall",
       "first_detection": {
-        "loop": 4,
         "meltdown_low": 20,
         "stall": 26
       },
@@ -2661,7 +2639,6 @@
     {
       "classification": "TP",
       "detected_triggers": [
-        "loop",
         "meltdown_low",
         "stall"
       ],
@@ -2669,7 +2646,6 @@
       "episode_id": "stall-02",
       "expected_trigger": "stall",
       "first_detection": {
-        "loop": 4,
         "meltdown_low": 20,
         "stall": 26
       },
@@ -2679,7 +2655,6 @@
     {
       "classification": "TP",
       "detected_triggers": [
-        "loop",
         "meltdown_low",
         "stall"
       ],
@@ -2687,7 +2662,6 @@
       "episode_id": "stall-03",
       "expected_trigger": "stall",
       "first_detection": {
-        "loop": 4,
         "meltdown_low": 20,
         "stall": 26
       },
@@ -2697,7 +2671,6 @@
     {
       "classification": "TP",
       "detected_triggers": [
-        "loop",
         "meltdown_low",
         "stall"
       ],
@@ -2705,7 +2678,6 @@
       "episode_id": "stall-04",
       "expected_trigger": "stall",
       "first_detection": {
-        "loop": 5,
         "meltdown_low": 21,
         "stall": 27
       },
@@ -2715,7 +2687,6 @@
     {
       "classification": "TP",
       "detected_triggers": [
-        "loop",
         "meltdown_low",
         "stall"
       ],
@@ -2723,7 +2694,6 @@
       "episode_id": "stall-05",
       "expected_trigger": "stall",
       "first_detection": {
-        "loop": 6,
         "meltdown_low": 22,
         "stall": 28
       },
@@ -2733,7 +2703,6 @@
     {
       "classification": "TP",
       "detected_triggers": [
-        "loop",
         "meltdown_low",
         "stall"
       ],
@@ -2741,7 +2710,6 @@
       "episode_id": "stall-06",
       "expected_trigger": "stall",
       "first_detection": {
-        "loop": 7,
         "meltdown_low": 23,
         "stall": 29
       },
@@ -2751,7 +2719,6 @@
     {
       "classification": "TP",
       "detected_triggers": [
-        "loop",
         "meltdown_low",
         "stall"
       ],
@@ -2759,7 +2726,6 @@
       "episode_id": "stall-07",
       "expected_trigger": "stall",
       "first_detection": {
-        "loop": 5,
         "meltdown_low": 21,
         "stall": 27
       },
@@ -2769,7 +2735,6 @@
     {
       "classification": "TP",
       "detected_triggers": [
-        "loop",
         "meltdown_low",
         "stall"
       ],
@@ -2777,7 +2742,6 @@
       "episode_id": "stall-08",
       "expected_trigger": "stall",
       "first_detection": {
-        "loop": 3,
         "meltdown_low": 19,
         "stall": 25
       },
@@ -2787,7 +2751,6 @@
     {
       "classification": "TP",
       "detected_triggers": [
-        "loop",
         "meltdown_low",
         "stall"
       ],
@@ -2795,7 +2758,6 @@
       "episode_id": "stall-09",
       "expected_trigger": "stall",
       "first_detection": {
-        "loop": 6,
         "meltdown_low": 22,
         "stall": 28
       },
@@ -3089,13 +3051,13 @@
   },
   "healthy_controls_fired": 0,
   "healthy_false_positive_rate": 0.0,
-  "macro_f1": 0.946127,
-  "macro_precision": 0.924242,
+  "macro_f1": 0.959335,
+  "macro_precision": 0.937377,
   "macro_recall": 1.0,
   "metadata": {
-    "commit_sha": "f91b1fd934f20f776778b3ce1b8422d2c2a28bc0",
+    "commit_sha": "cd393f14929b7e001b6ecf58417ec28d2bc424b0",
     "evaluation_schema": "snagline-detection-accuracy/v2",
-    "evaluation_stage": 2,
+    "evaluation_stage": 4,
     "fixture_count": 230,
     "fixture_directory": "benchmarks\\fixtures",
     "healthy_count": 60,
@@ -3104,8 +3066,9 @@
     "python_implementation": "CPython",
     "python_version": "3.13.1",
     "seeds": {
-      "persisted_in_fixtures": false,
-      "scheme": "random.Random(f\"{episode_id}/seed\") per episode in benchmarks/fixtures/generate_fixtures.py"
+      "persisted_in_fixtures": true,
+      "scheme": "random.Random(f\"{episode_id}/seed\") per episode in benchmarks/fixtures/generate_fixtures.py",
+      "scope": "all 170 labeled records and healthy-41..59; omitted on the 41 legacy controls to keep their bytes unchanged"
     },
     "step_index_convention": "zero-based"
   },
@@ -3258,11 +3221,11 @@
       "with_onset": 10
     },
     "loop": {
-      "detected": 33,
+      "detected": 19,
       "episodes": 230,
-      "f1": 0.465116,
+      "f1": 0.689655,
       "fn": 0,
-      "fp": 23,
+      "fp": 9,
       "labeled": 10,
       "latency_samples": 10,
       "max_latency": 2,
@@ -3271,10 +3234,10 @@
       "min_latency": 2,
       "p95_latency": 2.0,
       "p95_meaningful": true,
-      "precision": 0.30303,
+      "precision": 0.526316,
       "recall": 1.0,
-      "specificity": 0.895455,
-      "tn": 197,
+      "specificity": 0.959091,
+      "tn": 211,
       "tp": 10,
       "with_onset": 10
     },

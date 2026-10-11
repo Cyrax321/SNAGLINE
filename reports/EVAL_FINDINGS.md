@@ -1,10 +1,14 @@
 # SNAGLINE Detection Quality — Evaluation Findings
 
-Stage 3 evaluation. Stage 2 baseline commit: `f91b1fd934f20f776778b3ce1b8422d2c2a28bc0`.
+Stage 3 evaluation, plus Stage 4: **one of the three weaknesses is fixed and
+re-measured** (section 13). Stage 2 baseline commit:
+`f91b1fd934f20f776778b3ce1b8422d2c2a28bc0`.
 
 Every claim below points at a committed fixture, a test, a benchmark artifact, a source
-path, or a measured metric. Nothing in this stage changed detector behaviour, thresholds,
-or alerting (see section 9.4 on what *was* changed, which is evaluation surface only).
+path, or a measured metric. Stage 3 changed no detector behaviour, thresholds,
+or alerting (see section 9.4 on what *was* changed, which is evaluation surface only);
+Stage 4 changes reported trigger identity inside one detector, deliberately and
+measurably (section 13.2).
 
 How to reproduce the headline numbers:
 
@@ -224,7 +228,7 @@ latency (min 0, median 4.5, max 9) is purely the generator's onset placement (on
 
 | trigger | TP | FP | FN | TN | precision | recall | F1 | specificity |
 |---|---|---|---|---|---|---|---|---|
-| loop | 10 | **23** | 0 | 197 | **0.303** | 1.000 | 0.465 | 0.895 |
+| loop | 10 | **9** | 0 | 211 | **0.526** | 1.000 | 0.690 | 0.959 |
 | error_cascade | 10 | 0 | 0 | 220 | 1.000 | 1.000 | 1.000 | 1.000 |
 | latency_anomaly | 10 | 0 | 0 | 220 | 1.000 | 1.000 | 1.000 | 1.000 |
 | token_runaway | 10 | 0 | 0 | 220 | 1.000 | 1.000 | 1.000 | 1.000 |
@@ -242,8 +246,14 @@ latency (min 0, median 4.5, max 9) is purely the generator's onset placement (on
 | idle_gap | 10 | 0 | 0 | 220 | 1.000 | 1.000 | 1.000 | 1.000 |
 | wall_clock_budget | 10 | 0 | 0 | 220 | 1.000 | 1.000 | 1.000 | 1.000 |
 
-Aggregate: **macro-precision 0.924, macro-recall 1.000, macro-F1 0.946**,
-healthy false-positive rate **0.000** (0 of 60). Totals: TP 170, FP 34, FN 0, TN 3706.
+Aggregate: **macro-precision 0.937, macro-recall 1.000, macro-F1 0.959**,
+healthy false-positive rate **0.000** (0 of 60). Totals: TP 170, FP 20, FN 0, TN 3720.
+
+The `loop` row is post-fix (Stage 4, section 13): FP 23 → 9, precision
+0.303 → 0.526, F1 0.465 → 0.690. The 14 remaining cross-firings are
+cross-detector — `stagnation → loop` 9, `stall → meltdown_low` 10 — which
+intra-family arbitration cannot reach. `meltdown_low` is therefore unchanged
+at 0.500 and is now the worst row in the table.
 
 Recall is perfect, and that is the least informative number in the table: zero false
 negatives means the corpus contains no episode a detector missed, not that none exists.
@@ -267,7 +277,7 @@ Steps from the recorded onset to the first detection, zero-based. Corpus = 230 e
 
 | trigger | labeled | detected | samples | min | median | p95 | max |
 |---|---|---|---|---|---|---|---|
-| loop | 10 | 33 | 10 | 2 | 2.0 | 2.0 | 2 |
+| loop | 10 | 19 | 10 | 2 | 2.0 | 2.0 | 2 |
 | error_cascade | 10 | 10 | 10 | 2 | 2.0 | 2.0 | 2 |
 | latency_anomaly | 10 | 10 | 10 | 0 | 0.0 | 0.0 | 0 |
 | token_runaway | 10 | 10 | 10 | 0 | 0.0 | 0.0 | 0 |
@@ -285,8 +295,9 @@ Steps from the recorded onset to the first detection, zero-based. Corpus = 230 e
 | idle_gap | 10 | 10 | 10 | 0 | 0.0 | 0.0 | 0 |
 | wall_clock_budget | 10 | 10 | 10 | **48** | **64.0** | 80.0 | **80** |
 
-`detected > labeled` marks cross-firing: loop 33 vs 10, meltdown_low 20 vs 10, cycle 11
-vs 10.
+`detected > labeled` marks cross-firing: loop 19 vs 10, meltdown_low 20 vs 10, cycle 11
+vs 10. Loop's 19 is post-fix (was 33): the 14 stall/cycle episodes whose coarse
+loop finding is superseded no longer count as loop detections (section 13).
 
 Reading the slow rows against episode length: `stagnation` needs a median of 56 steps on
 episodes of 101–121 steps, so **the failure is flagged after roughly half the episode has
@@ -304,15 +315,19 @@ noted in section 3.
 ## 6. Cross-Firing Analysis
 
 Confusion entries (firings on another trigger's data), from
-`reports/results/detection_accuracy.json`:
+`reports/results/detection_accuracy.json` (post-fix):
 
 ```
-stagnation -> loop:         10
-stall      -> loop:         10
+stagnation -> loop:          9
 stall      -> meltdown_low: 10
-cycle      -> loop:          3
-stagnation -> cycle:         1
+stagnation -> cycle:          1
 ```
+
+The intra-detector half of the pre-fix map is gone: `stall -> loop` 10 and
+`cycle -> loop` 3 are retired by the Stage 4 fix (section 13), and
+`stagnation-09` now surfaces only as `cycle` where it previously surfaced as
+both `cycle` and `loop`. The three remaining entries are cross-detector and
+were deliberately left alone.
 
 Nothing was assumed. I recomputed **each detector's condition directly from the fixture
 bytes** — independently of the detectors — and compared the step at which the condition
@@ -403,12 +418,21 @@ documented overlap `vary_cycle` admits at `generate_fixtures.py:1146-1149`.
 
 ### Interpretation
 
-All three cross-firings are **legitimate secondary detections of conditions the fixtures
-genuinely contain**, not detector errors in the strict sense. The scoring is one-vs-rest
-single-label, so each one is charged as a false positive against the firing trigger
-(`loop` 23 FP, `meltdown_low` 10 FP, `cycle` 1 FP) even though the underlying condition is
-real. The real cost is not arithmetic — it is that `loop` as an alert is 70% likely to
-name the wrong failure mode, and it names it 22–50 steps before the correct trigger does.
+All three remaining cross-firings are **legitimate secondary detections of
+conditions the fixtures genuinely contain**, not detector errors in the strict
+sense. The scoring is one-vs-rest single-label, so each one is charged as a
+false positive against the firing trigger (`loop` 9 FP, `meltdown_low` 10 FP,
+`cycle` 1 FP) even though the underlying condition is real. The real cost is
+not arithmetic — it is that an operator is told `loop` roughly **50 steps
+before** `stagnation` on every stagnation episode, and told `meltdown_low` six
+steps before `stall` on every stall episode.
+
+The pre-fix map also contained `stall -> loop` 10 and `cycle -> loop` 3 —
+intra-detector confusion, where the coarse and the specific trigger come from
+one `LoopDetector`. That half is fixed (section 13): a `loop` alert is now
+47% likely to name the wrong failure mode, down from 70%, and the two
+remaining `loop`-shaped confusions are with a *different* detector rather
+than with a coarser reading of the same statistic.
 
 ---
 
@@ -450,9 +474,9 @@ The one place any threshold moved onto new ground confirms the concern. Fitting 
 episodes it stays silent on manually:
 
 ```
-manual:  macro-F1 0.946127   confusion: cycle->loop 3, stagnation->cycle 1,
-                              stagnation->loop 10, stall->loop 10, stall->meltdown_low 10
-auto:    macro-F1 0.938455   + goal_drift->latency_anomaly 3
+manual:  macro-F1 0.959335   confusion: stagnation->loop 9, stagnation->cycle 1,
+                              stall->meltdown_low 10
+auto:    macro-F1 0.951663   + goal_drift->latency_anomaly 3
 ```
 
 The three episodes are `goal_drift-04/06/08` — the latency-shape goal-drift fixtures,
@@ -462,7 +486,9 @@ phenomenon as section 6, arriving via the calibration path rather than the fixtu
 It is now pinned, not tolerated:
 `tests/test_calibration.py::TestFixtureCorpusGate::test_auto_is_never_worse_than_manual`
 asserts that every auto-only firing lands on a *labeled* episode — never a healthy
-control — and pins the exact three-episode set.
+control — and pins the exact three-episode set. That test replays through the harness's
+shared `reduce_risks` (Stage 4), so its manual arm reproduces the published macro-F1
+0.959335 exactly rather than scoring on a private basis.
 
 ---
 
@@ -552,12 +578,12 @@ An operator enabling `semantic_drift_enabled` gets a detector whose positive con
 fails and whose perfect benchmark score is produced by a different, structural detector.
 
 **Candidate fix.** Two independent halves, either of which helps: (a) widen the embedded
-representation to include a content-bearing field that does not violate the privacy
-contract (for example a purpose/intent field the host supplies, or a token-budget-normalised
-sketch of the action arguments rather than raw content); (b) replace or supplement the
-running centroid with a statistic that does not average away a distribution shift —
-per-tool weighting, a windowed rather than cumulative centroid, or a change-point test on
-the tool-mix distribution. Not implemented; diagnosed only.
+   representation to include a content-bearing field that does not violate the privacy
+   contract (for example a purpose/intent field the host supplies, or a token-budget-normalised
+   sketch of the action arguments rather than raw content); (b) replace or supplement the
+   running centroid with a statistic that does not average away a distribution shift —
+   per-tool weighting, a windowed rather than cumulative centroid, or a change-point test on
+   the tool-mix distribution. **Still diagnosed only** — Stage 4 fixed weakness 2 instead.
 
 ### 9.2 Weakness 2 — `loop`/`cycle`/`stall` have no cross-mode arbitration, so the coarsest trigger wins and destroys `loop` precision
 
@@ -614,7 +640,13 @@ one.
 annotate the `loop` risk so a sink can demote it. Concretely: let `_observe_hardened`
 retire or downgrade a previously emitted plain `loop` for the same episode once `stall`
 or `cycle` fires. This changes reported trigger identity, not detection behaviour or
-thresholds, so it must be evaluated against the corpus before shipping. Not implemented.
+thresholds, so it must be evaluated against the corpus before shipping.
+
+**IMPLEMENTED in Stage 4 (section 13)** via `FailureRisk.supersedes`, evaluated against
+the corpus, and pinned by tests. One correction to the expectation above: the "annotate
+so a sink can demote it" half is what shipped, because a sink cannot un-emit an alert it
+has already dispatched. `meltdown_low`'s 0.500 is untouched, since that overlap is a
+*different* detector and the fix is deliberately intra-family.
 
 ### 9.3 Weakness 3 — precision is untested at the margin, so "zero false positives" cannot support a real-world precision claim
 
@@ -634,8 +666,8 @@ Detector coverage inside the healthy population is thinner still:
 
 And the only threshold that was tightened in this evaluation immediately produced new
 firings: `calibration = "auto"` with a healthy-fitted baseline adds
-`goal_drift → latency_anomaly` on 3 of 10 goal-drift episodes (`macro-F1` 0.946127 →
-0.938455). Those episodes genuinely carry a ~20-sigma latency shift, so the extra
+`goal_drift → latency_anomaly` on 3 of 10 goal-drift episodes (`macro-F1` 0.959335 →
+0.951663). Those episodes genuinely carry a ~20-sigma latency shift, so the extra
 firings are arguably correct — but they demonstrate that the precision margin is narrow
 enough that a modest sensitivity change moves it.
 
@@ -730,14 +762,14 @@ alerting path was touched.
 
 ## 11. Candidate Fixes
 
-Diagnosed only. None implemented, per the stage's constraint.
-
-1. **Arbitrate the loop family** (weakness 2). When `stall` or `cycle` fires for an
-   episode, retire or downgrade the previously emitted plain `loop`. Changes reported
-   trigger identity, not detection behaviour. Expected effect: `loop` precision 0.303 →
-   ~1.0 on this corpus, `meltdown_low` 0.500 → ~1.0, macro-F1 0.946 → ~1.0. **Best
-   first move** — mechanical, localized to one file, and immediately testable against the
-   pinned confusion counts.
+1. **Arbitrate the loop family** (weakness 2). **IMPLEMENTED in Stage 4 — see
+   section 13.** When `stall` or `cycle` fires for an episode, the risk declares
+   that it supersedes the previously emitted plain `loop`. Changes reported
+   trigger identity, not detection behaviour. Measured effect: `loop` precision
+   0.303 → 0.526, `loop` F1 0.465 → 0.690, macro-F1 0.946 → 0.959, with FN held at
+   0. The report's original estimate of "~1.0" was wrong: it assumed every
+   cross-firing was intra-detector. `stagnation → loop` 9 and
+   `stall → meltdown_low` 10 are cross-detector and are left to candidate 6.
 2. **Fix the semantic statistic** (weakness 1). Supplement or replace the running
    centroid, and widen the label only within the privacy contract. Expected effect:
    `tool_mix_drift` fires; `goal_drift` benchmark numbers become attributable to the
@@ -750,6 +782,12 @@ Diagnosed only. None implemented, per the stage's constraint.
    as semantic performance.
 5. **Reduce the `stagnation` / `wall_clock_budget` latency** (section 5). Optional and
    threshold-shaped; 56 of ~101 steps is a lot of wasted run.
+6. **Cross-detector arbitration** (new, opened by 13.4). Decide which detector owns an
+   episode when two report on the same stream — `stagnation` vs `loop` on low-diversity
+   traffic, `meltdown_low` vs `stall` on a frozen agent. The intra-family mechanism
+   (`FailureRisk.supersedes`) generalizes to this, but the *policy* does not follow from
+   the evidence gathered here, so it is left unimplemented. Expected effect: `loop` 0.526
+   → ~1.0, `meltdown_low` 0.500 → ~1.0, macro-F1 0.959 → ~1.0.
 
 ---
 
@@ -777,3 +815,120 @@ Diagnosed only. None implemented, per the stage's constraint.
    false positive. Any scoring change is a labelling decision, not a detector fix.
 10. **`cycle → loop` for P ≤ 4 is documented overlap, not a defect**
     (`generate_fixtures.py:1146-1149`).
+
+---
+
+## 13. Stage 4 — the fix, and its measured effect
+
+Stage 3 diagnosed three weaknesses and implemented none. Stage 4 implements the
+one with the strongest evidence and the most contained blast radius — weakness 2,
+the loop family's missing arbitration — and re-measures the corpus.
+
+**Why this one.** It is localized to one detector over one statistic, its numbers
+are pinned by committed tests, and the corpus exercises it on 23 episodes. Weakness 1
+(the semantic drift representation) requires deciding what content-bearing field may
+leave the host without breaking the documented privacy contract — a design decision,
+not a mechanical fix. Weakness 3 is a property of the evidence base, not of a detector.
+
+### 13.1 The defect
+
+`stall` is a strict superset of `loop`: 25 consecutive identical signatures
+necessarily contain 3 inside a 12-step window. `cycle` with period ≤ 4 satisfies the
+plain rule too. The detector emitted the coarse `loop` first (step ~4 on a stall
+episode) and the specific trigger up to 22 steps later (step ~26), and nothing in
+between ever corrected the record. `loop` precision was **0.303** — 70% of its
+firings named a different failure mode.
+
+### 13.2 The fix
+
+Reported trigger identity, not detection behaviour. `FailureRisk` gains an optional
+`supersedes: tuple[TriggerType, ...] = ()` (`src/snagline/risk.py`); when `stall` or
+`cycle` fires, `LoopDetector` declares `supersedes=("loop",)`
+(`src/snagline/detectors/loop.py`). The evaluation applies it in one place —
+`reduce_risks` in `benchmarks/detection_accuracy.py` — which is now the single reduction
+path every replay in the repo goes through, including the calibration comparison in
+`tests/test_calibration.py`. Before the refactor that test had its own private reduction
+and would have scored the corpus on a different basis from the published numbers.
+
+Three properties that were design constraints, each pinned by a test:
+
+- **Nothing is silenced.** The plain `loop` risk is still constructed and still
+  dispatched to every sink, on the same step at the same score. A sink that does not
+  understand `supersedes` behaves exactly as before. Real-time sinks cannot un-send an
+  alert, so supersession is metadata that corrects the *record*, not a retraction of
+  the *alert stream*.
+- **No threshold moved.** Every condition still fires on the identical step. The fix
+  is downstream of detection.
+- **Recall could not regress on this corpus.** Verified before implementing: the 10
+  `loop`-labelled episodes fire `loop` and only `loop` — never `stall` or `cycle` — so
+  a supersession declaration can never retire a trigger an episode is labelled with.
+  Post-fix FN is 0 for all 17 triggers, confirmed by test.
+
+### 13.3 Measured effect on the committed corpus
+
+| metric | before | after |
+|---|---|---|
+| `loop` FP | 23 | **9** |
+| `loop` precision | 0.303 | **0.526** |
+| `loop` F1 | 0.465 | **0.690** |
+| `loop` `detected` vs labelled | 33 vs 10 | **19 vs 10** |
+| total FP | 34 | **20** |
+| macro-precision | 0.924 | **0.937** |
+| macro-F1 | 0.946 | **0.959** |
+| `meltdown_low` precision | 0.500 | 0.500 (unchanged) |
+| healthy controls firing | 0 of 60 | **0 of 60** |
+| FN (all 17 triggers) | 0 | **0** |
+
+The 14 retired cross-firings decompose exactly: `stall → loop` 10 and `cycle → loop` 3
+were intra-detector and are now attributed to the trigger that names the shape;
+`stagnation-09` previously surfaced as both `cycle` and `loop` and now surfaces only as
+`cycle`, which is why `loop`'s FP falls to 9 rather than 10 and `cycle`'s stays at 1.
+
+### 13.4 What it does **not** fix, and why that is the honest boundary
+
+- **`stagnation → loop` (9).** `stagnation` is a different detector with a 50-step
+  window; its fixtures contain a genuine 3-in-12 repetition by pigeonhole (7–9 distinct
+  signatures over ~100 steps). Retiring it needs *cross-detector* arbitration — a policy
+  about which detector owns an episode — which is a design decision this fix deliberately
+  does not make.
+- **`stall → meltdown_low` (10).** `meltdown_low`'s 20-step entropy window fills six
+  steps before `stall`'s 25-step streak, so a different detector reports the condition
+  first. Same reason.
+- **Real-time alert ordering.** An operator still receives `loop` at step 4 and `stall`
+  at step 26. Supersession corrects the episode's recorded identity; it cannot reorder
+  alerts already delivered. Fixing the ordering would mean *delaying* the coarse alert
+  until the stricter condition can be ruled in or out, which trades latency for
+  precision and is a separate decision requiring its own evidence.
+
+Consequence, stated plainly: **`loop` precision 0.526 is not a clean result.** Nearly
+half its firings still name a different failure mode. The fix removed the half that was
+self-inflicted (one detector reporting the same statistic twice); the half that remains
+is a real cross-detector overlap and is the next thing to decide.
+
+### 13.5 Tests
+
+- `tests/detectors/test_loop_family_arbitration.py` (new, 9 tests) — written
+  failing-first against the pre-fix tree: the declaration itself, its absence on the
+  plain and near-duplicate paths, and the non-regression guarantees (the plain risk
+  still fires on the same step at the same score, exactly once).
+- `tests/test_detection_accuracy.py::test_committed_corpus_separates_cleanly` —
+  re-pinned from `loop` FP 23 to FP 9, with the surviving cross-detector overlaps named.
+- `tests/test_detection_latency.py::test_committed_corpus_reproduces_stage3_aggregates`
+  — re-pinned from `(170, 34, 0)` / macro-F1 0.9461 to `(170, 20, 0)` / 0.9593. The
+  change is recorded in the test's own docstring rather than hidden.
+
+Full suite post-fix: **1679 passed, 1 skipped**, coverage 92.45%. `ruff check` clean;
+`ruff format` clean. `mypy src tests` reports 5 errors, all pre-existing on the base
+commit (`auto/anthropic.py` stub assignments, `test_hook_bridge.py` `SIGKILL` on
+Windows) — none in the changed files.
+
+### 13.6 Reproduction
+
+```bash
+PYTHONPATH=src python benchmarks/detection_accuracy.py \
+    --fixtures benchmarks/fixtures --format table --report-dir reports/results
+PYTHONPATH=src python -m pytest tests/detectors/test_loop_family_arbitration.py -q
+```
+
+To see the before state, `git stash` the detector change or check out the base
+commit `cd393f1` and re-run the harness: `loop` FP returns to 23.
