@@ -51,12 +51,32 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import math
+import platform
 import random
+import subprocess
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 from snagline.baseline import BaselineProfile, save_baseline
 from snagline.events import StepEvent, make_signature
+
+# Generator version, persisted in generation_manifest.json so a replay can be
+# attributed to the exact code that produced it (stage 3, issue #82).
+GENERATOR_VERSION = "3.0"
+
+# Corpus size. Stage 1/2 shipped four episodes per trigger; stage 3 extends to
+# ten. Variants 0..3 stay on the ORIGINAL builders so the committed Stage 1/2
+# episode bytes are reproduced exactly (byte-identity is asserted by the
+# generator twice-run check in tests/test_eval_corpus.py); variants
+# LEGACY_VARIANT_COUNT..N_LABELED_VARIANTS-1 use the *_variation_* builders
+# below, which vary onset position, episode length, jitter, retry counts, error
+# placement, tool ordering, latency and token volumes per episode.
+N_LABELED_VARIANTS = 10
+LEGACY_VARIANT_COUNT = 4
 
 # Fixed epoch so committed timestamps never change between regenerations.
 BASE_TS = 1_700_000_000.0
@@ -777,6 +797,560 @@ LABELED_TRIGGER_VARIANTS = {
 
 
 # --------------------------------------------------------------------------
+# Stage 3 variation corpus (variants 4..9)
+# --------------------------------------------------------------------------
+# Every builder below takes (ep, rng, variant) and produces ONE episode whose
+# labeled failure is unambiguous but whose surface trajectory differs from the
+# legacy four: onset position, episode length, timing jitter, retry counts,
+# error placement, tool-call ordering, latency and token volumes all move.
+# Parameters are drawn from the episode's OWN seeded rng, so a fixture's seed
+# alone reproduces it. The arithmetic envelopes are documented per builder;
+# each keeps the labeled trigger firing while leaving the episode free to
+# cross-fire other detectors (that is data for the evaluation, not a bug).
+
+
+def _apply_step_gaps(events: list[dict], step_gaps: Sequence[float]) -> list[dict]:
+    """Rewrite timestamps from an explicit per-event gap schedule.
+
+    ``step_gaps[i]`` is the wall-clock seconds between event i-1 and event i.
+    Used wherever an episode needs non-default spacing (idle gaps, long
+    running tasks, stagnation's compressed clock) instead of ad-hoc math on
+    BASE_TS.
+    """
+    ts = BASE_TS
+    # strict: every caller passes one gap per event, and a mismatched schedule
+    # would silently leave some events on the default spacing.
+    for event, gap in zip(events, step_gaps, strict=True):
+        ts += gap
+        event["timestamp"] = ts
+    return events
+
+
+def vary_loop(ep: str, rng: random.Random, v: int) -> tuple[list[dict], int | None]:
+    """Retry loop with varied warmup, repeat count, tool and tail.
+
+    repeats 3..6 identical calls; warmup 2..8 so the 12-signature loop window
+    still holds all three copies when the third lands (warmup + 3 <= 11).
+    Total tool calls <= 18 so the 20-slot meltdown window never fills.
+    """
+    warm = 2 + rng.randrange(7)
+    reps = 3 + rng.randrange(4)
+    tail = 1 + rng.randrange(4)
+    tool = rng.choice(("fetch_record", "sync_calendar", "send_email", "run_query"))
+    args = rng.choice(("id=42", "batch=7", "mode=retry", "cursor=abc"))
+    b = _Builder(ep, rng)
+    for i in range(warm):
+        b.add(_cycle_tool(i), f"q={rng.randrange(10**6)}")
+    b.mark_onset()
+    for _ in range(reps):
+        b.add(tool, args)
+    for i in range(tail):
+        b.add(_cycle_tool(warm + i), f"t={rng.randrange(10**6)}")
+    b.finish_with_output()
+    return b.result()
+
+
+def vary_error_cascade(
+    ep: str, rng: random.Random, v: int
+) -> tuple[list[dict], int | None]:
+    """Consecutive failures of one operation, varied root cause and length.
+
+    3..5 consecutive errors sharing one error_type (a single root cause);
+    warmup 1..6 keeps warmup + 3 <= 9 inside the 10-slot cascade window when
+    the third error lands. Tools vary so entropy stays high and meltdown has
+    no single-tool collapse to see; no latency/token telemetry.
+    """
+    warm = 1 + rng.randrange(6)
+    nerr = 3 + rng.randrange(3)
+    tail = 1 + rng.randrange(4)
+    etype = rng.choice(
+        ("TimeoutError", "ConnectionError", "HTTP503", "PermissionError")
+    )
+    tools = ("deploy_service", "sync_contacts", "push_build", "send_invoice")
+    b = _Builder(ep, rng)
+    for i in range(warm):
+        b.add(_cycle_tool(i), f"q={rng.randrange(10**6)}")
+    b.mark_onset()
+    for i in range(nerr):
+        b.add(
+            rng.choice(tools),
+            f"svc-{i}-{rng.randrange(10**3)}",
+            error=True,
+            error_type=etype,
+        )
+    for i in range(tail):
+        b.add(_cycle_tool(warm + i), f"t={rng.randrange(10**6)}")
+    b.finish_with_output()
+    return b.result()
+
+
+def vary_latency_anomaly(
+    ep: str, rng: random.Random, v: int
+) -> tuple[list[dict], int | None]:
+    """Latency blowout over a realistically jittery baseline.
+
+    5..8 baseline samples at +-12% of a 300..600ms centre: sample std ~= 7% of
+    the mean, which beats the 5% relative floor, so sigma0 ~= 0.07*centre.
+    Spikes at 4..8x the centre give z >= 3*centre/(0.07*centre) ~= 43, cusum
+    ~= 42 >> h=5 on the first post-warmup step. Spike count 1..3; the
+    sustained shift keeps the accumulator high but only the first emission
+    matters for scoring.
+    """
+    centre = rng.choice((300.0, 400.0, 500.0, 600.0))
+    nbase = 5 + rng.randrange(4)
+    nspike = 1 + rng.randrange(3)
+    spike = centre * rng.choice((4.0, 5.0, 6.0, 8.0))
+    jitter = centre * 0.12
+    b = _Builder(ep, rng)
+    for _ in range(nbase):
+        ms = centre + (rng.random() - 0.5) * 2 * jitter
+        b.add("search_web", f"q={rng.randrange(10**6)}", latency_ms=round(ms, 1))
+    b.mark_onset()
+    for _ in range(nspike):
+        b.add("search_web", f"s={rng.randrange(10**6)}", latency_ms=round(spike, 1))
+    for i in range(2):
+        b.add(_cycle_tool(i + 1), f"t={rng.randrange(10**6)}")
+    b.finish_with_output()
+    return b.result()
+
+
+def vary_token_runaway(
+    ep: str, rng: random.Random, v: int
+) -> tuple[list[dict], int | None]:
+    """Sustained token burn after a 20..21-sample warmup, under the warn line.
+
+    Warmup volume 700..1000/step (+-60 jitter) freezes mu0 ~= base and
+    sigma0 = max(std ~= 35, 5% of base ~= 50) = 50. Burns 4..6 steps at
+    2200..2700/step give z >= (2200-700)/50 = 30, cusum ~= 29 >> h=5. The
+    cumulative total stays <= 21*1000 + 6*2700 + 1000 = 38,200 < 40,000, so
+    the budget envelope's warn branch never fires ahead of the CUSUM. Tools
+    cycle all five identities so meltdown holds 2.32 bits as windows fill.
+    """
+    nbase = rng.choice((20, 21))
+    base_vol = rng.choice((700, 800, 900, 1000))
+    nburn = rng.choice((4, 5, 6))
+    burn_vol = rng.choice((2200, 2400, 2600, 2700))
+    ntail = rng.randrange(2)
+    b = _Builder(ep, rng)
+    for i in range(nbase):
+        vol = base_vol + rng.randrange(-60, 61)
+        b.add(
+            _cycle_tool(i),
+            f"item={rng.randrange(10**6)}",
+            tokens_in=max(50, vol - 200),
+            tokens_out=200,
+        )
+    b.mark_onset()
+    for i in range(nburn):
+        b.add(
+            _cycle_tool(nbase + i),
+            f"burn={rng.randrange(10**6)}",
+            tokens_in=burn_vol - 200,
+            tokens_out=200,
+        )
+    for i in range(ntail):
+        b.add(
+            _cycle_tool(nbase + nburn + i),
+            f"tail={rng.randrange(10**6)}",
+            tokens_in=base_vol - 200,
+            tokens_out=200,
+        )
+    b.finish_with_output()
+    return b.result()
+
+
+def vary_budget_breach(
+    ep: str, rng: random.Random, v: int
+) -> tuple[list[dict], int | None]:
+    """One oversized step that crosses the 50,000 budget from below the warn.
+
+    20..32 baseline steps at 700..1000/step accumulate <= 32,000 < 40,000, so
+    the warn branch is never taken first. The single oversized step carries
+    exactly the shortfall to 51,000..55,000 total, so the envelope's breach
+    branch fires and returns BEFORE the token CUSUM ever sees the outlier --
+    that early return is what keeps token_runaway quiet here. Tail steps
+    return to baseline volume (increment ~= -0.5). Exactly one oversized
+    step: a second would fall through to the CUSUM and alarm.
+    """
+    nbase = rng.choice((20, 24, 28, 32))
+    base_vol = rng.choice((700, 800, 900, 1000))
+    ntail = 1 + rng.randrange(3)
+    target = rng.choice((51_000, 53_000, 55_000))
+    shortfall = target - nbase * base_vol
+    assert shortfall > 0, f"{ep}: baseline already reaches the budget"
+    b = _Builder(ep, rng)
+    for i in range(nbase):
+        b.add(
+            _cycle_tool(i),
+            f"row={rng.randrange(10**6)}",
+            tokens_in=base_vol - 200,
+            tokens_out=200,
+        )
+    b.mark_onset()
+    b.add(_cycle_tool(nbase), "bulk_export=huge", tokens_in=shortfall, tokens_out=0)
+    for i in range(ntail):
+        b.add(
+            _cycle_tool(nbase + 1 + i),
+            f"row={rng.randrange(10**6)}",
+            tokens_in=base_vol - 200,
+            tokens_out=200,
+        )
+    b.finish_with_output()
+    return b.result()
+
+
+def vary_meltdown_low(
+    ep: str, rng: random.Random, v: int
+) -> tuple[list[dict], int | None]:
+    """Rote single-tool collapse of varied length.
+
+    One tool identity for 20..32 calls; entropy over tool_name collapses to
+    0 bits and the first full 20-window fires. Unique args keep signatures
+    distinct (loop needs a repeated SIGNATURE, stall needs 25 identical) and
+    length stays under the 50-step stagnation window.
+    """
+    tool = rng.choice(("scrape_page", "crawl_sitemap", "fetch_log", "poll_queue"))
+    n = rng.choice((20, 24, 28, 32))
+    b = _Builder(ep, rng)
+    b.mark_onset()
+    for i in range(n):
+        b.add(tool, f"row_{i}_{rng.randrange(10**3)}")
+    b.finish_with_output()
+    return b.result()
+
+
+_CHURN_POOLS: tuple[tuple[str, ...], ...] = (
+    CHURN_POOL,
+    tuple(f"churn_{i}" for i in range(13)),
+    tuple(f"churn_{i}" for i in range(14)),
+)
+
+
+def vary_meltdown_high(
+    ep: str, rng: random.Random, v: int
+) -> tuple[list[dict], int | None]:
+    """Tool churn over a 12/13/14-tool strict cycle, varied length.
+
+    Any full 20-window of a strict P-cycle (P >= 12) holds most identities
+    twice and the rest once: H(P=12) ~= 3.52, H(13) ~= 3.54, H(14) ~= 3.61
+    bits, all above the 3.4 thrash threshold. Each signature appears at most
+    once per 12 signatures, so loop stays quiet, and the period exceeds the
+    cycle scanner's max_period of 6.
+    """
+    pool = rng.choice(_CHURN_POOLS)
+    n = rng.choice((20, 24, 28))
+    b = _Builder(ep, rng)
+    b.mark_onset()
+    for i in range(n):
+        b.add(pool[i % len(pool)], f"call-{i}-{rng.randrange(10**6)}")
+    b.finish_with_output()
+    return b.result()
+
+
+def vary_silent_abort(
+    ep: str, rng: random.Random, v: int
+) -> tuple[list[dict], int | None]:
+    """A clean run that stops mid-work, varied length and final action.
+
+    3..10 varied warmup calls then one error-free bare tool call: finalize()
+    sees a non-output final action and fires. <= 11 tool calls keeps the
+    meltdown window unfilled; no errors, latency or token telemetry.
+    """
+    n = 3 + rng.randrange(8)
+    final = rng.choice(("write_report", "commit_changes", "post_results", "save_draft"))
+    b = _Builder(ep, rng)
+    for i in range(n):
+        b.add(_cycle_tool(i), f"k={rng.randrange(10**6)}")
+    b.mark_onset()
+    b.add(final, f"draft=v{rng.randrange(10**3)}")  # ends mid-work
+    return b.result()  # deliberately NOT closed with a message step
+
+
+def vary_stagnation(
+    ep: str, rng: random.Random, v: int
+) -> tuple[list[dict], int | None]:
+    """Novelty collapse over a varied signature pool, length and step gap.
+
+    5..8 signatures reused at random over 100..120 steps. After the first
+    window every signature has been seen, so the novelty share of each
+    50-window is 0 < min_novelty 0.05; two consecutive stale windows plus
+    patience 2 fires. Random order breaks strict periodicity (cycle silent).
+    log2(5..8) = 2.32..3.00 bits keeps meltdown in band. Compressed 0.4..0.7s
+    gaps hold total wall <= 84s < 96s so wall_clock_budget stays silent while
+    windows complete.
+    """
+    pool_n = rng.choice((5, 6, 7, 8))
+    n = rng.choice((100, 110, 120))
+    gap = rng.choice((0.4, 0.5, 0.6, 0.7))
+    sigs = [(f"g_tool_{i}", f"g_arg_{i}") for i in range(pool_n)]
+    b = _Builder(ep, rng)
+    b.mark_onset()
+    for _ in range(n):
+        tool, args = sigs[rng.randrange(pool_n)]
+        b.add(tool, args)
+    b.finish_with_output()
+    return _apply_step_gaps(b.events, [gap] * len(b.events)), b.onset
+
+
+def vary_side_effect_duplicate(
+    ep: str, rng: random.Random, v: int
+) -> tuple[list[dict], int | None]:
+    """Duplicated side-effecting call with varied separation.
+
+    Two identical side_effect=True calls separated by 1..4 unrelated steps;
+    the second crosses allowed_repeats=1. Warmup 1..4, tail 1..4; total <= 14
+    tool calls keeps every window-based detector quiet.
+    """
+    warm = 1 + rng.randrange(4)
+    sep = 1 + rng.randrange(4)
+    tail = 1 + rng.randrange(4)
+    tool = rng.choice(("charge_card", "send_invoice", "post_payment", "ship_order"))
+    args = rng.choice(("amt=10", "amt=25", "ref=x9"))
+    b = _Builder(ep, rng)
+    for i in range(warm):
+        b.add(_cycle_tool(i), f"init={rng.randrange(10**6)}")
+    b.mark_onset()
+    b.add(tool, args, side_effect=True)
+    for i in range(sep):
+        b.add(_cycle_tool(warm + i), f"mid={rng.randrange(10**6)}")
+    b.add(tool, args, side_effect=True)
+    for i in range(tail):
+        b.add(_cycle_tool(warm + sep + i), f"tail={rng.randrange(10**6)}")
+    b.finish_with_output()
+    return b.result()
+
+
+def vary_governance_decay(
+    ep: str, rng: random.Random, v: int
+) -> tuple[list[dict], int | None]:
+    """Compaction pinning constraints the run never confirms, varied pins.
+
+    A compaction pins 1..3 constraint hashes; 3..5 follow-up steps none of
+    which re-confirm them, so grace 3 expires and exactly one risk fires.
+    Pin hashes are derived from the variant index so they differ per episode
+    but stay deterministic.
+    """
+    warm = 1 + rng.randrange(5)
+    npins = 1 + rng.randrange(3)
+    grace = rng.choice((3, 4, 5))
+    b = _Builder(ep, rng)
+    for i in range(warm):
+        b.add(_cycle_tool(i), f"pre={rng.randrange(10**6)}")
+    b.mark_onset()
+    pins = [
+        hashlib.sha256(f"constraint-{v}-{k}".encode()).hexdigest() for k in range(npins)
+    ]
+    b.add(
+        "__compaction__",
+        "compaction",
+        action_type="compaction",
+        metadata={"pinned": pins},
+    )
+    for i in range(grace):
+        b.add(_cycle_tool(i), f"grace={rng.randrange(10**6)}")
+    b.finish_with_output()
+    return b.result()
+
+
+def vary_cycle(ep: str, rng: random.Random, v: int) -> tuple[list[dict], int | None]:
+    """Strict period-P cycle for P in 2..6, at least 12 steps long.
+
+    The cycle scanner needs its 12-window filled, so the episode holds
+    max(3, ceil(12/P)) full periods. Entropy log2(P) = 1.00..2.58 bits, all
+    inside the (0.4, 3.4) meltdown band. NOTE the deliberate overlap: for
+    P <= 4 each phase repeats at least 3 times inside 12 consecutive
+    signatures, so the plain loop rule ALSO fires -- that overlap is measured
+    by the evaluation, not avoided here.
+    """
+    period = rng.choice((2, 3, 4, 5, 6))
+    periods = max(3, math.ceil(12 / period))
+    n = period * periods
+    sigs = [(f"p_tool_{period}_{i}", f"p_arg_{i}") for i in range(period)]
+    b = _Builder(ep, rng)
+    b.mark_onset()
+    for i in range(n):
+        tool, args = sigs[i % period]
+        b.add(tool, args)
+    b.finish_with_output()
+    return b.result()
+
+
+def vary_stall(ep: str, rng: random.Random, v: int) -> tuple[list[dict], int | None]:
+    """25+ consecutive identical calls with varied warmup and length.
+
+    Stall fires at 25 consecutive identical signatures; warmup 1..6 keeps the
+    repeat sequence contiguous. The single tool also collapses meltdown's
+    entropy (fires at 20 tool calls) and the repeats satisfy the loop rule at
+    3 -- both are real properties of the shape and are measured.
+    """
+    warm = 1 + rng.randrange(6)
+    reps = rng.choice((25, 30, 35))
+    tool = rng.choice(("stalled_tool", "hung_parser", "blocked_worker"))
+    args = rng.choice(("repeat-id-99", "job=7", "lock=abc"))
+    b = _Builder(ep, rng)
+    for i in range(warm):
+        b.add(_cycle_tool(i), f"warm={rng.randrange(10**6)}")
+    b.mark_onset()
+    for _ in range(reps):
+        b.add(tool, args)
+    b.finish_with_output()
+    return b.result()
+
+
+def vary_idle_gap(ep: str, rng: random.Random, v: int) -> tuple[list[dict], int | None]:
+    """One >= 10s ingest gap at a varied position and duration.
+
+    2..6 calls, a gap of 10..25s, then 2..5 more; total wall <= 41.5s < 96s so
+    the wall-clock envelope stays silent. Total <= 12 tool calls keeps
+    window-based detectors unfilled.
+    """
+    before = 2 + rng.randrange(5)
+    gap = rng.choice((10.0, 12.0, 15.0, 20.0, 25.0))
+    after = 2 + rng.randrange(4)
+    b = _Builder(ep, rng)
+    for i in range(before):
+        b.add(_cycle_tool(i), f"q={rng.randrange(10**6)}")
+    b.mark_onset()
+    b.add(_cycle_tool(before), f"gap={rng.randrange(10**6)}")
+    for i in range(after):
+        b.add(_cycle_tool(before + 1 + i), f"q={rng.randrange(10**6)}")
+    b.finish_with_output()
+    gaps = [STEP_GAP_S] * before + [gap] + [STEP_GAP_S] * (len(b.events) - before - 1)
+    return _apply_step_gaps(b.events, gaps), b.onset
+
+
+def vary_wall_clock_budget(
+    ep: str, rng: random.Random, v: int
+) -> tuple[list[dict], int | None]:
+    """Wall-clock burn past 120s at varied step spacing.
+
+    Uniform 1.0..2.0s gaps for ceil(125/gap)+0..5 steps gives total wall in
+    [125, 135]s: the 96s warning fires first, then the 120s breach, both under
+    the wall_clock_budget trigger. Unique args keep novelty at 1.0 (stagnation
+    silent) and the five-tool cycle holds 2.32 bits as windows fill. No gap
+    reaches the 10s idle threshold.
+    """
+    gap = rng.choice((1.0, 1.2, 1.5, 1.8, 2.0))
+    n = math.ceil(125.0 / gap) + rng.randrange(6)
+    b = _Builder(ep, rng)
+    b.mark_onset()
+    for i in range(n):
+        b.add(_cycle_tool(i), f"w={rng.randrange(10**6)}")
+    b.finish_with_output()
+    return _apply_step_gaps(b.events, [gap] * len(b.events)), b.onset
+
+
+def vary_goal_drift(
+    ep: str, rng: random.Random, v: int
+) -> tuple[list[dict], int | None]:
+    """Goal-drift deviation shapes, cycled by variant parity.
+
+    Parity 0 -- latency blowout on ONE baseline capability: n=10..12 calls of
+    a single baseline tool at ref + z*spread with z in 8..20. z=8 gives
+    contribution min(1, (8-3)/10) = 0.5 >= the 0.5 score threshold; larger z
+    saturates. Constant latency freezes the CUSUM onto itself (inert).
+    Parity 1 -- unseen capability: nine baseline-matching calls, then one call
+    to a tool absent from the committed baseline; absent tools contribute a
+    flat 0.6, and that step is the tenth live sample, so goal_drift fires
+    there and only there.
+    """
+    if v % 2 == 0:
+        n = rng.choice((10, 11, 12))
+        idx = rng.randrange(len(GOAL_DRIFT_BASELINE_TOOLS))
+        tool, ref = GOAL_DRIFT_BASELINE_TOOLS[idx]
+        spread = max(1.0, 0.05 * ref)
+        z = rng.choice((8, 10, 14, 20))
+        b = _Builder(ep, rng)
+        b.mark_onset()
+        for _ in range(n):
+            b.add(tool, f"q={rng.randrange(10**6)}", latency_ms=ref + z * spread)
+        b.finish_with_output()
+        return b.result()
+    unseen = rng.choice(("deploy_canary", "wipe_cache", "pivot_db", "send_wire"))
+    b = _Builder(ep, rng)
+    for i in range(9):
+        tool, ms = GOAL_DRIFT_BASELINE_TOOLS[i % len(GOAL_DRIFT_BASELINE_TOOLS)]
+        b.add(tool, f"req={rng.randrange(10**6)}", latency_ms=ms)
+    b.mark_onset()
+    b.add(
+        unseen, f"env={rng.randrange(10**6)}", latency_ms=rng.choice((60.0, 70.0, 90.0))
+    )
+    b.finish_with_output()
+    return b.result()
+
+
+def vary_ml_ensemble(
+    ep: str, rng: random.Random, v: int
+) -> tuple[list[dict], int | None]:
+    """ML-ensemble base signals cycled by variant mod 4, varied parameters.
+
+    Under the ml_ensemble variant every base detector is wrapped in the
+    noisy-OR orchestrator, so only the combined ml_ensemble risk reaches
+    sinks. Each shape must leave at least one base score >= 0.5 on one step.
+    """
+    shape = v % 4
+    b = _Builder(ep, rng)
+    if shape == 0:
+        # Loop signal: three identical calls give the loop detector
+        # count/threshold*0.5 = 3/3*0.5 = 0.5; noisy-OR over it is 0.5.
+        warm = rng.randrange(5)
+        tool = rng.choice(("fetch_record", "pull_ticket", "get_order"))
+        args = rng.choice(("id=7", "ref=abc", "sku=99"))
+        for i in range(warm):
+            b.add(_cycle_tool(i), f"q={rng.randrange(10**6)}")
+        b.mark_onset()
+        for _ in range(3):
+            b.add(tool, args)
+        b.add(_cycle_tool(2), f"q={rng.randrange(10**6)}")
+    elif shape == 1:
+        # Latency signal: 400-class warmup freezes sigma0 = 20ms; a 2500ms
+        # spike gives cusum 104.5 > h=5, score min(1, 0.6 + 0.1*(104.5/5-1)).
+        for ms in (400.0, 395.0, 405.0, 398.0, 402.0):
+            b.add("search_web", f"q={rng.randrange(10**6)}", latency_ms=ms)
+        b.mark_onset()
+        b.add("search_web", f"q={rng.randrange(10**6)}", latency_ms=2500.0)
+    elif shape == 2:
+        # Cascade signal: three consecutive errors give consecutive score 1.0.
+        etype = rng.choice(("TimeoutError", "ConnectionError", "HTTP503"))
+        b.add(_cycle_tool(0), f"q={rng.randrange(10**6)}")
+        b.mark_onset()
+        for i in range(3):
+            b.add("deploy_service", f"svc-{i}", error=True, error_type=etype)
+        b.add(_cycle_tool(1), f"q={rng.randrange(10**6)}")
+    else:
+        # Combined: the third identical id=9 call also carries the spike.
+        for args, ms in (("a=1", 400.0), ("a=2", 395.0), ("a=3", 405.0)):
+            b.add("search_web", args, latency_ms=ms)
+        b.mark_onset()
+        b.add("search_web", "id=9", latency_ms=398.0)
+        b.add("search_web", "id=9", latency_ms=402.0)
+        b.add("search_web", "id=9", latency_ms=2500.0)
+    b.finish_with_output()
+    return b.result()
+
+
+LABELED_VARIATION_BUILDERS = {
+    "loop": vary_loop,
+    "error_cascade": vary_error_cascade,
+    "latency_anomaly": vary_latency_anomaly,
+    "token_runaway": vary_token_runaway,
+    "budget_breach": vary_budget_breach,
+    "meltdown_low": vary_meltdown_low,
+    "meltdown_high": vary_meltdown_high,
+    "silent_abort": vary_silent_abort,
+    "goal_drift": vary_goal_drift,
+    "ml_ensemble": vary_ml_ensemble,
+    "stagnation": vary_stagnation,
+    "side_effect_duplicate": vary_side_effect_duplicate,
+    "governance_decay": vary_governance_decay,
+    "cycle": vary_cycle,
+    "stall": vary_stall,
+    "idle_gap": vary_idle_gap,
+    "wall_clock_budget": vary_wall_clock_budget,
+}
+
+
+# --------------------------------------------------------------------------
 # Healthy controls (label: null)
 # --------------------------------------------------------------------------
 
@@ -1134,6 +1708,329 @@ HEALTHY_ML_BUILDERS = [healthy_repeat_pair_recovery, healthy_warmup_jitter]
 HEALTHY_GOAL_DRIFT_BUILDERS = [healthy_goal_drift_steady, healthy_goal_drift_near_k]
 
 
+# --------------------------------------------------------------------------
+# Stage 3 hard healthy controls (issue #82 stage 3)
+# --------------------------------------------------------------------------
+# Difficult-but-legitimate traffic: each family stresses one detector's
+# decision boundary from the healthy side. Every builder documents the exact
+# reason it must stay silent. These are appended AFTER the legacy 41 controls
+# so existing healthy ids (00..40) stay byte-identical.
+
+
+def healthy_retry_then_success(
+    ep: str, rng: random.Random
+) -> tuple[list[dict], int | None]:
+    """Legitimate retries: each failing call is retried once and succeeds.
+
+    Error count never reaches the consecutive rule (max 1 in a row) and any
+    10-step cascade window holds at most 2 counted errors, below the density
+    threshold of 3. Two fail/retry pairs at different points in the run make
+    the recovery pattern explicit rather than a single lucky error.
+    """
+    b = _Builder(ep, rng)
+    for i in range(3):
+        b.add(_cycle_tool(i), f"q={rng.randrange(10**6)}")
+    b.add("deploy_service", "svc-a", error=True, error_type="TimeoutError")
+    b.add("deploy_service", "svc-a-retry")  # retry succeeds
+    for i in range(5):
+        b.add(_cycle_tool(i + 3), f"q={rng.randrange(10**6)}")
+    b.add("send_email", "to=ops", error=True, error_type="SMTPError")
+    b.add("send_email", "to=ops-retry")  # retry succeeds
+    for i in range(3):
+        b.add(_cycle_tool(i + 6), f"q={rng.randrange(10**6)}")
+    b.finish_with_output()
+    return b.result()
+
+
+_HEARTBEAT_JITTER = (320.0, 480.0, 350.0, 460.0, 390.0)
+
+
+def healthy_bursty_latency(
+    ep: str, rng: random.Random
+) -> tuple[list[dict], int | None]:
+    """Bursty latency inside the baseline's own spread: no true anomaly.
+
+    Warmup _HEARTBEAT_JITTER has mean 400 and sample std ~= 68.9, which beats
+    both sigma floors (1ms, 5% of mean = 20ms), so sigma0 ~= 68.9. Two bursts
+    at 560ms each give increments (560-400)/68.9 - 0.5 ~= 1.82; the pair
+    accumulates 3.64 < h = 5 and the return to 400ms decrements it. The burst
+    is ~1.8 sigma -- a slow page inside the run's own variability, not a
+    regime change.
+    """
+    b = _Builder(ep, rng)
+    for ms in _HEARTBEAT_JITTER:
+        b.add("search_web", f"q={rng.randrange(10**6)}", latency_ms=ms)
+    for _ in range(2):
+        b.add("search_web", f"slow={rng.randrange(10**6)}", latency_ms=560.0)
+    for ms in (405.0, 395.0):
+        b.add("search_web", f"q={rng.randrange(10**6)}", latency_ms=ms)
+    for i in range(2):
+        b.add(_cycle_tool(i + 1), f"q={rng.randrange(10**6)}")
+    b.finish_with_output()
+    return b.result()
+
+
+def healthy_bursty_latency_in_warmup(
+    ep: str, rng: random.Random
+) -> tuple[list[dict], int | None]:
+    """Bursts that fall inside the CUSUM warmup are absorbed by the freeze.
+
+    The five warmup samples are [400, 560, 560, 400, 90]: mean 402, std ~=
+    193, so the burst RAISES sigma0 rather than alarming. Post-freeze values
+    at 400ms give (400-402)/193 - 0.5 < 0. Exercises the detector's
+    learn-only window with genuinely bursty traffic.
+    """
+    b = _Builder(ep, rng)
+    for ms in (400.0, 560.0, 560.0, 400.0, 90.0):
+        b.add("search_web", f"w={rng.randrange(10**6)}", latency_ms=ms)
+    for _ in range(3):
+        b.add("search_web", f"q={rng.randrange(10**6)}", latency_ms=400.0)
+    b.finish_with_output()
+    return b.result()
+
+
+def healthy_long_task(
+    ep: str, rng: random.Random, n: int, gap: float
+) -> tuple[list[dict], int | None]:
+    """A long legitimate task: many steps, high novelty, no stagnation.
+
+    n unique-arg calls on the five-tool cycle at `gap` second spacing. Unique
+    args hold the novelty share at 1.0 while the 50-step stagnation window
+    fills and slides repeatedly; the five-tool cycle holds entropy at 2.32
+    bits as the 20-slot meltdown window fills; n*gap is capped under 96s so
+    the wall-clock warning never fires, and uniform spacing never reaches the
+    10s idle threshold. This is the control that proves long != stuck.
+    """
+    assert n * gap < 96.0, f"{ep}: a long healthy task must not cross the 96s warn"
+    b = _Builder(ep, rng)
+    for i in range(n):
+        b.add(_cycle_tool(i), f"L={rng.randrange(10**6)}")
+    b.finish_with_output()
+    return _apply_step_gaps(b.events, [gap] * len(b.events)), None
+
+
+def healthy_single_error_recovered(
+    ep: str, rng: random.Random, at: int
+) -> tuple[list[dict], int | None]:
+    """Exactly one error, placed at `at`, recovered and moved past.
+
+    One error in the whole run: the consecutive count peaks at 1 and every
+    10-step window holds 1 error, both far under the threshold of 3. The
+    placement varies (early / mid / late) so the recovery is not always
+    followed by enough steps to matter.
+    """
+    b = _Builder(ep, rng)
+    n = 12
+    for i in range(n):
+        if i == at:
+            b.add("sync_calendar", "scope=day", error=True, error_type="HTTP501")
+            continue
+        b.add(_cycle_tool(i), f"r={rng.randrange(10**6)}")
+    b.finish_with_output()
+    return b.result()
+
+
+def healthy_repeated_legit_calls(
+    ep: str, rng: random.Random
+) -> tuple[list[dict], int | None]:
+    """Repeated calls the task genuinely requires, with changing inputs.
+
+    Eighteen pagination calls to one tool, each with a distinct page argument.
+    Signatures are exact-match and every one is distinct, so the loop repeat
+    count never passes 1. Eighteen stays UNDER the 20-slot meltdown window, so
+    the single-tool entropy collapse never gets a window to evaluate. The
+    near-identical args ("page=01".."page=18") are the point: the shape looks
+    repetitive to a human but is not a loop.
+    """
+    b = _Builder(ep, rng)
+    for i in range(18):
+        b.add("read_file", f"page={i:02d}")
+    b.finish_with_output()
+    return b.result()
+
+
+def healthy_repeated_legit_two_tools(
+    ep: str, rng: random.Random
+) -> tuple[list[dict], int | None]:
+    """A long alternating two-tool task: entropy 1.00 bit, above the floor.
+
+    Twenty-four calls alternating read_file/write_file at unique args. Any
+    20-window holds 10 of each: H = 1.00 bit, above the 0.4 collapse floor.
+    Each signature appears once per 12 signatures at most, so loop is quiet.
+    Deliberately near the collapse band: a one-tool version of this same task
+    would fire meltdown_low, which is probed separately (see the stress probe
+    in reports/) rather than asserted healthy here.
+    """
+    b = _Builder(ep, rng)
+    for i in range(24):
+        b.add("read_file" if i % 2 == 0 else "write_file", f"row={i:03d}")
+    b.finish_with_output()
+    return b.result()
+
+
+def healthy_high_token_usage(
+    ep: str, rng: random.Random
+) -> tuple[list[dict], int | None]:
+    """Large but bounded context: near the warn line, no runaway.
+
+    Thirty-four steps at a constant 1150 tokens (33,800 + 300 in/out split =
+    39,100 cumulative), just under the 40,000 warn threshold of the 50,000
+    budget. A constant burn freezes mu0 onto itself and every post-freeze
+    increment is max(0, 0 - 0.5) = 0, so the CUSUM cannot alarm. Large here
+    means legitimately large, not accelerating.
+    """
+    b = _Builder(ep, rng)
+    for i in range(34):
+        b.add(
+            _cycle_tool(i), f"ctx={rng.randrange(10**6)}", tokens_in=900, tokens_out=250
+        )
+    b.finish_with_output()
+    return b.result()
+
+
+def healthy_long_planning(ep: str, rng: random.Random) -> tuple[list[dict], int | None]:
+    """A long reasoning phase interleaved with on-goal work (goal_drift).
+
+    Replayed under the goal_drift variant. Reasoning steps (action_type
+    "reasoning") alternate with search_web calls at exactly the baseline's
+    100ms, so the live per-tool mean equals its reference and every z-score is
+    0: the drift score is 0.0. The twelve search_web calls clear
+    goal_drift_min_samples = 10, so the detector IS scoring during the
+    planning phase and still stays silent. Constant latency also freezes the
+    CUSUM onto itself.
+    """
+    b = _Builder(ep, rng)
+    for i in range(24):
+        if i % 2 == 0:
+            b.add(
+                "__plan__", f"plan-step-{i}", action_type="reasoning", latency_ms=100.0
+            )
+        else:
+            b.add("search_web", f"q={rng.randrange(10**6)}", latency_ms=100.0)
+    b.finish_with_output()
+    return b.result()
+
+
+def healthy_similar_actions(
+    ep: str, rng: random.Random
+) -> tuple[list[dict], int | None]:
+    """Near-identical actions with legitimately varying inputs.
+
+    Fourteen translate_text calls, one per language code, plus four
+    summarise_text calls over distinct inputs. Distinct signatures keep the
+    loop repeat count at 1; 18 total calls stays under the 20-slot meltdown
+    window. Args differ in two characters each, so a fuzzy/approximate
+    signature match would misfire -- the exact-match signature keeps it
+    honest.
+    """
+    langs = (
+        "fr",
+        "es",
+        "de",
+        "it",
+        "pt",
+        "nl",
+        "ru",
+        "ja",
+        "ko",
+        "zh",
+        "ar",
+        "hi",
+        "tr",
+        "sv",
+    )
+    b = _Builder(ep, rng)
+    for lang in langs:
+        b.add("translate_text", f"lang={lang}")
+    for i in range(4):
+        b.add("summarize_text", f"doc={i}")
+    b.finish_with_output()
+    return b.result()
+
+
+# (builder, config variant, reason it must stay silent) -- the variant is
+# recorded so the harness replays each control under the detectors it stresses.
+HEALTHY_HARD_BUILDERS: list[tuple[Any, str]] = [
+    (healthy_retry_then_success, "standard"),
+    (healthy_retry_then_success, "standard"),
+    (healthy_bursty_latency, "standard"),
+    (healthy_bursty_latency, "standard"),
+    (healthy_bursty_latency_in_warmup, "standard"),
+    (lambda ep, rng: healthy_long_task(ep, rng, 90, 1.0), "standard"),
+    (lambda ep, rng: healthy_long_task(ep, rng, 110, 0.8), "standard"),
+    (lambda ep, rng: healthy_long_task(ep, rng, 130, 0.7), "standard"),
+    (lambda ep, rng: healthy_single_error_recovered(ep, rng, 1), "standard"),
+    (lambda ep, rng: healthy_single_error_recovered(ep, rng, 6), "standard"),
+    (lambda ep, rng: healthy_single_error_recovered(ep, rng, 10), "standard"),
+    (healthy_repeated_legit_calls, "standard"),
+    (healthy_repeated_legit_two_tools, "standard"),
+    (healthy_high_token_usage, "standard"),
+    (healthy_long_planning, "goal_drift"),
+    (healthy_long_planning, "goal_drift"),
+    (healthy_similar_actions, "standard"),
+    # The two ml_ensemble controls already keep every base detector
+    # sub-threshold, so reusing them under the orchestrator is the hardest
+    # available check that noisy-OR amplification of clean traffic stays at 0.
+    (healthy_repeat_pair_recovery, "ml_ensemble"),
+    (healthy_bursty_latency, "ml_ensemble"),
+]
+
+
+def _episode_seed(episode_id: str) -> str:
+    """The per-episode seed string the generator derives its rng from.
+
+    Persisted into every fixture line (stage 3) so a single JSONL record is
+    sufficient to reproduce that episode: the seed names the exact rng stream
+    and the generator version in the manifest names the code that consumed it.
+    """
+    return f"{episode_id}/seed"
+
+
+def _generator_manifest(labeled: int, healthy: int, out: Path) -> dict:
+    """Record everything a replay needs to attribute output to this code.
+
+    Best-effort commit SHA: the generator can be run from a tarball, and a
+    missing SHA must not break regeneration -- it is reported as empty.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        sha = proc.stdout.strip() if proc.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        sha = ""
+    return {
+        "generator_version": GENERATOR_VERSION,
+        "labeled_episodes": labeled,
+        "healthy_controls": healthy,
+        "total_episodes": labeled + healthy,
+        "labeled_variants_per_trigger": N_LABELED_VARIANTS,
+        "legacy_variants_per_trigger": LEGACY_VARIANT_COUNT,
+        "trigger_count": len(LABELED_BUILDERS),
+        "seed_scheme": (
+            'random.Random(seed) per episode, seed = f"{episode_id}/seed"; '
+            "the seed string is persisted as the record's `seed` field"
+        ),
+        "commit_sha": sha,
+        "python_version": platform.python_version(),
+        "platform": platform.platform(),
+        "step_index_convention": "zero-based index into the episode's events list",
+        "onset_semantics": (
+            "the first event that intentionally introduces the labeled failure "
+            "condition; null on healthy controls"
+        ),
+        "files": {
+            "labeled": "labeled_episodes.jsonl",
+            "healthy": "healthy_controls.jsonl",
+            "baseline": "goal_drift_baseline.json",
+        },
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     here = Path(__file__).resolve().parent
@@ -1142,11 +2039,19 @@ def main(argv: list[str] | None = None) -> int:
 
     labeled_lines: list[str] = []
     for trigger, builder in LABELED_BUILDERS.items():
-        variant = LABELED_TRIGGER_VARIANTS.get(trigger, "standard")
-        for variant_no in range(4):
+        variant_name = LABELED_TRIGGER_VARIANTS.get(trigger, "standard")
+        variation = LABELED_VARIATION_BUILDERS.get(trigger)
+        for variant_no in range(N_LABELED_VARIANTS):
             ep = f"{trigger}-{variant_no:02d}"
-            rng = random.Random(f"{ep}/seed")
-            events, onset = builder(ep, rng)
+            seed = _episode_seed(ep)
+            rng = random.Random(seed)
+            if variant_no < LEGACY_VARIANT_COUNT:
+                # Variants 0..3 stay on the original builders so the Stage 1/2
+                # episode bytes are reproduced exactly.
+                events, onset = builder(ep, rng)
+            else:
+                assert variation is not None, f"no variation builder for {trigger}"
+                events, onset = variation(ep, rng, variant_no)
             # mark_onset() is part of every labeled builder's contract; a
             # None here means a builder was written without one, which would
             # silently drop latency coverage for that trigger.
@@ -1155,34 +2060,52 @@ def main(argv: list[str] | None = None) -> int:
                 "episode_id": ep,
                 "label": {"trigger": trigger, "onset_step": onset},
                 "events": events,
+                # Explicit persisted seed (stage 3).
+                "seed": seed,
             }
             # Only variant episodes carry the field so pre-#118 lines stay
             # byte-identical across regenerations.
-            if variant != "standard":
-                record["config"] = variant
+            if variant_name != "standard":
+                record["config"] = variant_name
             labeled_lines.append(json.dumps(record, sort_keys=True))
 
     healthy_lines: list[str] = []
     idx = 0
-    # Groups in id order: standard controls first so existing ids stay
-    # stable, then the issue-#118 variant groups appended after them.
-    healthy_groups: list[tuple[str, list]] = [
-        ("standard", HEALTHY_BUILDERS),
-        ("ml_ensemble", HEALTHY_ML_BUILDERS),
-        ("goal_drift", HEALTHY_GOAL_DRIFT_BUILDERS),
+    # Groups in id order: the legacy controls first so existing ids (00..40)
+    # stay byte-identical across regenerations, then the stage-3 hard controls
+    # grouped by the config variant they stress. carry_seed is False for the
+    # legacy groups (they were written without a seed field) and True for the
+    # stage-3 additions.
+    healthy_groups: list[tuple[str, list, bool]] = [
+        ("standard", HEALTHY_BUILDERS, False),
+        ("ml_ensemble", HEALTHY_ML_BUILDERS, False),
+        ("goal_drift", HEALTHY_GOAL_DRIFT_BUILDERS, False),
     ]
-    for variant, builders in healthy_groups:
+    hard_by_variant: dict[str, list] = {}
+    for builder, variant in HEALTHY_HARD_BUILDERS:
+        hard_by_variant.setdefault(variant, []).append(builder)
+    for vname in ("standard", "ml_ensemble", "goal_drift"):
+        if vname in hard_by_variant:
+            healthy_groups.append((vname, hard_by_variant[vname], True))
+
+    for variant, builders, carry_seed in healthy_groups:
         for builder in builders:
             ep = f"healthy-{idx:02d}"
-            rng = random.Random(f"{ep}/seed")
+            seed = _episode_seed(ep)
+            rng = random.Random(seed)
             # Healthy controls carry no onset: no failure is injected.
             events, _onset = builder(ep, rng)
             healthy_record: dict = {"episode_id": ep, "label": None, "events": events}
+            if carry_seed:
+                healthy_record["seed"] = seed
             if variant != "standard":
                 healthy_record["config"] = variant
             healthy_lines.append(json.dumps(healthy_record, sort_keys=True))
             idx += 1
 
+    # --out defaults to this directory but can point anywhere; create it
+    # before the first write so a fresh directory does not crash mid-run.
+    ns.out.mkdir(parents=True, exist_ok=True)
     save_baseline(build_goal_drift_baseline(), str(ns.out / "goal_drift_baseline.json"))
     (ns.out / "labeled_episodes.jsonl").write_text(
         "\n".join(labeled_lines) + "\n", encoding="utf-8"
@@ -1190,10 +2113,14 @@ def main(argv: list[str] | None = None) -> int:
     (ns.out / "healthy_controls.jsonl").write_text(
         "\n".join(healthy_lines) + "\n", encoding="utf-8"
     )
+    manifest = _generator_manifest(len(labeled_lines), len(healthy_lines), ns.out)
+    (ns.out / "generation_manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     print(
         f"wrote {len(labeled_lines)} labeled episodes, "
-        f"{len(healthy_lines)} healthy controls, and the goal-drift "
-        f"baseline fixture to {ns.out}"
+        f"{len(healthy_lines)} healthy controls, the goal-drift baseline "
+        f"fixture, and generation_manifest.json to {ns.out}"
     )
     return 0
 
