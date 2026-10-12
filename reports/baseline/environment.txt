@@ -1,0 +1,35 @@
+=== OS / PLATFORM ===
+OS: Windows-11-10.0.26300-SP0
+machine: AMD64
+processor: AMD64 Family 25 Model 68 Stepping 1, AuthenticAMD
+python_implementation: CPython
+python_version: 3.13.1
+python_build: ('tags/v3.13.1:0671451', 'Dec  3 2024 19:06:28')
+
+=== INTERPRETER ===
+executable: C:\Users\ASUS\OneDrive\Desktop\abishek\snagline\SNAGLINE-clean\.venv\Scripts\python.exe
+sys.version: 3.13.1 (tags/v3.13.1:0671451, Dec  3 2024, 19:06:28) [MSC v.1942 64 bit (AMD64)]
+
+=== PACKAGE VERSIONS (relevant) ===
+anthropic          1.8.0
+langchain-core     1.6.3
+langchain-protocol 0.0.19
+mypy               2.3.1
+mypy_extensions    1.1.0
+pytest             9.1.1
+pytest-cov         7.1.0
+ruff               0.16.7
+snagline           0.1.1.dev0 C:\Users\ASUS\OneDrive\Desktop\abishek\snagline\SNAGLINE-clean
+
+=== OPTIONAL DRIFT/ML EXTRAS ===
+numpy: NOT INSTALLED (ModuleNotFoundError)
+sklearn: NOT INSTALLED (ModuleNotFoundError)
+sentence_transformers: NOT INSTALLED (ModuleNotFoundError)
+torch: NOT INSTALLED (ModuleNotFoundError)
+langchain_core: 1.6.3
+langgraph: NOT INSTALLED (ModuleNotFoundError)
+openai: NOT INSTALLED (ModuleNotFoundError)
+anthropic: 1.8.0
+
+=== CORE DEPS DECLARED ===
+pyproject dependencies = [] (core is zero-dependency by contract)

@@ -50,6 +50,40 @@ def _extract_tokens(result: Any) -> tuple[int | None, int | None]:
         return None, None
 
 
+def _stream_usage(chunk: Any) -> tuple[int | None, int | None]:
+    """Pull (input_tokens, output_tokens) contributions from one stream event.
+
+    Anthropic splits usage across the stream and never repeats it on the final
+    event (issue #530, ported from the auto-adapter in #602): ``message_start``
+    carries ``input_tokens`` (plus the initial ``output_tokens``) on
+    ``event.message.usage``, and ``message_delta`` carries the running
+    ``output_tokens`` on ``event.usage``. ``message_stop`` -- the last event,
+    i.e. what ``_last`` ends up holding -- and the ``Stream`` object carry no
+    usage at all, so probing only those always yielded ``None`` and every
+    streaming call reported zero tokens. We read usage metadata only, never
+    message content.
+    """
+    try:
+        message = getattr(chunk, "message", None)
+        usage = getattr(message, "usage", None) if message is not None else None
+        if usage is None:
+            usage = getattr(chunk, "usage", None)
+        if usage is None and isinstance(chunk, dict):
+            inner = chunk.get("message")
+            usage = (
+                inner.get("usage") if isinstance(inner, dict) else chunk.get("usage")
+            )
+        if usage is None:
+            return None, None
+        if isinstance(usage, dict):
+            return usage.get("input_tokens"), usage.get("output_tokens")
+        return getattr(usage, "input_tokens", None), getattr(
+            usage, "output_tokens", None
+        )
+    except Exception:
+        return None, None
+
+
 def observe_anthropic_call(
     monitor: Any,
     *,
@@ -122,6 +156,11 @@ class _SyncStreamWrapper:
         self._iter = iter(stream)  # type: ignore[call-overload]
         self._last: Any = None
         self._emitted = False
+        # Usage accumulated across the stream: Anthropic puts input_tokens on
+        # message_start and output_tokens on message_delta, and neither _last
+        # nor the Stream carries any (issue #602, ported from #530).
+        self._tokens_in: int | None = None
+        self._tokens_out: int | None = None
 
     def __iter__(self) -> Any:
         return self
@@ -132,6 +171,7 @@ class _SyncStreamWrapper:
         try:
             chunk = next(self._iter)
             self._last = chunk
+            self._track_usage(chunk)
             return chunk
         except StopIteration:
             self._emit(error=False, error_type=None)
@@ -170,10 +210,17 @@ class _SyncStreamWrapper:
         self._emitted = True
         latency = (time.perf_counter() - self._start) * 1000.0
         tokens_in, tokens_out = (None, None)
-        if not error and self._last is not None:
-            tokens_in, tokens_out = _extract_tokens(self._last)
+        if not error:
+            # Prefer usage accumulated across the stream (#530 / #602):
+            # Anthropic puts input_tokens on message_start and output_tokens on
+            # message_delta, and the last event (_last) / the Stream object
+            # carry none. Fall back to the last chunk / stream for shapes that
+            # do (e.g. a dict or an SDK that stamps usage on the terminal chunk).
+            tokens_in, tokens_out = self._tokens_in, self._tokens_out
             if tokens_in is None and tokens_out is None:
-                tokens_in, tokens_out = _extract_tokens(self._stream)
+                tokens_in, tokens_out = _extract_tokens(self._last)
+                if tokens_in is None and tokens_out is None:
+                    tokens_in, tokens_out = _extract_tokens(self._stream)
         sig = make_signature("tool_call", str(self._model), self._sig_text)
         event = StepEvent(
             step_id=str(next(self._counter)),
@@ -191,6 +238,13 @@ class _SyncStreamWrapper:
         )
         with contextlib.suppress(Exception):
             self._monitor.ingest(event)
+
+    def _track_usage(self, chunk: Any) -> None:
+        ti, to = _stream_usage(chunk)
+        if ti is not None:
+            self._tokens_in = ti
+        if to is not None:
+            self._tokens_out = to
 
     # No __del__: a stream dropped without reaching exhaustion, close(), or an
     # iteration error never completed, so it is deliberately not recorded.
@@ -226,6 +280,10 @@ class _AsyncStreamWrapper:
             self._aiter = aiter(stream)  # type: ignore[arg-type]
         self._last: Any = None
         self._emitted = False
+        # Usage accumulated across the stream, same rationale as the sync
+        # wrapper (issue #602).
+        self._tokens_in: int | None = None
+        self._tokens_out: int | None = None
 
     def __aiter__(self) -> Any:
         return self
@@ -236,6 +294,7 @@ class _AsyncStreamWrapper:
         try:
             chunk = await anext(self._aiter)  # type: ignore[arg-type]
             self._last = chunk
+            self._track_usage(chunk)
             return chunk
         except StopAsyncIteration:
             self._emit(error=False, error_type=None)
@@ -275,10 +334,17 @@ class _AsyncStreamWrapper:
         self._emitted = True
         latency = (time.perf_counter() - self._start) * 1000.0
         tokens_in, tokens_out = (None, None)
-        if not error and self._last is not None:
-            tokens_in, tokens_out = _extract_tokens(self._last)
+        if not error:
+            # Prefer usage accumulated across the stream (#530 / #602):
+            # Anthropic puts input_tokens on message_start and output_tokens on
+            # message_delta, and the last event (_last) / the Stream object
+            # carry none. Fall back to the last chunk / stream for shapes that
+            # do (e.g. a dict or an SDK that stamps usage on the terminal chunk).
+            tokens_in, tokens_out = self._tokens_in, self._tokens_out
             if tokens_in is None and tokens_out is None:
-                tokens_in, tokens_out = _extract_tokens(self._stream)
+                tokens_in, tokens_out = _extract_tokens(self._last)
+                if tokens_in is None and tokens_out is None:
+                    tokens_in, tokens_out = _extract_tokens(self._stream)
         sig = make_signature("tool_call", str(self._model), self._sig_text)
         event = StepEvent(
             step_id=str(next(self._counter)),
@@ -296,6 +362,13 @@ class _AsyncStreamWrapper:
         )
         with contextlib.suppress(Exception):
             self._monitor.ingest(event)
+
+    def _track_usage(self, chunk: Any) -> None:
+        ti, to = _stream_usage(chunk)
+        if ti is not None:
+            self._tokens_in = ti
+        if to is not None:
+            self._tokens_out = to
 
 
 def _emit_now(
@@ -333,8 +406,26 @@ def _emit_now(
         monitor.ingest(event)
 
 
+def _is_async_call(original: Any) -> bool:
+    """True if calling ``original`` returns a coroutine that must be awaited.
+
+    ``inspect.iscoroutinefunction`` alone misses async methods that carry a
+    decorator: the Anthropic SDK wraps ``create`` with ``@required_args``, whose
+    wrapper is a plain sync function that returns the wrapped coroutine. The
+    explicit adapter then took the sync branch, never awaited the call, and
+    recorded the coroutine-creation latency as a 0 ms success -- with
+    ``error=False`` even when the real request failed, because the failure is
+    raised by the await, which never ran (issue #588). ``inspect.unwrap`` sees
+    through the ``__wrapped__`` chain; on plain (including undecorated async)
+    functions it is the identity.
+    """
+    return inspect.iscoroutinefunction(original) or inspect.iscoroutinefunction(
+        inspect.unwrap(original)
+    )
+
+
 def _wrap_one(monitor: Any, original: Any, episode_id: str, counter: Any) -> Any:
-    is_async = inspect.iscoroutinefunction(original)
+    is_async = _is_async_call(original)
 
     def _sync(*args: Any, **kwargs: Any) -> Any:
         model = kwargs.get("model", "unknown")
