@@ -19,6 +19,7 @@ import dataclasses
 import json
 import math
 import os
+import ssl
 import sys
 import time
 import urllib.request
@@ -28,6 +29,7 @@ from pathlib import Path
 from typing import IO
 
 from snagline import __version__
+from snagline._input import _BadInputFile, open_input
 from snagline.baseline import ToolBaseline
 from snagline.config import Config
 from snagline.events import StepEvent
@@ -65,26 +67,14 @@ class _CountingSink:
         self.risks.append(risk)
 
 
-class _BadInputFile(OSError):
-    """A user-named input file could not be opened (issue #428).
-
-    Subclasses ``OSError`` so library callers that already catch ``OSError``
-    from ``replay()`` keep working; the CLI catches this subclass to turn the
-    failure into a one-line diagnostic instead of a traceback.
-    """
-
-
 def _open_input(path: str) -> IO[str]:
-    """Open a named input file, or fail naming it (issue #428).
+    """Open a named input file, or fail naming it (issues #428, #595).
 
-    ``open()``'s own message already names the path, but the CLI wants the
-    command in the diagnostic too, and a raw ``FileNotFoundError`` surfacing
-    out of ``main()`` reads as a crash of the tool itself.
+    Thin re-export over :func:`snagline._input.open_input` so the CLI's existing
+    call sites read as one local helper; see that module for why a decode
+    failure needs its own guard.
     """
-    try:
-        return open(path, encoding="utf-8")
-    except OSError as exc:
-        raise _BadInputFile(f"cannot open {path}: {exc}") from exc
+    return open_input(path)
 
 
 def replay(path: str, monitor: Monitor | None = None) -> int:
@@ -142,7 +132,8 @@ def _build_config(args: argparse.Namespace) -> Config:
 
 
 def _resolve_config_or_usage(args: argparse.Namespace, prog: str) -> Config | None:
-    """Resolve the config, converting a validation error into exit 2 (issue #353).
+    """Resolve the config, converting a bad config into exit 2 (issues #353,
+    #596).
 
     Every ranged or closed-set knob is range-checked in ``Config`` itself, so
     a bad ``SNAGLINE_*`` value, config-file field, or flag surfaces here as a
@@ -151,10 +142,15 @@ def _resolve_config_or_usage(args: argparse.Namespace, prog: str) -> Config | No
     how the parser rejects an unknown flag; letting it escape printed a
     traceback and claimed a server was starting first. Returns ``None`` and
     prints the message when the config is unusable.
+
+    A missing or unreadable ``--config`` path is an ``OSError`` from
+    ``Config.load_file``, not a ``ValueError``, so it needs the same catch or
+    it tracebacks on every subcommand while the file itself is never named in a
+    diagnostic the operator can act on (issue #596).
     """
     try:
         return _build_config(args)
-    except ValueError as exc:
+    except (ValueError, OSError) as exc:
         print(f"snagline {prog}: {exc}", file=sys.stderr)
         return None
 
@@ -1013,6 +1009,24 @@ def _list_stored_versions(store, tenant: str, deployment: str) -> int:
     return 0
 
 
+def _save_profile(profile: object, path: str) -> bool:
+    """Persist a fitted profile, or report an unwritable path and fail.
+
+    ``save_baseline`` opens ``path`` for writing, so a ``--output`` whose parent
+    directory does not exist raises ``FileNotFoundError`` *after* a fit that may
+    have taken minutes, and the operator saw the traceback instead of the
+    "wrote ..." line that would have told them where it went (issue #598). The
+    fit is not redone on a retry either way, so the diagnostic names the path
+    and the profile is not silently dropped. Returns False on a write failure.
+    """
+    try:
+        save_baseline(profile, path)
+    except OSError as exc:
+        print(f"snagline baseline: cannot write {path}: {exc}", file=sys.stderr)
+        return False
+    return True
+
+
 def _cmd_baseline(args: argparse.Namespace) -> int:
     """Fit a healthy-run baseline from a trajectory and persist it.
 
@@ -1036,7 +1050,15 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
             return 2
         from snagline.baseline_store import BaselineStore
 
-        store = BaselineStore(args.store_dir, max_versions=args.max_versions or 10)
+        # Same validation the fit/retrain path applies: this is a read, but the
+        # knob reaches the same store constructor, and ``or 10`` here let an
+        # explicit 0 silently mean 10 and a negative pass straight through
+        # (issue #332), which then tracebacks out of a read-only command
+        # instead of exiting 2 the way the fit path already does (#597).
+        limit = _resolved_max_versions(args)
+        if limit is None:
+            return 2
+        store = BaselineStore(args.store_dir, max_versions=limit)
         return _list_stored_versions(store, args.tenant, args.deployment)
 
     if getattr(args, "trajectory", None) == "retrain":
@@ -1103,7 +1125,7 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
                 return vec.tolist() if hasattr(vec, "tolist") else list(vec)
 
             def _iter_events():  # type: ignore[no-untyped-def]
-                with open(args.trajectory, encoding="utf-8") as fh:
+                with _open_input(args.trajectory) as fh:
                     for line in fh:
                         line = line.strip()
                         if not line:
@@ -1185,7 +1207,7 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
             return vec.tolist() if hasattr(vec, "tolist") else list(vec)
 
         def _iter_events():  # type: ignore[no-untyped-def]
-            with open(args.trajectory, encoding="utf-8") as fh:
+            with _open_input(args.trajectory) as fh:
                 for line in fh:
                     line = line.strip()
                     if not line:
@@ -1205,7 +1227,8 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
         except Exception as exc:
             print(f"snagline baseline: semantic fit failed: {exc}", file=sys.stderr)
             return 1
-        save_baseline(profile, args.output)
+        if not _save_profile(profile, args.output):
+            return 2
         tools = profile.tools
         print(
             f"snagline baseline: fitted {len(tools)} tool(s) from {profile.total_steps} step(s) "
@@ -1224,7 +1247,8 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    save_baseline(profile, args.output)
+    if not _save_profile(profile, args.output):
+        return 2
 
     tools = profile.tools
     print(
@@ -1306,6 +1330,24 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         except OSError as exc:
             print(
                 f"snagline serve: cannot read {flag} {candidate}: {exc}",
+                file=sys.stderr,
+            )
+            return 2
+    if args.certfile:
+        # Readable is not usable: a PEM that opens fine but does not parse is
+        # rejected only when the listener wraps its socket, which is *after*
+        # the banner below has advertised https:// to a supervisor. Load the
+        # chain into a throwaway context the same way _resolve_tls does so the
+        # failure is reported here, as the contract the readability check above
+        # already claims (issue #599).
+        try:
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.load_cert_chain(args.certfile, args.keyfile)
+            if args.client_ca:
+                context.load_verify_locations(args.client_ca)
+        except (ssl.SSLError, OSError) as exc:
+            print(
+                f"snagline serve: cannot load TLS material: {exc}",
                 file=sys.stderr,
             )
             return 2

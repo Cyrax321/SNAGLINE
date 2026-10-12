@@ -1146,6 +1146,7 @@ def make_handler(
             """
             limit = self.snagline_max_body
             parts: list[bytes] = []
+            total = 0  # bytes accepted so far; the cap is on bytes, not frames
             while True:
                 line = self.rfile.readline(_MAX_FRAME_LINE_BYTES)
                 if not line:
@@ -1161,7 +1162,7 @@ def make_handler(
                 if size < 0:
                     self._respond(400, {"error": "invalid chunk size"})
                     return None
-                if len(parts) + size > limit:
+                if total + size > limit:
                     self._drain_chunked_rest()
                     self._respond(413, {"error": "payload too large"})
                     return None
@@ -1169,6 +1170,7 @@ def make_handler(
                 if not chunk:
                     return b"".join(parts)
                 parts.append(chunk)
+                total += len(chunk)
                 self.rfile.read(2)  # trailing CRLF after each chunk
 
         def _drain_chunked_trailer(self) -> None:

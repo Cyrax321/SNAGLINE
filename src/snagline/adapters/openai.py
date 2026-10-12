@@ -365,8 +365,26 @@ def _emit_now(
         monitor.ingest(event)
 
 
+def _is_async_call(original: Any) -> bool:
+    """True if calling ``original`` returns a coroutine that must be awaited.
+
+    ``inspect.iscoroutinefunction`` alone misses async methods that carry a
+    decorator: the OpenAI SDK wraps ``create`` with ``@required_args``, whose
+    wrapper is a plain sync function that returns the wrapped coroutine. The
+    explicit adapter then took the sync branch, never awaited the call, and
+    recorded the coroutine-creation latency as a 0 ms success -- with
+    ``error=False`` even when the real request failed, because the failure is
+    raised by the await, which never ran (issue #588). ``inspect.unwrap`` sees
+    through the ``__wrapped__`` chain; on plain (including undecorated async)
+    functions it is the identity.
+    """
+    return inspect.iscoroutinefunction(original) or inspect.iscoroutinefunction(
+        inspect.unwrap(original)
+    )
+
+
 def _wrap_one(monitor: Any, original: Any, episode_id: str, counter: Any) -> Any:
-    is_async = inspect.iscoroutinefunction(original)
+    is_async = _is_async_call(original)
 
     def _sync(*args: Any, **kwargs: Any) -> Any:
         model = kwargs.get("model", "unknown")
