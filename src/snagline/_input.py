@@ -17,7 +17,9 @@ share it without importing each other. Three concerns live here:
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from typing import IO
+from typing import IO, TypeVar
+
+_T = TypeVar("_T")
 
 
 class _BadInputFile(OSError):
@@ -30,15 +32,19 @@ class _BadInputFile(OSError):
     """
 
 
-def open_input(path: str) -> IO[str]:
+def open_input(path: str) -> _DecodeGuardedFile:
     """Open a named input file, or fail naming it (issue #428).
 
     ``open()``'s own message already names the path, but the CLI wants the
     command in the diagnostic too, and a raw ``FileNotFoundError`` surfacing
-    out of ``main()`` reads as a crash of the tool itself.
+    out of ``main()`` reads as a crash of the tool itself. The result is the
+    guard wrapper rather than the raw ``IO[str]`` so every read shape the CLI
+    uses reports a decode failure the same way a missing file already does.
     """
     try:
-        fh = open(path, encoding="utf-8")
+        fh = open(path, encoding="utf-8")  # noqa: SIM115 - the handle is
+        # returned wrapped in _DecodeGuardedFile, so a with-block here would
+        # close it before the caller could read it.
     except OSError as exc:
         raise _BadInputFile(f"cannot open {path}: {exc}") from exc
     return _DecodeGuardedFile(fh, path)
@@ -62,7 +68,7 @@ class _DecodeGuardedFile:
     def __exit__(self, *exc: object) -> None:
         self.close()
 
-    def _guard(self, op: Callable[[], str]) -> str:
+    def _guard(self, op: Callable[[], _T]) -> _T:
         try:
             return op()
         except UnicodeDecodeError as exc:

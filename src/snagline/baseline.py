@@ -17,7 +17,7 @@ import json
 import math
 import time
 from dataclasses import dataclass, field
-from typing import IO
+from typing import IO, Any
 
 from snagline._input import open_input as _open_input
 from snagline.events import StepEvent
