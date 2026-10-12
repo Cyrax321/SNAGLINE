@@ -945,6 +945,58 @@ def episode_records(
     return records
 
 
+def _seed_scope(fixtures_dir: Path | None) -> dict[str, object]:
+    """Describe which fixture lines actually carry a persisted ``seed``.
+
+    Counted from the fixtures the harness was pointed at rather than assumed, so
+    a report built from an alternate or older corpus describes its own seed
+    provenance instead of the shipped corpus's. Absent ``seed`` fields mean the
+    scheme applies but the value was not persisted on that line.
+    """
+    scheme = (
+        'random.Random(f"{episode_id}/seed") per episode in '
+        "benchmarks/fixtures/generate_fixtures.py"
+    )
+    if fixtures_dir is None:
+        return {
+            "persisted_in_fixtures": None,
+            "scope": "unknown: the report was built without a fixtures directory",
+            "scheme": scheme,
+        }
+    seeded: list[str] = []
+    unseeded: list[str] = []
+    for path in sorted(fixtures_dir.glob("*.jsonl")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            ep_id = record.get("episode_id")
+            if not isinstance(ep_id, str):
+                continue
+            if "seed" in record:
+                seeded.append(ep_id)
+            else:
+                unseeded.append(ep_id)
+    if not seeded and not unseeded:
+        return {
+            "persisted_in_fixtures": None,
+            "scope": f"no episodes parsed from {fixtures_dir}",
+            "scheme": scheme,
+        }
+    return {
+        "persisted_in_fixtures": bool(seeded),
+        "scope": (
+            f"{len(seeded)} of {len(seeded) + len(unseeded)} records carry a seed"
+            + (
+                f"; omitted on {len(unseeded)} (e.g. {sorted(unseeded)[:3]})"
+                if unseeded
+                else ""
+            )
+        ),
+        "scheme": scheme,
+    }
+
+
 def report_to_json(
     report: ScoreReport,
     outcomes: Sequence[EpisodeOutcome] | None = None,
@@ -972,18 +1024,10 @@ def report_to_json(
             # field, as do the stage-3 hard healthy controls (healthy-41..59).
             # The 41 legacy controls deliberately omit it so pre-existing lines
             # stay byte-identical. The scheme is recorded alongside so a replay
-            # is possible even from a line that does not carry its seed.
-            "seeds": {
-                "persisted_in_fixtures": True,
-                "scope": (
-                    "all 170 labeled records and healthy-41..59; omitted on the "
-                    "41 legacy controls to keep their bytes unchanged"
-                ),
-                "scheme": (
-                    'random.Random(f"{episode_id}/seed") per episode in '
-                    "benchmarks/fixtures/generate_fixtures.py"
-                ),
-            },
+            # is possible even from a line that does not carry its seed. The
+            # counts are read from the fixtures themselves, not assumed, so a
+            # report built from another corpus describes its own seeds.
+            "seeds": _seed_scope(fixtures_dir),
             "fixture_directory": str(fixtures_dir) if fixtures_dir else None,
         },
         "per_trigger": {

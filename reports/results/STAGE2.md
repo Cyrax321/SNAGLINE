@@ -4,14 +4,24 @@ Stage 2 extends **only the evaluation infrastructure**. No detector algorithm,
 threshold, or production monitoring path was changed; the entire detector stack
 was left untouched and the Stage 1 numbers are reproduced byte-for-byte.
 
-Reproduce with:
+Reproduce with the **Stage 2 fixture revision** — this report measures the
+109-episode corpus (68 labeled, 41 healthy controls), which the Stage 3 corpus
+expansion later replaced with the committed 230-episode set. Running the
+commands against `benchmarks/fixtures` as it stands today regenerates the
+current corpus, not these tables. Check out the revision first:
 
 ```bash
+git checkout 10178e0 -- benchmarks/fixtures
 python benchmarks/detection_accuracy.py --fixtures benchmarks/fixtures --format table
 python benchmarks/detection_accuracy.py --fixtures benchmarks/fixtures --format json
 python benchmarks/detection_accuracy.py --fixtures benchmarks/fixtures --format csv
 python benchmarks/detection_accuracy.py --fixtures benchmarks/fixtures --report-dir reports/results
+git checkout HEAD -- benchmarks/fixtures   # restore the committed corpus
 ```
+
+The commands above are also the current-corpus entry point: drop the
+`git checkout` lines to reproduce the Stage 4 numbers from
+`reports/EVAL_FINDINGS.md` against the 230-episode set.
 
 ---
 

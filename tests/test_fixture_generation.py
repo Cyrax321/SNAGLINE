@@ -280,21 +280,16 @@ def test_each_fixture_reproduces_from_its_persisted_seed() -> None:
     for rec in labeled:
         name = rec["label"]["trigger"]
         ep = rec["episode_id"]
-        variant = gen._goal_drift_variant(ep) if name == "goal_drift" else None
-        legacy = int(ep.rsplit("-", 1)[1]) < gen.LEGACY_VARIANT_COUNT
-        if name in ("goal_drift", "ml_ensemble"):
-            # These triggers dispatch on the variant number internally.
-            continue
-        if legacy:
+        variant = int(ep.rsplit("-", 1)[1])
+        if variant < gen.LEGACY_VARIANT_COUNT:
             events, _ = gen.LABELED_BUILDERS[name](ep, random.Random(rec["seed"]))
         else:
             events, _ = gen.LABELED_VARIATION_BUILDERS[name](
-                ep, random.Random(rec["seed"]), int(ep.rsplit("-", 1)[1])
+                ep, random.Random(rec["seed"]), variant
             )
         assert events == rec["events"], ep
         seen += 1
     assert seen > 0
-    assert variant is None  # keeps the linter honest about the branch above
 
 
 # --------------------------------------------------------------------------

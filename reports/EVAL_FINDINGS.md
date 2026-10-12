@@ -250,10 +250,11 @@ Aggregate: **macro-precision 0.937, macro-recall 1.000, macro-F1 0.959**,
 healthy false-positive rate **0.000** (0 of 60). Totals: TP 170, FP 20, FN 0, TN 3720.
 
 The `loop` row is post-fix (Stage 4, section 13): FP 23 → 9, precision
-0.303 → 0.526, F1 0.465 → 0.690. The 14 remaining cross-firings are
-cross-detector — `stagnation → loop` 9, `stall → meltdown_low` 10 — which
-intra-family arbitration cannot reach. `meltdown_low` is therefore unchanged
-at 0.500 and is now the worst row in the table.
+0.303 → 0.526, F1 0.465 → 0.690. The 20 remaining cross-firings are all
+cross-detector — `stagnation → loop` 9, `stall → meltdown_low` 10,
+`stagnation → cycle` 1 — which intra-family arbitration cannot reach.
+`meltdown_low` is therefore unchanged at 0.500 and is now the worst row in the
+table.
 
 Recall is perfect, and that is the least informative number in the table: zero false
 negatives means the corpus contains no episode a detector missed, not that none exists.
@@ -306,9 +307,10 @@ elapsed** — a direct consequence of `stagnation_window_size = 50` plus
 steps. Neither is a bug; both are the cost of the window the statistic needs, and both
 are worth stating as latency, not as quality.
 
-`goal_drift` (0–9) and `stagnation` (54–62) are the only triggers whose latency varies at
-all; the other 15 are single-valued. For `goal_drift` the spread is the onset placement
-noted in section 3.
+`goal_drift` (0–9), `stagnation` (54–62), `wall_clock_budget` (48–80),
+`cycle` (5–11), `side_effect_duplicate` (2–5) and `ml_ensemble` (0–2) are the
+triggers whose latency varies; the other 11 are single-valued. For
+`goal_drift` the spread is the onset placement noted in section 3.
 
 ---
 
@@ -894,6 +896,9 @@ were intra-detector and are now attributed to the trigger that names the shape;
 - **`stall → meltdown_low` (10).** `meltdown_low`'s 20-step entropy window fills six
   steps before `stall`'s 25-step streak, so a different detector reports the condition
   first. Same reason.
+- **`stagnation → cycle` (1).** `stagnation-09` also satisfies `cycle`'s periodicity test
+  alongside `stagnation`; it is the remaining cross-detector firing on `cycle`, and the
+  same cross-detector policy would have to decide it.
 - **Real-time alert ordering.** An operator still receives `loop` at step 4 and `stall`
   at step 26. Supersession corrects the episode's recorded identity; it cannot reorder
   alerts already delivered. Fixing the ordering would mean *delaying* the coarse alert

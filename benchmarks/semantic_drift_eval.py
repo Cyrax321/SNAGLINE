@@ -158,13 +158,24 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb)
 
 
+class ModelUnavailable(RuntimeError):
+    """The embedding model could not be imported or constructed.
+
+    Distinct from an evaluation failure so the entry point can keep exit code 3
+    for "could not evaluate" and let a genuine evaluation error return 1.
+    """
+
+
 def _load_embedder(model_name: str):
     """Import and build the real embedder, or raise with the exact blocker."""
     from sentence_transformers import (
         SentenceTransformer,  # noqa: PLC0415  (opt-in extra)
     )
 
-    model = SentenceTransformer(model_name)
+    try:
+        model = SentenceTransformer(model_name)
+    except Exception as exc:
+        raise ModelUnavailable(f"{type(exc).__name__}: {exc}") from exc
 
     def embed(event: StepEvent) -> list[float]:
         parts = [event.action_type, event.tool_name or "", event.error_type or ""]
@@ -262,6 +273,11 @@ def run_evaluation(
         goal_drift_enabled=True,
         # The path under test.
         semantic_drift_enabled=True,
+        # The monitor loads its own embedder from this name; without it a
+        # --model run would fit the baseline with the requested model while
+        # the detector silently used the default, so dimensions either
+        # disabled the detector or compared unrelated vectors.
+        semantic_drift_model=model_name,
         goal_drift_baseline=base_profile,
     )
 
@@ -485,12 +501,11 @@ def main(argv: list[str] | None = None) -> int:
             f"it. The main detection-accuracy corpus does not depend on it."
         )
         return 3
-    except Exception as exc:  # model download/load failure
+    except ModelUnavailable as exc:  # model download/load failure
         print(
             f"semantic goal-drift evaluation SKIPPED: the embedding model "
-            f"{model_name!r} could not be loaded ({type(exc).__name__}: {exc}). "
-            f"Semantic evaluation requires network access on first run to "
-            f"download the model."
+            f"{model_name!r} could not be loaded ({exc}). Semantic evaluation "
+            f"requires network access on first run to download the model."
         )
         return 3
 
