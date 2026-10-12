@@ -194,13 +194,33 @@ def test_587_valid_halt_url_is_accepted(url: str) -> None:
 def test_587_halt_url_unchecked_when_policy_is_not_halt_webhook() -> None:
     # The other policies never read halt_url, so its value is not a config
     # error; validating it anyway would reject every default configuration.
-    cfg = Config(policy="log_only", halt_url="ftp://unused.example")
+    # "observe" is a real non-halt_webhook policy -- the valid set is observe /
+    # callback / halt_webhook, so an invented name would fail policy validation
+    # for a reason that has nothing to do with halt_url.
+    cfg = Config(policy="observe", halt_url="ftp://unused.example")
     assert cfg.halt_url == "ftp://unused.example"
 
 
 # --------------------------------------------------------------------------
 # #588 -- async wrappers see through functools.wraps
 # --------------------------------------------------------------------------
+
+
+class _RecordingDetector:
+    """Captures ingested events so an adapter test asserts what the wrapper
+    recorded rather than what a detector later fired on."""
+
+    name = "rec"
+
+    def __init__(self) -> None:
+        self.events: list[Any] = []
+
+    def observe(self, event: Any) -> None:
+        self.events.append(event)
+        return None
+
+    def reset(self, episode_id: str) -> None:
+        pass
 
 
 def _required_args(async_fn: Any) -> Any:
@@ -254,11 +274,8 @@ def test_588_anthropic_async_call_is_awaited_and_records_failure() -> None:
     success recorded at coroutine-creation time."""
     from snagline.adapters import anthropic as mod
 
-    risks: list[Any] = []
-    monitor = Monitor.default(Config())
-    monitor.add_sink(type("S", (), {
-        "emit": lambda self, risk: risks.append(risk),
-    })())
+    rec = _RecordingDetector()
+    monitor = Monitor([rec], [])
 
     class _Fail:
         async def _create(self, **kw: Any) -> Any:
@@ -274,9 +291,17 @@ def test_588_anthropic_async_call_is_awaited_and_records_failure() -> None:
     with pytest.raises(RuntimeError, match="upstream 500"):
         asyncio.run(wrapped.messages.create(model="m", messages=[]))
 
-    assert risks, "the call was never recorded"
-    assert risks[0].error is True
-    assert risks[0].error_type == "RuntimeError"
+    # The ingested StepEvent carries the failure. A risk is not the right
+    # assertion here: one errored call arms no detector on its own, and a
+    # FailureRisk's ``trigger`` is always a detector name, never the adapter.
+    assert rec.events, "the call was never recorded"
+    ev = rec.events[0]
+    assert ev.error is True
+    assert ev.error_type == "RuntimeError"
+    # The bug classified the wrapper as sync, so it recorded the coroutine
+    # *object* as a successful 0 ms result at creation time. A wrapper that
+    # awaits measures a real, non-negative duration even when the await raises.
+    assert ev.latency_ms is not None and ev.latency_ms >= 0.0
 
 
 # --------------------------------------------------------------------------
@@ -284,14 +309,27 @@ def test_588_anthropic_async_call_is_awaited_and_records_failure() -> None:
 # --------------------------------------------------------------------------
 
 
+class _SpyMonitor:
+    """Records ingested events (the shape test_auto_langchain already uses).
+
+    A single healthy call produces no ``FailureRisk`` -- and a risk's
+    ``trigger`` is always a *detector* name, never the wrapped tool -- so the
+    per-client counting contract is asserted on the events themselves: one
+    ingested StepEvent per user-facing call, carrying the entrypoint it came
+    through.
+    """
+
+    def __init__(self) -> None:
+        self.events: list[Any] = []
+
+    def ingest(self, event: Any) -> None:
+        self.events.append(event)
+
+
 def test_589_per_client_invoke_emits_one_event() -> None:
     from snagline.auto import langchain as lc
 
-    risks: list[Any] = []
-    monitor = Monitor.default(Config())
-    monitor.add_sink(type("S", (), {
-        "emit": lambda self, risk: risks.append(risk),
-    })())
+    monitor = _SpyMonitor()
 
     class _ChatModel:
         """Mirrors BaseChatModel: invoke delegates to generate."""
@@ -304,9 +342,10 @@ def test_589_per_client_invoke_emits_one_event() -> None:
 
     client = lc.wrap_client(monitor, _ChatModel())
     assert client.invoke("hello") == "result"
-    triggers = [r.trigger for r in risks]
-    assert triggers.count("langchain.invoke") == 1, triggers
-    assert "langchain.generate" not in triggers, triggers
+    tools = [e.tool_name for e in monitor.events]
+    # invoke -> generate on one instance: the outer entrypoint emits, the
+    # nested generation it delegated to must not add a second event.
+    assert tools == ["langchain.invoke"], tools
 
 
 def test_589_per_client_direct_generate_still_recorded() -> None:
@@ -314,11 +353,7 @@ def test_589_per_client_direct_generate_still_recorded() -> None:
     directly; only the *nested* delegation is suppressed."""
     from snagline.auto import langchain as lc
 
-    risks: list[Any] = []
-    monitor = Monitor.default(Config())
-    monitor.add_sink(type("S", (), {
-        "emit": lambda self, risk: risks.append(risk),
-    })())
+    monitor = _SpyMonitor()
 
     class _ChatModel:
         def generate(self, *a: Any, **kw: Any) -> Any:
@@ -326,7 +361,7 @@ def test_589_per_client_direct_generate_still_recorded() -> None:
 
     client = lc.wrap_client(monitor, _ChatModel())
     assert client.generate("hello") == "batch"
-    assert [r.trigger for r in risks] == ["langchain.generate"]
+    assert [e.tool_name for e in monitor.events] == ["langchain.generate"]
 
 
 def test_589_per_client_async_invoke_emits_one_event() -> None:
@@ -334,11 +369,7 @@ def test_589_per_client_async_invoke_emits_one_event() -> None:
 
     from snagline.auto import langchain as lc
 
-    risks: list[Any] = []
-    monitor = Monitor.default(Config())
-    monitor.add_sink(type("S", (), {
-        "emit": lambda self, risk: risks.append(risk),
-    })())
+    monitor = _SpyMonitor()
 
     class _ChatModel:
         async def ainvoke(self, *a: Any, **kw: Any) -> Any:
@@ -349,9 +380,8 @@ def test_589_per_client_async_invoke_emits_one_event() -> None:
 
     client = lc.wrap_client(monitor, _ChatModel())
     assert asyncio.run(client.ainvoke("hello")) == "result"
-    triggers = [r.trigger for r in risks]
-    assert triggers.count("langchain.ainvoke") == 1, triggers
-    assert "langchain.agenerate" not in triggers, triggers
+    tools = [e.tool_name for e in monitor.events]
+    assert tools == ["langchain.ainvoke"], tools
 
 
 # --------------------------------------------------------------------------
@@ -388,7 +418,7 @@ def test_590_env_unset_and_file_null_agree() -> None:
     """The two paths to "disabled" must produce the same configuration."""
     with tempfile.TemporaryDirectory() as d:
         path = _write_text(d, "snagline.json", json.dumps({}))
-        from_env = Config.resolve(env={})
+        from_env = Config.resolve(environ={})
         assert from_env.episode_token_budget is Config.resolve(
             path=path
         ).episode_token_budget
@@ -410,7 +440,7 @@ def test_591_bad_entropy_thresholds_rejected_in_config(low: float, high: float) 
 
 def test_591_negative_entropy_rejected_via_env() -> None:
     with pytest.raises(ValueError, match="meltdown_low_entropy"):
-        Config.resolve(env={"SNAGLINE_MELTDOWN_LOW_ENTROPY": "-5.0"})
+        Config.resolve(environ={"SNAGLINE_MELTDOWN_LOW_ENTROPY": "-5.0"})
 
 
 def test_591_zero_entropy_thresholds_accepted() -> None:
@@ -697,7 +727,7 @@ def test_594_periods_within_the_band_are_detected() -> None:
             loop_cycle_max_period=6,
             loop_repeat_threshold=12,
         )
-        det = LoopDetector(cfg)
+        det = LoopDetector(config=cfg)
         fired = None
         for i in range(30):
             risk = det.observe(
@@ -716,6 +746,9 @@ def test_594_periods_within_the_band_are_detected() -> None:
 
 
 def _latin1_trajectory(dirpath: str) -> str:
+    # ensure_ascii=False so the non-ASCII byte really lands in the file --
+    # json.dumps() escapes "café" to the pure-ASCII "é" by default, and a
+    # cp1252 encoding of ASCII is still ASCII, so nothing would fail to decode.
     line = json.dumps(
         {
             "step_id": "0",
@@ -726,7 +759,8 @@ def _latin1_trajectory(dirpath: str) -> str:
             "tool_name": "t",
             "latency_ms": 1.0,
             "error": False,
-        }
+        },
+        ensure_ascii=False,
     )
     path = os.path.join(dirpath, "latin1.jsonl")
     with open(path, "wb") as fh:
@@ -915,7 +949,10 @@ def _fit_args(output: str, tmp: str) -> argparse.Namespace:
         trajectory=traj,
         output=output,
         list_versions=False,
-        store_dir=os.path.join(tmp, "store"),
+        # --output is the single-file path, only taken when --store-dir is
+        # unset; with a store_dir set the command takes the versioned-store
+        # branch and never touches args.output.
+        store_dir=None,
         max_versions=None,
         tenant="default",
         deployment="default",
@@ -960,6 +997,28 @@ def _serve_args(certfile: str, keyfile: str, port: int) -> argparse.Namespace:
         client_ca=None,
         auth_token=None,
         max_body_bytes=1_000_000,
+        # _cmd_serve reads the enforcement wiring flags unconditionally, so a
+        # namespace built by hand has to carry them or the AttributeError
+        # fires before the TLS check the test is exercising.
+        halt_forward=None,
+        halt_timeout=None,
+        min_severity_for_halt=None,
+        quiet=True,
+        log_format="text",
+        # _build_sinks reads these for every serve invocation; sink=None falls
+        # through to the console sink, which still needs min_severity.
+        sink=None,
+        min_severity=None,
+        cooldown_seconds=None,
+        webhook_url=None,
+        slack_url=None,
+        pagerduty_key=None,
+        pagerduty_source=None,
+        # serve() forwards these to make_server; with port=0 the bind picks a
+        # free port and the test catches the resulting OSError/SystemExit.
+        max_risks=1000,
+        read_timeout=None,
+        episode_ttl_seconds=None,
     )
 
 
@@ -982,7 +1041,9 @@ def test_599_invalid_pem_rejected_before_banner(
         assert "listening on" not in captured.out
 
 
-def test_599_valid_pem_is_accepted() -> None:
+def test_599_valid_pem_is_accepted(
+    capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from snagline.cli import _cmd_serve
 
     pytest.importorskip("cryptography")
@@ -1019,16 +1080,27 @@ def test_599_valid_pem_is_accepted() -> None:
                 )
             )
         args = _serve_args(cert_path, key_path, 0)
-        # A valid chain must pass the pre-banner check. Binding to port 0 and
-        # serving would block, so catch the bind/serve step itself: the TLS
-        # validation happens before it and must not raise.
-        try:
-            result = _cmd_serve(args)
-        except (OSError, SystemExit) as exc:  # noqa: BLE001
-            # Reaching the server loop means the PEM was accepted.
-            assert "TLS" not in str(exc)
-        else:
-            assert result in (0, 2)
+        # A valid chain must pass the pre-banner check. Actually serving would
+        # block forever in serve_forever, so prove the TLS material was
+        # accepted by replacing serve() with a sentinel: _cmd_serve only
+        # reaches it once every pre-banner validation -- including the cert
+        # chain load -- has passed.
+        import snagline.server.http_server as http_server
+
+        reached: dict[str, object] = {}
+
+        def _fake_serve(_monitor: Any, **kwargs: Any) -> int:
+            reached["tls_kwargs"] = kwargs.get("certfile")
+            return 0
+
+        monkeypatch.setattr(http_server, "serve", _fake_serve)
+        result = _cmd_serve(args)
+        assert result == 0
+        # The sentinel saw the real certfile, so _cmd_serve loaded and accepted
+        # the chain and then carried on to serve instead of exiting 2 on TLS.
+        assert reached["tls_kwargs"] == cert_path
+        captured = capsys.readouterr()
+        assert "cannot load TLS" not in captured.err
 
 
 # --------------------------------------------------------------------------
@@ -1075,13 +1147,13 @@ def test_602_stream_usage_reads_dict_shaped_events() -> None:
 
 
 def test_602_sync_wrapper_accumulates_usage_across_the_stream() -> None:
+    import itertools
+    import time
+
     from snagline.adapters import anthropic as mod
 
-    risks: list[Any] = []
-    monitor = Monitor.default(Config())
-    monitor.add_sink(type("S", (), {
-        "emit": lambda self, risk: risks.append(risk),
-    })())
+    rec = _RecordingDetector()
+    monitor = Monitor([rec], [])
 
     class _Usage:
         def __init__(self, i: int | None, o: int | None) -> None:
@@ -1102,16 +1174,27 @@ def test_602_sync_wrapper_accumulates_usage_across_the_stream() -> None:
         def __iter__(self):
             return iter([_Start(), _Delta(), _Stop()])
 
-    wrapper = mod._SyncStreamWrapper.__new__(mod._SyncStreamWrapper)
-    wrapper._stream = _Stream()
-    wrapper._iter = iter(wrapper._stream)
-    wrapper._last = _Stop()
-    wrapper._emitted = False
-    wrapper._tokens_in = None
-    wrapper._tokens_out = None
-    for chunk in wrapper:
-        wrapper._track_usage(chunk)
+    # Build through the real constructor: __getattr__ proxies any attribute
+    # the wrapper does not have onto the underlying stream, so a hand-built
+    # instance that omits one silently looks the lookup up on _Stream instead.
+    wrapper = mod._SyncStreamWrapper(
+        monitor=monitor,
+        counter=itertools.count(),
+        episode_id="ep-602",
+        model="claude",
+        sig_text="s",
+        start=time.perf_counter(),
+        stream=_Stream(),
+    )
+    for _chunk in wrapper:
+        pass
+    # input_tokens from message_start, output_tokens from message_delta.
     assert (wrapper._tokens_in, wrapper._tokens_out) == (12, 34)
+    # Reaching exhaustion emitted exactly one event carrying those counts --
+    # the wrapper used to report (None, None) and page nothing.
+    assert len(rec.events) == 1
+    assert rec.events[0].tokens_in == 12
+    assert rec.events[0].tokens_out == 34
 
 
 def test_602_openai_wrapper_unaffected_but_shares_async_fix() -> None:

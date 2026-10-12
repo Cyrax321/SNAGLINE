@@ -1163,7 +1163,14 @@ def make_handler(
                     self._respond(400, {"error": "invalid chunk size"})
                     return None
                 if total + size > limit:
-                    self._drain_chunked_rest()
+                    # The over-limit chunk's *size line* is consumed but its
+                    # payload is still on the wire, so hand the size to the
+                    # drain: starting it without that context makes it read the
+                    # payload as the next size line, and a payload of hex-valid
+                    # bytes ("a" is a hex digit) parses into an astronomically
+                    # large chunk size, after which the drain blocks reading a
+                    # byte count the client never intends to send (issue #586).
+                    self._drain_chunked_rest(pending=size)
                     self._respond(413, {"error": "payload too large"})
                     return None
                 chunk = self.rfile.read(size)
@@ -1180,18 +1187,30 @@ def make_handler(
                 if not line or line in (b"\r\n", b"\n"):
                     return
 
-        def _drain_chunked_rest(self) -> None:
+        def _drain_chunked_rest(self, pending: int = 0) -> None:
             """Best-effort drain of an over-cap chunked body before replying.
 
-            Consumes *frames* rather than a raw byte count, so the drain ends
-            at the client's terminating chunk as soon as the stream is
-            exhausted instead of blocking on a read the framing cannot
-            satisfy. The total discarded is bounded by the same excess the
-            declared path allows its own drain (issue #121), so a client that
-            never terminates cannot hold the reply past that budget; the
-            handler's read timeout bounds the rest.
+            ``pending`` is the size of the chunk whose size line the caller
+            already consumed but whose payload it did not read -- the over-cap
+            case in ``_read_chunked_body``. Consuming it here keeps the drain
+            aligned on a frame boundary; without it the payload is read as a
+            size line, and hex-valid payload bytes parse into a size the client
+            is never going to send, so the drain blocks holding the 413
+            (issue #586).
+
+            The total discarded is bounded by the same excess the declared path
+            allows its own drain (issue #121), so a client that never
+            terminates cannot hold the reply past that budget; the handler's
+            read timeout bounds the rest.
             """
             budget = _MAX_OVERCAP_DRAIN_EXCESS
+            while pending > 0 and budget > 0:
+                chunk = self.rfile.read(min(pending, budget, _DRAIN_CHUNK_BYTES))
+                if not chunk:
+                    return
+                spent = len(chunk)
+                pending -= spent
+                budget -= spent
             while budget > 0:
                 line = self.rfile.readline(_MAX_FRAME_LINE_BYTES)
                 if not line:
@@ -1202,7 +1221,12 @@ def make_handler(
                     return  # broken framing: nothing more to drain usefully
                 if size <= 0:
                     return  # terminating (or malformed) chunk: stream is done
-                remaining = min(size, budget)
+                # Never act on a size line claiming more than the whole drain
+                # budget: the frame is already over-cap, and a size parsed out
+                # of payload data can be enormous because every hex digit is a
+                # valid digit (issue #586).
+                size = min(size, budget)
+                remaining = size
                 while remaining > 0:
                     chunk = self.rfile.read(min(remaining, _DRAIN_CHUNK_BYTES))
                     if not chunk:
