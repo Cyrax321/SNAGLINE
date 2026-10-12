@@ -26,11 +26,10 @@ import urllib.request
 from collections.abc import Callable, Iterator
 from contextlib import suppress
 from pathlib import Path
-from typing import IO
 
 from snagline import __version__
-from snagline._input import _BadInputFile, open_input
-from snagline.baseline import ToolBaseline
+from snagline._input import _BadInputFile, _DecodeGuardedFile, open_input
+from snagline.baseline import BaselineProfile, ToolBaseline
 from snagline.config import Config
 from snagline.events import StepEvent
 from snagline.monitor import Monitor
@@ -67,7 +66,7 @@ class _CountingSink:
         self.risks.append(risk)
 
 
-def _open_input(path: str) -> IO[str]:
+def _open_input(path: str) -> _DecodeGuardedFile:
     """Open a named input file, or fail naming it (issues #428, #595).
 
     Thin re-export over :func:`snagline._input.open_input` so the CLI's existing
@@ -1016,7 +1015,7 @@ def _list_stored_versions(store, tenant: str, deployment: str) -> int:
     return 0
 
 
-def _save_profile(profile: object, path: str) -> bool:
+def _save_profile(profile: BaselineProfile, path: str) -> bool:
     """Persist a fitted profile, or report an unwritable path and fail.
 
     ``save_baseline`` opens ``path`` for writing, so a ``--output`` whose parent
@@ -1182,7 +1181,7 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
         )
         return 0
 
-    from snagline.baseline import fit_baseline_from_jsonl, save_baseline
+    from snagline.baseline import fit_baseline_from_jsonl
 
     if getattr(args, "semantic", False):
         semantic_model = getattr(args, "semantic_model", "all-MiniLM-L6-v2")

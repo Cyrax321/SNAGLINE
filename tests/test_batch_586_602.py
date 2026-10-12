@@ -39,12 +39,9 @@ its fix landed; the tests pin the fixed behaviour:
 from __future__ import annotations
 
 import argparse
-import io
 import json
-import math
 import os
 import socket
-import ssl
 import tempfile
 import threading
 from typing import Any
@@ -463,7 +460,6 @@ def test_591_collapse_still_detected_with_valid_thresholds() -> None:
     # Identical calls collapse the action distribution to zero entropy.
     for i in range(12):
         det.observe(_event(i, action_signature=_VEN))
-    risks = [r for r in (det.observe(_event(13)) for _ in range(1)) if r is not None]
     # The in-band/out-of-band test is what matters here: a valid band does not
     # silently deaden the detector the way low=-1.0 did.
     assert det.low_entropy >= 0.0 and det.high_entropy > det.low_entropy
@@ -622,6 +618,7 @@ def test_593_latch_survives_snapshot_restore() -> None:
     det = EsnCusumDetector(baseline=_baseline_with_known_tool())
     _esn_alarms(det, "newtool", 3, latency_ms=50.0)
     state = det.dump_state()
+    assert state is not None, "a detector that has observed steps must snapshot"
 
     restored = EsnCusumDetector(baseline=_baseline_with_known_tool())
     restored.load_state(state)
@@ -640,6 +637,7 @@ def test_593_old_snapshot_without_latch_still_restores() -> None:
     det = EsnCusumDetector(baseline=_baseline_with_known_tool())
     det.observe(_event(0, tool_name="newtool", latency_ms=50.0))
     raw = det.dump_state()
+    assert raw is not None, "a detector that has observed steps must snapshot"
     # Simulate a snapshot written before the latch existed.
     raw["episodes"][0][1].pop("unseen_tools", None)
     restored = EsnCusumDetector(baseline=_baseline_with_known_tool())
@@ -1047,10 +1045,11 @@ def test_599_valid_pem_is_accepted(
     from snagline.cli import _cmd_serve
 
     pytest.importorskip("cryptography")
+    import datetime
+
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
-    from cryptography.x509 import Name, CertificateBuilder
-    import datetime
+    from cryptography.x509 import CertificateBuilder, Name
 
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     subject = Name([__import__("cryptography.x509", fromlist=["NameAttribute"]).NameAttribute(__import__("cryptography.x509.oid", fromlist=["NameOID"]).NameOID.COMMON_NAME, "localhost")])
