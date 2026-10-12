@@ -156,8 +156,19 @@ class ToolBaseline:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> ToolBaseline:
-        tb = cls(tool_name=data["tool_name"])
+    def from_dict(cls, data: dict, name: str | None = None) -> ToolBaseline:
+        # ``to_dict`` writes ``tool_name`` inside the entry, but a profile
+        # hand-edited or written by an older version may name its tools only
+        # via the outer ``tools`` map. Accept the containing key as a fallback
+        # so such a profile loads and the #592 moment validation gets the
+        # chance to run, instead of a bare KeyError from the load path.
+        tool_name = data.get("tool_name", name)
+        if not tool_name:
+            raise ValueError(
+                "baseline tool entry has no tool_name and was loaded without a "
+                "key name to fall back on"
+            )
+        tb = cls(tool_name=tool_name)
         tb.count = data["count"]
         # Profiles written before latency_count existed counted only
         # latency-bearing calls, which was also the error-rate denominator;
@@ -254,7 +265,7 @@ class BaselineProfile:
             fitted_at=float(data.get("fitted_at", 0.0)),
         )
         for name, tb in data.get("tools", {}).items():
-            profile.tools[name] = ToolBaseline.from_dict(tb)
+            profile.tools[name] = ToolBaseline.from_dict(tb, name)
         centroid = data.get("embedding_centroid")
         if centroid is not None:
             profile.embedding_centroid = [float(v) for v in centroid]

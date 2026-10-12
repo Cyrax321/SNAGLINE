@@ -81,8 +81,11 @@ def replay(path: str, monitor: Monitor | None = None) -> int:
     """Replay a JSONL trajectory file through ``monitor`` (live offline analysis).
 
     Each line must be a JSON object with the ``StepEvent`` fields. Returns the
-    number of steps replayed. With the default monitor this also prints any
-    ``FailureRisk`` to stderr via the console sink.
+    number of steps replayed, or ``-1`` when the file itself cannot be read or
+    decoded -- a bad input file is a usage error, not a crash, so ``replay``
+    reports it on stderr and returns the sentinel rather than propagating
+    (issue #595). The CLI maps both shapes to exit 2. With the default monitor
+    this also prints any ``FailureRisk`` to stderr via the console sink.
     """
     if monitor is None:
         monitor = Monitor.default()
@@ -94,26 +97,30 @@ def replay(path: str, monitor: Monitor | None = None) -> int:
     # Without this, reusing the same monitor across replay() calls leaks state
     # from one trajectory into the next (issue #18).
     episodes: set = set()
-    with _open_input(path) as fh:
-        for lineno, line in enumerate(fh, start=1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-                event = StepEvent(**obj)
-            except (json.JSONDecodeError, TypeError, ValueError) as exc:
-                # Fail-soft on the input side too: a malformed trajectory line
-                # must never crash the whole replay (issue #5).
-                print(
-                    f"snagline replay: skipping malformed line {lineno}: {exc}",
-                    file=sys.stderr,
-                )
-                skipped += 1
-                continue
-            episodes.add(event.episode_id)
-            monitor.ingest(event)
-            steps += 1
+    try:
+        with _open_input(path) as fh:
+            for lineno, line in enumerate(fh, start=1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                    event = StepEvent(**obj)
+                except (json.JSONDecodeError, TypeError, ValueError) as exc:
+                    # Fail-soft on the input side too: a malformed trajectory line
+                    # must never crash the whole replay (issue #5).
+                    print(
+                        f"snagline replay: skipping malformed line {lineno}: {exc}",
+                        file=sys.stderr,
+                    )
+                    skipped += 1
+                    continue
+                episodes.add(event.episode_id)
+                monitor.ingest(event)
+                steps += 1
+    except _BadInputFile as exc:
+        print(f"snagline replay: {exc}", file=sys.stderr)
+        return -1
     # Tear down per-episode state so a later replay() on the same monitor starts
     # clean (fail-open: a teardown error must not abort the summary).
     for episode_id in episodes:
@@ -1019,6 +1026,12 @@ def _save_profile(profile: object, path: str) -> bool:
     fit is not redone on a retry either way, so the diagnostic names the path
     and the profile is not silently dropped. Returns False on a write failure.
     """
+    # Imported here rather than at module scope because both callers sit behind
+    # a subcommand; the non-semantic path below imported only
+    # fit_baseline_from_jsonl, so a NameError escaped from here on exactly the
+    # path #598's diagnostic was written for.
+    from snagline.baseline import save_baseline
+
     try:
         save_baseline(profile, path)
     except OSError as exc:
@@ -1578,10 +1591,10 @@ def main(argv: list[str] | None = None) -> int:
             sinks.extend(_console_sinks(cfg))
         sinks.append(counter)
         monitor = Monitor.default(config=cfg, sinks=sinks)
-        try:
-            steps = replay(args.trajectory, monitor=monitor)
-        except _BadInputFile as exc:
-            print(f"snagline replay: {exc}", file=sys.stderr)
+        # replay() reports a bad input file itself and returns -1 rather than
+        # propagating (issue #595); both shapes map to exit 2.
+        steps = replay(args.trajectory, monitor=monitor)
+        if steps < 0:
             return 2
         if args.summary:
             print(
