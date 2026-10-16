@@ -9,6 +9,12 @@ Public API (core, zero third-party dependencies):
     sinks route on, for custom sinks that filter the same way.
   * ``Config`` -- all tunable thresholds in one place.
   * ``watch`` -- the stdlib ``raw`` adapter for plain Python loops.
+
+Pre-execution authorization lives in ``snagline.authorize`` and is deliberately
+NOT re-exported here: it is a policy gate that can deny a tool call, which is a
+different product from the monitor's fail-open observation path. Import it
+explicitly (``from snagline.authorize import Policy``) so using it is a visible
+decision rather than an accidental side effect of importing SNAGLINE.
 """
 
 from __future__ import annotations

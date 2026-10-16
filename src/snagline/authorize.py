@@ -1,0 +1,487 @@
+"""Pre-execution authorization: decide allow/ask/deny BEFORE a tool runs.
+
+SNAGLINE's whole promise is that it watches and never interferes
+(README: "Hard fail-open guarantee: it can never crash or stall the host").
+That guarantee covers the *detection* path -- ``Monitor.ingest()`` observes a
+step after it happened and dispatches a ``FailureRisk`` to sinks. Nothing in
+the core has ever been able to say "no" to a tool call, and that is by
+design: a monitor that can block is a policy engine, and a policy engine
+that fails open is a security control with a hole in it.
+
+This module is that policy engine, kept deliberately outside the core:
+
+* It is NOT reached from ``Monitor.ingest()``. The detection path cannot call
+  it, so ``fail_open=True`` remains a structural guarantee rather than a
+  promise about behaviour.
+* It is reached only at an adapter boundary, where a host already asks us
+  "may I run this tool?" -- the Claude Code ``PreToolUse`` hook, or any host
+  that calls ``decide()`` itself before dispatching a tool call.
+* It is fail-OPEN by default. An unknown tool, a policy that fails to load,
+  or a rule that raises all resolve to ``allow`` unless the operator opts into
+  strictness, because an unused gate that breaks the host is worse than no
+  gate. Opting in is explicit and per-policy, never global.
+
+What it deliberately does NOT do, so the boundary is not misread: it does not
+inspect content for secrets or PII, does not score risk, and does not persist
+an audit trail. A policy is a set of rules over *which tool is being called on
+what resource*; adding detection heuristics to it would blur the line between
+the monitor and the firewall, and would put content handling code on a path
+that runs before a user has approved anything.
+"""
+
+from __future__ import annotations
+
+import fnmatch
+import json
+import math
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import Any, Literal
+
+from snagline.events import make_signature
+
+Decision = Literal["allow", "ask", "deny"]
+
+#: Every legal decision, most-permissive first. Ordering is load-bearing:
+#: :func:`_rank` uses it so the strictest verdict wins regardless of rule order.
+DECISIONS: tuple[Decision, ...] = ("allow", "ask", "deny")
+
+#: tool_name -> the key in ``tool_input`` holding the thing being acted on.
+#: Mirrors Claude Code's own tool set; an unlisted tool still gets a decision,
+#: it just arrives with ``action="unknown"``.
+_TOOL_RESOURCES: dict[str, tuple[str, str]] = {
+    "Bash": ("command", "execute"),
+    "Read": ("file_path", "read"),
+    "Write": ("file_path", "write"),
+    "Edit": ("file_path", "write"),
+    "MultiEdit": ("file_path", "write"),
+    "NotebookEdit": ("notebook_path", "write"),
+    "Glob": ("pattern", "read"),
+    "Grep": ("pattern", "read"),
+    "WebFetch": ("url", "network"),
+    "WebSearch": ("query", "network"),
+}
+
+
+def _rank(decision: Decision) -> int:
+    """Strictness order: deny beats ask beats allow.
+
+    Used instead of first-match-wins so that rule ORDER cannot change the
+    outcome. An allowlist written above a denylist is a bug that silently
+    re-opens whatever the denylist was closing; taking the strictest verdict
+    makes that class of mistake unrepresentable.
+    """
+    return DECISIONS.index(decision)
+
+
+@dataclass(frozen=True, slots=True)
+class ToolRequest:
+    """One tool call, reduced to what a policy is allowed to reason about.
+
+    ``resource`` is the path / command / URL the tool was pointed at, or
+    ``None`` when it cannot be identified. It is a *string the host already
+    sent us*, not content SNAGLINE derived -- no prompt, no tool output, no
+    file bytes ever enter this object, and the privacy invariant that governs
+    ``FailureRisk`` governs this too.
+
+    ``signature`` is a one-way SHA-256 digest of the request, offered for
+    logging an allow/deny decision without recording what was requested. It
+    reuses :func:`snagline.events.make_signature` so there is exactly one
+    hashing convention in the codebase.
+    """
+
+    tool_name: str
+    action: str = "unknown"
+    resource: str | None = None
+    tool_input: Mapping[str, Any] = field(default_factory=dict)
+    episode_id: str | None = None
+
+    @property
+    def signature(self) -> str:
+        """One-way digest of (tool, action, resource). Safe to log."""
+        return make_signature(
+            "tool_request", self.tool_name, self.action, self.resource or ""
+        )
+
+    @classmethod
+    def from_tool_input(
+        cls,
+        tool_name: str,
+        tool_input: Mapping[str, Any] | None,
+        *,
+        episode_id: str | None = None,
+    ) -> ToolRequest:
+        """Build a request from a host's raw ``(tool_name, tool_input)``.
+
+        Best-effort by construction: a tool this module has never seen, an
+        input that is not a mapping, or a resource that is not a string all
+        degrade to ``action="unknown"`` / ``resource=None`` rather than
+        raising. The gate must not be the reason a host crashes.
+        """
+        data: Mapping[str, Any] = tool_input if isinstance(tool_input, Mapping) else {}
+        known = _TOOL_RESOURCES.get(tool_name)
+        if known is None:
+            return cls(
+                tool_name=tool_name,
+                action="unknown",
+                resource=_first_str(data, ("url", "path", "file_path", "command")),
+                tool_input=data,
+                episode_id=episode_id,
+            )
+        key, action = known
+        return cls(
+            tool_name=tool_name,
+            action=action,
+            resource=_first_str(data, (key,)),
+            tool_input=data,
+            episode_id=episode_id,
+        )
+
+
+def _first_str(data: Mapping[str, Any], keys: Iterable[str]) -> str | None:
+    """First key in ``keys`` whose value is a non-empty string, else ``None``.
+
+    A non-string value (``file_path`` arriving as a list, say) is treated as
+    absent rather than stringified: guessing at a resource makes a policy
+    match against something the host never asked for.
+    """
+    for key in keys:
+        value = data.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+@dataclass(frozen=True, slots=True)
+class RuleVerdict:
+    """One rule's answer. ``decision=None`` means "I have no opinion"."""
+
+    rule_id: str
+    decision: Decision | None = None
+    reason: str = ""
+
+
+#: A rule is any callable over one request. Returning ``None`` (or a verdict
+#: with no decision) means "no opinion" and does not constrain the outcome.
+Rule = Callable[[ToolRequest], RuleVerdict | None]
+
+
+def deny_tools(*tool_names: str) -> Rule:
+    """Deny these exact tool names."""
+    names = frozenset(tool_names)
+    return lambda request: RuleVerdict(
+        "deny_tools",
+        "deny" if request.tool_name in names else None,
+        f"tool {request.tool_name!r} is denied by policy",
+    )
+
+
+def ask_tools(*tool_names: str) -> Rule:
+    """Ask the operator about these exact tool names."""
+    names = frozenset(tool_names)
+    return lambda request: RuleVerdict(
+        "ask_tools",
+        "ask" if request.tool_name in names else None,
+        f"tool {request.tool_name!r} needs operator approval",
+    )
+
+
+def allow_tools(*tool_names: str) -> Rule:
+    """Explicitly allow these tools.
+
+    Only meaningful under a ``default_decision`` stricter than ``allow``: it is
+    how an allowlist is expressed, and it documents the intent even when it is
+    currently redundant.
+    """
+    names = frozenset(tool_names)
+    return lambda request: RuleVerdict(
+        "allow_tools",
+        "allow" if request.tool_name in names else None,
+        f"tool {request.tool_name!r} is explicitly allowed",
+    )
+
+
+def deny_resource_glob(*patterns: str) -> Rule:
+    """Deny when the requested resource matches any shell-style glob.
+
+    ``fnmatch`` semantics, so ``*.pem`` and ``/etc/ssh/*`` behave the way an
+    operator reading the policy expects. Matching is against ``request.resource``
+    only; ``None`` never matches, so a request with no identifiable resource
+    is decided by the rest of the policy rather than by this rule.
+    """
+    return lambda request: RuleVerdict(
+        "deny_resource_glob",
+        "deny"
+        if request.resource is not None
+        and any(fnmatch.fnmatch(request.resource, pat) for pat in patterns)
+        else None,
+        f"resource {request.resource!r} matches a denied pattern",
+    )
+
+
+def deny_command_glob(*patterns: str) -> Rule:
+    """Deny when an ``execute`` request's command matches any glob.
+
+    Narrower than :func:`deny_resource_glob` on purpose: a command string and a
+    file path live in different risk classes, and one rule that covers both
+    invites a pattern written for the wrong one.
+    """
+    return lambda request: RuleVerdict(
+        "deny_command_glob",
+        "deny"
+        if request.action == "execute"
+        and request.resource is not None
+        and any(fnmatch.fnmatch(request.resource, pat) for pat in patterns)
+        else None,
+        f"command matches a denied pattern: {request.resource!r}",
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class DecisionResult:
+    """The outcome of one :func:`decide` call, with the reasoning kept."""
+
+    decision: Decision
+    reason: str
+    #: Ids of every rule that had an opinion, strictest first. Kept so an
+    #: operator can see *all* the reasons, not just the winning one -- a deny
+    #: that another rule also flagged is worth knowing about.
+    matched_rules: tuple[str, ...] = ()
+
+    @property
+    def allowed(self) -> bool:
+        return self.decision != "deny"
+
+    def __bool__(self) -> bool:
+        """``if result:`` reads as "this request may proceed"."""
+        return self.allowed
+
+
+@dataclass(frozen=True, slots=True)
+class Policy:
+    """A set of rules plus what to do when they have no opinion.
+
+    Fail-open by default, and that default is the safe one to ship:
+
+    * ``default_decision="allow"`` -- no rule matched, so allow.
+    * ``rule_error_decision=None`` -- a rule raised, so behave as if nothing
+      matched. A crashing rule must not be able to wedge the host.
+    * ``unknown_tool_decision=None`` -- a tool this module does not know was
+      requested, so behave as if nothing matched.
+
+    The three strict postures are opt-in and spelled out, never defaults::
+
+        Policy(rules=(allow_tools("Read", "Grep"),), default_decision="deny")
+
+    which is an allowlist -- anything not named is denied, including every tool
+    released after the policy was written. That is the fail-closed mode, and
+    it fails closed by design rather than by accident.
+    """
+
+    rules: tuple[Rule, ...] = ()
+    default_decision: Decision = "allow"
+    rule_error_decision: Decision | None = None
+    unknown_tool_decision: Decision | None = None
+
+    def decide(self, request: ToolRequest) -> DecisionResult:
+        """Evaluate every rule and return the strictest verdict."""
+        if request.action == "unknown":
+            override = self.unknown_tool_decision
+            if override is not None:
+                # Short-circuits the rules: the operator has said what to do
+                # with tools we do not recognise, and that outranks whatever
+                # the rules would have made of it.
+                return DecisionResult(
+                    override,
+                    f"tool {request.tool_name!r} is unknown; "
+                    f"policy unknown_tool_decision is {override!r}",
+                    (),
+                )
+            # Otherwise fall through and run the rules: an operator may have
+            # named that tool explicitly, and an explicit rule is better
+            # knowledge than our own ignorance of the tool set.
+
+        opinions: list[tuple[Decision, RuleVerdict]] = []
+        for index, rule in enumerate(self.rules):
+            try:
+                verdict = rule(request)
+            except Exception as exc:  # noqa: BLE001 - a rule must not wedge the host
+                fallback = (
+                    self.rule_error_decision
+                    if self.rule_error_decision is not None
+                    else self.default_decision
+                )
+                return DecisionResult(
+                    fallback,
+                    f"rule {index} raised {type(exc).__name__}: {exc}",
+                    (),
+                )
+            if verdict is not None and verdict.decision is not None:
+                # Paired with the narrowed decision so the strictness sort
+                # below never has to re-narrow an Optional field.
+                opinions.append((verdict.decision, verdict))
+
+        if not opinions:
+            # Name the default in the reason. "no rule matched" reads like a
+            # bug to an operator staring at a deny they did not write; "no rule
+            # matched; policy default_decision is 'deny'" tells them this is an
+            # allowlist and the tool is simply not on it. (The unknown-tool
+            # case already returned at the top of this method.)
+            return DecisionResult(
+                self.default_decision,
+                f"no rule matched; policy default_decision is "
+                f"{self.default_decision!r}",
+                (),
+            )
+
+        # Strictest wins, so rule order cannot change the outcome. ``max`` keeps
+        # first-seen order among ties, which makes the reported reason stable
+        # across runs instead of depending on sort implementation details.
+        best_decision, best = max(opinions, key=lambda pair: _rank(pair[0]))
+        ordered = tuple(
+            verdict.rule_id
+            for _, verdict in sorted(opinions, key=lambda pair: -_rank(pair[0]))
+        )
+        return DecisionResult(best_decision, best.reason, ordered)
+
+
+def decide(request: ToolRequest, policy: Policy) -> DecisionResult:
+    """Module-level shorthand for ``policy.decide(request)``."""
+    return policy.decide(request)
+
+
+# --------------------------------------------------------------------------
+# Declarative policy documents
+# --------------------------------------------------------------------------
+
+
+class PolicyError(ValueError):
+    """A policy document could not be understood. Always fatal at load time.
+
+    Deliberately NOT swallowed into a fail-open allow. A policy that silently
+    fails to parse and then permits everything is indistinguishable from no
+    policy at all, which is the exact failure mode an operator is trying to
+    avoid by writing one. ``Policy.load_file`` raises; the caller decides what
+    an unloadable policy means for their host.
+    """
+
+
+_ALLOWED_KEYS = frozenset(
+    {
+        "rules",
+        "default_decision",
+        "rule_error_decision",
+        "unknown_tool_decision",
+        "description",
+    }
+)
+
+
+def policy_from_dict(data: Mapping[str, Any]) -> Policy:
+    """Build a :class:`Policy` from a plain mapping.
+
+    Schema (the ``description`` key is ignored, so a policy file can be
+    self-documenting)::
+
+        {
+          "default_decision": "allow",
+          "rules": [
+            {"type": "deny_tools",     "tools": ["Write", "Edit"]},
+            {"type": "allow_tools",    "tools": ["Read", "Grep"]},
+            {"type": "deny_resource",  "patterns": ["*.pem", "/etc/ssh/*"]},
+            {"type": "deny_command",   "patterns": ["rm -rf*"]}
+          ]
+        }
+
+    Unknown top-level keys and unknown rule ``type`` values raise rather than
+    being skipped: a typo'd rule that silently does nothing is the same
+    invisible-failure problem :class:`PolicyError` exists to prevent.
+    """
+    unknown = set(data) - _ALLOWED_KEYS
+    if unknown:
+        raise PolicyError(
+            f"unknown policy keys {sorted(unknown)}; expected {sorted(_ALLOWED_KEYS)}"
+        )
+
+    def decision(key: str) -> Decision | None:
+        value = data.get(key)
+        if value is None:
+            return None
+        if value not in DECISIONS:
+            raise PolicyError(
+                f"{key}={value!r} is not a decision; expected one of {list(DECISIONS)}"
+            )
+        return value
+
+    raw_rules = data.get("rules", [])
+    if not isinstance(raw_rules, list):
+        raise PolicyError(f"rules must be a list; got {type(raw_rules).__name__}")
+    rules = tuple(_rule_from_dict(raw, i) for i, raw in enumerate(raw_rules))
+
+    default = decision("default_decision") or "allow"
+    return Policy(
+        rules=rules,
+        default_decision=default,
+        rule_error_decision=decision("rule_error_decision"),
+        unknown_tool_decision=decision("unknown_tool_decision"),
+    )
+
+
+def _rule_from_dict(raw: Any, index: int) -> Rule:
+    if not isinstance(raw, Mapping):
+        raise PolicyError(f"rules[{index}] must be an object; got {type(raw).__name__}")
+    kind = raw.get("type")
+    builders: dict[str, Callable[..., Rule]] = {
+        "deny_tools": deny_tools,
+        "ask_tools": ask_tools,
+        "allow_tools": allow_tools,
+        "deny_resource": deny_resource_glob,
+        "deny_command": deny_command_glob,
+    }
+    if kind not in builders:
+        raise PolicyError(
+            f"rules[{index}].type={kind!r} is not a known rule type; "
+            f"expected one of {sorted(builders)}"
+        )
+    key = "patterns" if kind.startswith("deny_") and kind != "deny_tools" else "tools"
+    values = raw.get(key, [])
+    if not isinstance(values, list) or not all(isinstance(v, str) for v in values):
+        raise PolicyError(f"rules[{index}].{key} must be a list of strings")
+    return builders[kind](*values)
+
+
+def _load_toml(text: str) -> dict[str, Any]:
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # pragma: no cover - exercised only on <3.11
+        raise PolicyError(
+            "TOML policy files require Python 3.11+ (tomllib); use JSON or upgrade."
+        ) from None
+    return tomllib.loads(text)
+
+
+def policy_from_file(path: str) -> Policy:
+    """Load a policy from a ``.json`` or ``.toml`` document.
+
+    Mirrors :meth:`snagline.config.Config.load_file`: JSON via the stdlib, TOML
+    via ``tomllib`` on 3.11+. Non-finite floats are rejected for the same
+    reason ``Config`` rejects them -- a policy is not the place to accept a
+    value no comparison can order.
+    """
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    data = _load_toml(text) if path.endswith(".toml") else json.loads(text)
+    # Type-check BEFORE iterating: a top-level JSON array has no ``.items()``,
+    # so the guard below would never be reached and the caller would get an
+    # AttributeError instead of a message naming the policy file.
+    if not isinstance(data, Mapping):
+        raise PolicyError(f"{path}: policy must be a mapping at the top level")
+    for key, value in data.items():
+        if isinstance(value, float) and not math.isfinite(value):
+            raise PolicyError(f"{key}: non-finite float value {value!r} in {path}")
+    return policy_from_dict(data)
+
+
+def policy_from_sequence(items: Sequence[Rule]) -> Policy:
+    """``Policy`` from a plain sequence, for callers that build rules in code."""
+    return Policy(rules=tuple(items))

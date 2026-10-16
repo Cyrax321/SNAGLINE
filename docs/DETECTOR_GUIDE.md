@@ -114,6 +114,57 @@ downstream policy layers map them by name. When several shapes fire on the
 same step the plain-loop risk keeps precedence; each mode still advances its
 state every step, so nothing is lost.
 
+## Pre-execution authorization (`snagline.authorize`)
+
+Detectors answer "did this episode go wrong?". Authorization answers "may this
+tool run?". They are different questions with opposite failure postures, so
+they live in different modules and neither imports the other.
+
+```python
+from snagline.authorize import Policy, allow_tools, deny_resource_glob
+from snagline.adapters.claude_code import decide_payload
+
+policy = Policy(
+    rules=(
+        allow_tools("Read", "Grep", "Glob"),
+        deny_resource_glob("*.pem", "/etc/ssh/*"),
+    ),
+    default_decision="deny",   # allowlist: anything unnamed is refused
+)
+response = decide_payload(payload, policy)   # None, or the PreToolUse JSON
+```
+
+**Fail-open is the default and is structural.** `Monitor.ingest()` cannot reach
+this module, so `Config.fail_open=True` is still a guarantee about the
+detection path rather than a behaviour that could regress. Every uncertainty
+resolves to `allow`:
+
+| Situation | Default | Opt-in |
+|---|---|---|
+| No rule matched | `allow` (`default_decision`) | `default_decision="deny"` |
+| A rule raised | `allow` | `rule_error_decision="deny"` |
+| Unrecognised tool | `allow` | `unknown_tool_decision="deny"` |
+| `PreToolUse` payload with no `tool_name` | `allow` (no decision emitted) | not overridable, on purpose |
+
+**Strictest verdict wins, not first match.** Every rule is evaluated and the
+strictest (`deny` > `ask` > `allow`) decides, so rule order cannot change an
+outcome. An allowlist written above a denylist is a bug that silently
+re-opens what the denylist closed; that mistake is unrepresentable here.
+
+**An `allow` emits nothing.** `decide_payload` returns `None` for `allow` on
+purpose: an explicit `"allow"` would override Claude Code's own permission
+prompts, making this hook a security *downgrade*. Emitting nothing leaves the
+native flow intact, so the gate can only tighten what the host already asks.
+
+**A policy that fails to parse is fatal.** `policy_from_file` raises
+`PolicyError` rather than degrading to allow. A typo'd rule that silently does
+nothing is the same invisible failure the exception exists to prevent; what an
+unloadable policy means for your host is your decision, not the library's.
+
+**Scope boundary.** This module does not inspect content for secrets or PII,
+does not score risk, and does not persist an audit trail. A policy is a set of
+rules over *which tool is being called on what resource*.
+
 ## Optional detectors: baseline, goal-drift, ensemble, and horizon set
 
 `LoopDetector`, `ErrorCascadeDetector`, and `LatencyAnomalyDetector` ship in

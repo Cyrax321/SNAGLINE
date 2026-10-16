@@ -236,3 +236,65 @@ def ingest_payload(
         if tracker is not None:
             with contextlib.suppress(Exception):
                 tracker.note(payload)
+
+
+_PRE_TOOL_USE = "PreToolUse"
+
+
+def decide_payload(payload: dict, policy: Any) -> dict | None:
+    """Authorize a ``PreToolUse`` payload; return the hook response, or ``None``.
+
+    The write-side counterpart to :func:`payload_to_event`. Claude Code runs a
+    ``PreToolUse`` hook *before* the tool executes and reads a JSON object on
+    stdout, so this is the one place SNAGLINE can answer "no" -- the detection
+    path (``Monitor.ingest``) only ever sees a step after it happened.
+
+    Returns ``None`` for every ``allow``, on purpose. An explicit
+    ``"allow"`` overrides Claude Code's own permission prompts, which would
+    make this hook a security *downgrade* for a policy that merely allows
+    things. Emitting nothing leaves the native flow intact, so the gate can
+    only ever tighten what Claude Code already asks. ``ask`` and ``deny`` are
+    emitted as ``permissionDecision`` with a human-readable reason.
+
+    Lifecycle payloads and non-``PreToolUse`` events also return ``None``: a
+    hook that answered "ask" to ``SessionStart`` would be nonsense. Fail-open
+    in every direction -- this function does not raise, and a policy that
+    itself raises is the caller's error to surface, not ours to swallow
+    (see :class:`snagline.authorize.PolicyError`).
+
+    Typical wiring::
+
+        payload = json.load(sys.stdin)
+        response = decide_payload(payload, policy)
+        if response is not None:
+            json.dump(response, sys.stdout)
+    """
+    if str(payload.get("hook_event_name")) != _PRE_TOOL_USE:
+        return None
+
+    from snagline.authorize import ToolRequest
+
+    tool_name = str(payload.get("tool_name") or "")
+    if not tool_name:
+        # A PreToolUse payload with no tool name is malformed, and this hook
+        # cannot know what it was asked to authorize. Emitting a decision
+        # anyway would let a payload quirk deny every tool call in the run --
+        # a host bricked by SNAGLINE, which is exactly what the fail-open
+        # contract exists to prevent. Emit nothing and let the host proceed.
+        return None
+
+    request = ToolRequest.from_tool_input(
+        tool_name,
+        payload.get("tool_input"),
+        episode_id=str(payload.get("session_id") or "claude-code") or None,
+    )
+    result = policy.decide(request)
+    if result.decision == "allow":
+        return None
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": _PRE_TOOL_USE,
+            "permissionDecision": result.decision,
+            "permissionDecisionReason": result.reason,
+        }
+    }

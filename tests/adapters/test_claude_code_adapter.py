@@ -10,10 +10,12 @@ from typing import Any
 
 from snagline.adapters.claude_code import (
     HookTracker,
+    decide_payload,
     ingest_payload,
     is_claude_code_payload,
     payload_to_event,
 )
+from snagline.authorize import Policy, allow_tools, deny_tools
 from snagline.config import Config
 from snagline.events import StepEvent
 from snagline.monitor import Monitor
@@ -355,3 +357,58 @@ def test_tracker_eviction_preserves_table_identity() -> None:
         tracker.note(_tool_payload("PreToolUse", tool_use_id=f"k-{i}"))
     assert tracker._starts is ref
     assert len(tracker._starts) <= 2 * tracker._max_pending
+
+
+# --- PreToolUse authorization (decide_payload) -----------------------------
+#
+# The write side of the bridge: payload_to_event maps a payload the tool has
+# already run, decide_payload answers before it runs. Claude Code executes a
+# PreToolUse hook first and reads a JSON object on stdout.
+
+
+def test_decide_payload_allows_by_emitting_nothing() -> None:
+    """An explicit allow would override Claude Code's own permission prompts.
+
+    Emitting nothing leaves the native flow intact, so this hook can only ever
+    tighten what the host already asks -- never loosen it.
+    """
+    policy = Policy(rules=(allow_tools("Read"),), default_decision="allow")
+    assert decide_payload(_tool_payload("PreToolUse", "Read"), policy) is None
+
+
+def test_decide_payload_denies_with_a_reason() -> None:
+    policy = Policy(rules=(deny_tools("Bash"),))
+    out = decide_payload(_tool_payload("PreToolUse", "Bash"), policy)
+    assert out is not None
+    hook_out = out["hookSpecificOutput"]
+    assert hook_out["hookEventName"] == "PreToolUse"
+    assert hook_out["permissionDecision"] == "deny"
+    assert "Bash" in hook_out["permissionDecisionReason"]
+
+
+def test_decide_payload_asks() -> None:
+    policy = Policy(default_decision="ask")
+    out = decide_payload(_tool_payload("PreToolUse", "WebFetch"), policy)
+    assert out is not None
+    assert out["hookSpecificOutput"]["permissionDecision"] == "ask"
+
+
+def test_decide_payload_ignores_non_pre_tool_events() -> None:
+    """A hook that answered 'deny' to SessionStart would be nonsense."""
+    policy = Policy(default_decision="deny")
+    for event in ("SessionStart", "PostToolUse", "Notification"):
+        assert decide_payload(_tool_payload(event, "Bash"), policy) is None
+
+
+def test_decide_payload_falls_open_on_a_payload_with_no_tool() -> None:
+    policy = Policy(default_decision="deny", unknown_tool_decision="deny")
+    assert decide_payload({"hook_event_name": "PreToolUse"}, policy) is None
+
+
+def test_decide_payload_carries_the_session_as_the_episode() -> None:
+    """The decision is attributable to the run that asked."""
+    policy = Policy(rules=(deny_tools("Bash"),))
+    assert policy is not None
+    payload = _tool_payload("PreToolUse", "Bash")
+    payload["session_id"] = "sess-xyz"
+    assert decide_payload(payload, policy) is not None
