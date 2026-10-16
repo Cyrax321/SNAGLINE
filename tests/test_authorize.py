@@ -73,13 +73,19 @@ def test_malformed_tool_input_does_not_raise() -> None:
         assert Policy().decide(request).decision == "allow"
 
 
-def test_result_is_truthy_only_when_proceedable() -> None:
+def test_result_is_truthy_only_when_no_approval_is_needed() -> None:
+    """``ask`` must be falsy, or ``if decide(req): run()`` skips the approval."""
     allowed = Policy().decide(ToolRequest.from_tool_input("Read", {}))
+    asked = Policy(default_decision="ask").decide(
+        ToolRequest.from_tool_input("Read", {})
+    )
     denied = Policy(default_decision="deny").decide(
         ToolRequest.from_tool_input("Read", {})
     )
     assert bool(allowed) is True
+    assert bool(asked) is False, "ask is not a proceed"
     assert bool(denied) is False
+    assert asked.allowed is False
 
 
 # --- strictness is opt-in --------------------------------------------------
@@ -373,3 +379,118 @@ def test_unknown_tool_decision_survives_a_rule_that_opines() -> None:
     result = policy.decide(ToolRequest.from_tool_input("Mystery", {}))
     assert result.decision == "deny"
     assert "unknown_tool_decision" in result.reason
+
+
+# --- Grep/Glob target the searched path, not the pattern ---------------------
+
+
+def test_grep_resource_is_the_searched_path_not_the_pattern() -> None:
+    """Regression: a path rule must see the directory, not the expression.
+
+    Grep sends both ``path`` and ``pattern``. Matching the pattern let a search
+    scoped to a protected directory walk past a rule denying that directory.
+    """
+    policy = Policy(rules=(deny_resource_glob("/etc/ssh*"),))
+    result = policy.decide(
+        ToolRequest.from_tool_input("Grep", {"pattern": "id_rsa", "path": "/etc/ssh"})
+    )
+    assert result.decision == "deny"
+
+
+def test_grep_falls_back_to_pattern_when_no_path_is_given() -> None:
+    policy = Policy(rules=(deny_resource_glob("*.pem"),))
+    request = ToolRequest.from_tool_input("Grep", {"pattern": "x.pem"})
+    assert policy.decide(request).decision == "deny"
+
+
+def test_glob_resource_is_the_path_not_the_glob_pattern() -> None:
+    policy = Policy(rules=(deny_resource_glob("/workspace/secrets*"),))
+    result = policy.decide(
+        ToolRequest.from_tool_input(
+            "Glob", {"pattern": "**/*.env", "path": "/workspace/secrets"}
+        )
+    )
+    assert result.decision == "deny"
+
+
+# --- content redaction ------------------------------------------------------
+
+
+def test_content_bearing_input_is_not_retained() -> None:
+    """``Write.content`` is a file body; it must not sit in the request."""
+    secret = "AWS_SECRET_ACCESS_KEY=hunter2"
+    request = ToolRequest.from_tool_input(
+        "Write", {"file_path": "/a", "content": secret}
+    )
+    assert secret not in repr(request)
+    assert secret not in str(request.tool_input)
+    assert request.tool_input["file_path"] == "/a", "structure is kept"
+    assert "content" in request.tool_input, "the key still answers 'was it supplied?'"
+    assert request.tool_input["content"] != secret
+
+
+def test_edit_input_is_redacted_but_the_path_survives() -> None:
+    request = ToolRequest.from_tool_input(
+        "Edit", {"file_path": "/a", "new_string": "top secret"}
+    )
+    assert request.resource == "/a"
+    assert "top secret" not in repr(request)
+
+
+def test_bash_command_is_not_treated_as_content() -> None:
+    """``command`` is the resource a policy matches; redacting it would be useless."""
+    request = ToolRequest.from_tool_input("Bash", {"command": "rm -rf /etc"})
+    assert request.resource == "rm -rf /etc"
+    assert request.tool_input["command"] == "rm -rf /etc"
+
+
+def test_oversized_structural_values_are_truncated() -> None:
+    """The resource is read from the redacted copy, so the cap applies to it.
+
+    Reading the resource out of the raw mapping would leave it unbounded while
+    ``tool_input`` was truncated -- truncation bypassed by the exact field a
+    policy matches on.
+    """
+    huge = "a" * 10_000
+    request = ToolRequest.from_tool_input("Read", {"file_path": huge})
+    resource = request.resource
+    assert resource is not None
+    assert len(resource) < len(huge)
+    assert resource.endswith("<truncated>")
+    assert request.tool_input["file_path"] == resource
+
+
+# --- config errors must not fail open ---------------------------------------
+
+
+def test_explicit_null_decision_is_rejected_not_read_as_absent() -> None:
+    """A ``"default_decision": null`` must not silently become ``allow``."""
+    with pytest.raises(PolicyError, match="is null"):
+        policy_from_dict({"default_decision": None})
+    with pytest.raises(PolicyError, match="is null"):
+        policy_from_dict({"rules": [], "rule_error_decision": None})
+
+
+def test_absent_decision_key_is_fine() -> None:
+    assert policy_from_dict({"rules": []}).default_decision == "allow"
+
+
+def test_duplicate_json_keys_are_rejected(tmp_path) -> None:
+    """A duplicate ``rules`` key would otherwise erase a deny list silently."""
+    path = tmp_path / "policy.json"
+    path.write_text(
+        '{"rules": [{"type": "deny_tools", "tools": ["Bash"]}], "rules": []}',
+        encoding="utf-8",
+    )
+    with pytest.raises(PolicyError, match="duplicate key"):
+        policy_from_file(str(path))
+
+
+def test_duplicate_keys_inside_a_rule_are_rejected(tmp_path) -> None:
+    path = tmp_path / "policy.json"
+    path.write_text(
+        '{"rules": [{"type": "deny_tools", "tools": ["A"], "tools": []}]}',
+        encoding="utf-8",
+    )
+    with pytest.raises(PolicyError, match="duplicate key"):
+        policy_from_file(str(path))

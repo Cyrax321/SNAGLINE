@@ -81,6 +81,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   audit persistence. A policy here is a set of rules over which tool is being
   called on what resource.
 
+  Five defects were found in review and fixed before merge, three of them
+  fail-open holes:
+
+  - `Grep`/`Glob` requests resolved their resource to the search `pattern`
+    rather than the searched `path`, so a Grep scoped to `path=/etc/ssh` walked
+    straight past a `deny_resource_glob("/etc/ssh/*")` rule. The resource key
+    list is now ordered with `path` first.
+  - `DecisionResult.allowed` was true for `ask` as well as `allow` (it excluded
+    only `deny`), so the natural caller shape `if policy.decide(req): run()`
+    executed a request whose policy had asked for approval. `allowed` now means
+    `allow` and nothing else.
+  - An explicit `"default_decision": null` in a policy document resolved to
+    `allow` instead of raising, so a policy store that nulls unset fields would
+    produce a policy permitting everything. Absent and explicit-null are now
+    distinguished, and null raises.
+  - `policy_from_file` accepted duplicate JSON keys, and `json.loads` keeps the
+    last, so a second `rules` key silently erased a deny list. An
+    `object_pairs_hook` now rejects duplicates at every object level.
+  - `ToolRequest.tool_input` retained the whole host mapping, so
+    `Write.content` and `Edit.new_string` -- file bodies -- sat in the object
+    and in its `repr`, contradicting the no-content-retention invariant.
+    Content-bearing keys are now replaced with a marker and oversized
+    structural values truncated, and the resource is read from the redacted
+    copy so the cap cannot be bypassed through the field a policy matches on.
+
 ### Security
 - The sidecar's auth token is now compared with `hmac.compare_digest` instead
   of `==`. `str.__eq__` returns at the first differing character, so its

@@ -46,20 +46,36 @@ Decision = Literal["allow", "ask", "deny"]
 #: :func:`_rank` uses it so the strictest verdict wins regardless of rule order.
 DECISIONS: tuple[Decision, ...] = ("allow", "ask", "deny")
 
+#: What a policy does when no rule has an opinion. Fail-open, and named here so
+#: the intent is greppable rather than buried at the constructor default.
+DEFAULT_DECISION: Decision = "allow"
+
 #: tool_name -> the key in ``tool_input`` holding the thing being acted on.
+#: tool_name -> (resource keys, first match wins, action).
+#:
+#: The key list is ordered because a tool can carry several plausible
+#: resources and only one of them is what a path policy is actually about.
+#: ``Grep`` and ``Glob`` send both ``path`` and ``pattern``: ``pattern`` is the
+#: search EXPRESSION, and ``path`` is the directory being searched. Taking
+#: ``pattern`` let a Grep scoped to ``path=/etc/ssh`` with ``pattern=*.pem``
+#: walk straight past a ``deny_resource_glob("/etc/ssh/*")`` rule, because the
+#: rule was matching the expression rather than the protected directory. The
+#: searched directory is the resource; ``pattern`` is only a fallback for a
+#: bare search with no path, where it is still the best thing to match on.
+#:
 #: Mirrors Claude Code's own tool set; an unlisted tool still gets a decision,
 #: it just arrives with ``action="unknown"``.
-_TOOL_RESOURCES: dict[str, tuple[str, str]] = {
-    "Bash": ("command", "execute"),
-    "Read": ("file_path", "read"),
-    "Write": ("file_path", "write"),
-    "Edit": ("file_path", "write"),
-    "MultiEdit": ("file_path", "write"),
-    "NotebookEdit": ("notebook_path", "write"),
-    "Glob": ("pattern", "read"),
-    "Grep": ("pattern", "read"),
-    "WebFetch": ("url", "network"),
-    "WebSearch": ("query", "network"),
+_TOOL_RESOURCES: dict[str, tuple[tuple[str, ...], str]] = {
+    "Bash": (("command",), "execute"),
+    "Read": (("file_path",), "read"),
+    "Write": (("file_path",), "write"),
+    "Edit": (("file_path",), "write"),
+    "MultiEdit": (("file_path",), "write"),
+    "NotebookEdit": (("notebook_path",), "write"),
+    "Glob": (("path", "pattern"), "read"),
+    "Grep": (("path", "pattern"), "read"),
+    "WebFetch": (("url",), "network"),
+    "WebSearch": (("query",), "network"),
 }
 
 
@@ -80,9 +96,16 @@ class ToolRequest:
 
     ``resource`` is the path / command / URL the tool was pointed at, or
     ``None`` when it cannot be identified. It is a *string the host already
-    sent us*, not content SNAGLINE derived -- no prompt, no tool output, no
-    file bytes ever enter this object, and the privacy invariant that governs
-    ``FailureRisk`` governs this too.
+    sent us*, not content SNAGLINE derived.
+
+    ``tool_input`` is a REDACTED copy (:func:`_redact`): content-bearing keys
+    (``Write.content``, ``Edit.new_string``, ``prompt``, ...) survive as keys
+    with their values replaced by a marker, and oversized structural values are
+    truncated. Keeping the raw mapping would put file bodies in memory and in
+    this object's ``repr``, which would break the same no-content-retention
+    invariant that governs ``FailureRisk``. A rule that genuinely needs a
+    field this module redacts should receive it through a host-side rule that
+    does not retain it.
 
     ``signature`` is a one-way SHA-256 digest of the request, offered for
     logging an allow/deny decision without recording what was requested. It
@@ -119,23 +142,85 @@ class ToolRequest:
         raising. The gate must not be the reason a host crashes.
         """
         data: Mapping[str, Any] = tool_input if isinstance(tool_input, Mapping) else {}
+        # Redact ONCE and read the resource out of the redacted copy. Reading
+        # it from the raw mapping would leave an oversized value unbounded in
+        # ``resource`` while ``tool_input`` was truncated, so the truncation
+        # would be trivially bypassed by the very field a policy matches on.
+        safe = _redact(data)
         known = _TOOL_RESOURCES.get(tool_name)
         if known is None:
             return cls(
                 tool_name=tool_name,
                 action="unknown",
-                resource=_first_str(data, ("url", "path", "file_path", "command")),
-                tool_input=data,
+                resource=_first_str(safe, ("url", "path", "file_path", "command")),
+                tool_input=safe,
                 episode_id=episode_id,
             )
-        key, action = known
+        keys, action = known
         return cls(
             tool_name=tool_name,
             action=action,
-            resource=_first_str(data, (key,)),
-            tool_input=data,
+            resource=_first_str(safe, keys),
+            tool_input=safe,
             episode_id=episode_id,
         )
+
+
+#: Input keys whose values are CONTENT the agent is about to send somewhere,
+#: not a structural description of the request. Their values are replaced with
+#: a marker so a rule can still see that content was supplied, without this
+#: object carrying a file body in memory or in its repr.
+_CONTENT_KEYS = frozenset(
+    {
+        "content",
+        "contents",
+        "new_string",
+        "old_string",
+        "text",
+        "body",
+        "message",
+        "prompt",
+        "patch",
+        "edits",
+        "script",
+        "code",
+        "input",
+        "data",
+        "value",
+        "replacement",
+        "insert_text",
+    }
+)
+
+#: Cap on a retained structural value. A policy matches on paths and patterns;
+#: nobody writes one against a 4 MB search expression, and this object is built
+#: once per tool call, so an unbounded value is a per-call memory hazard.
+_MAX_RESOURCE_CHARS = 4096
+
+_CONTENT_MARKER = "<content redacted>"
+
+
+def _redact(data: Mapping[str, Any]) -> dict[str, Any]:
+    """Copy ``data`` with content-bearing values replaced by a marker.
+
+    SNAGLINE's privacy invariant is that detectors reason about hashes, timings
+    and counts -- never prompt or response content (README, "No content
+    retention"). Holding a whole ``tool_input`` verbatim on a request object
+    that a custom rule can inspect would quietly break that: ``Write.content``
+    and ``Edit.new_string`` are the file bodies a host is about to write, and
+    they would sit in ``ToolRequest.tool_input`` and in its ``repr``. Keys are
+    preserved and values replaced, so ``"content" in request.tool_input`` still
+    answers "was content supplied?" without answering "what was it?".
+    """
+    out: dict[str, Any] = {}
+    for key, value in data.items():
+        if key in _CONTENT_KEYS:
+            out[key] = _CONTENT_MARKER
+        elif isinstance(value, str) and len(value) > _MAX_RESOURCE_CHARS:
+            out[key] = value[:_MAX_RESOURCE_CHARS] + "...<truncated>"
+        else:
+            out[key] = value
+    return out
 
 
 def _first_str(data: Mapping[str, Any], keys: Iterable[str]) -> str | None:
@@ -250,10 +335,19 @@ class DecisionResult:
 
     @property
     def allowed(self) -> bool:
-        return self.decision != "deny"
+        """True only for an outright ``allow`` -- ``ask`` is deliberately False.
+
+        ``ask`` means "a human has not approved this yet". Folding it into
+        ``allowed`` because it is merely "not a denial" made the obvious
+        caller mistake -- ``if policy.decide(req): run_the_tool()`` -- skip
+        the very approval the policy asked for. An unapproved request now reads
+        as not-proceedable, and a caller who wants the approval flow has to
+        say so explicitly.
+        """
+        return self.decision == "allow"
 
     def __bool__(self) -> bool:
-        """``if result:`` reads as "this request may proceed"."""
+        """``if result:`` reads as "proceed with no further approval needed"."""
         return self.allowed
 
 
@@ -279,7 +373,7 @@ class Policy:
     """
 
     rules: tuple[Rule, ...] = ()
-    default_decision: Decision = "allow"
+    default_decision: Decision = DEFAULT_DECISION
     rule_error_decision: Decision | None = None
     unknown_tool_decision: Decision | None = None
 
@@ -404,9 +498,24 @@ def policy_from_dict(data: Mapping[str, Any]) -> Policy:
         )
 
     def decision(key: str) -> Decision | None:
-        value = data.get(key)
-        if value is None:
+        """Read one decision key.
+
+        Absent means "not configured" and yields ``None``. An explicit
+        ``null`` is a DIFFERENT thing -- a policy store or a YAML-to-JSON
+        conversion that emits every field, nulling the unset ones -- and it is
+        rejected rather than read as absent. Silently resolving an operator's
+        ``"default_decision": null`` to ``allow`` would turn a typo into a
+        policy that permits everything, which is the exact silent-failure this
+        loader refuses to produce anywhere else.
+        """
+        if key not in data:
             return None
+        value = data[key]
+        if value is None:
+            raise PolicyError(
+                f"{key} is null. Omit the key to leave it unset; use one of "
+                f"{list(DECISIONS)} to set it explicitly."
+            )
         if value not in DECISIONS:
             raise PolicyError(
                 f"{key}={value!r} is not a decision; expected one of {list(DECISIONS)}"
@@ -418,7 +527,7 @@ def policy_from_dict(data: Mapping[str, Any]) -> Policy:
         raise PolicyError(f"rules must be a list; got {type(raw_rules).__name__}")
     rules = tuple(_rule_from_dict(raw, i) for i, raw in enumerate(raw_rules))
 
-    default = decision("default_decision") or "allow"
+    default = decision("default_decision") or DEFAULT_DECISION
     return Policy(
         rules=rules,
         default_decision=default,
@@ -450,6 +559,24 @@ def _rule_from_dict(raw: Any, index: int) -> Rule:
     return builders[kind](*values)
 
 
+def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """``object_pairs_hook`` that rejects duplicate keys instead of dropping one.
+
+    ``json.loads`` keeps the LAST occurrence of a duplicate key and says
+    nothing. In a policy document that is a denial being erased: two ``rules``
+    keys means the second, possibly empty, list silently replaces the first and
+    the affected calls proceed under the default. Every object level is checked
+    by the hook, including each rule, so the failure names the rule that was
+    duplicated rather than the file that merely contains it.
+    """
+    seen: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in seen:
+            raise PolicyError(f"duplicate key {key!r} in policy document")
+        seen[key] = value
+    return seen
+
+
 def _load_toml(text: str) -> dict[str, Any]:
     try:
         import tomllib
@@ -470,7 +597,11 @@ def policy_from_file(path: str) -> Policy:
     """
     with open(path, encoding="utf-8") as fh:
         text = fh.read()
-    data = _load_toml(text) if path.endswith(".toml") else json.loads(text)
+    data = (
+        _load_toml(text)
+        if path.endswith(".toml")
+        else json.loads(text, object_pairs_hook=_no_duplicate_keys)
+    )
     # Type-check BEFORE iterating: a top-level JSON array has no ``.items()``,
     # so the guard below would never be reached and the caller would get an
     # AttributeError instead of a message naming the policy file.
