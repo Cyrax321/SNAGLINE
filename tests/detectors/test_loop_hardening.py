@@ -39,7 +39,15 @@ def _feed(d: LoopDetector, sigs: list[str], timestamps: list[float] | None = Non
 
 
 def _cycle_config(window: int = 6) -> Config:
-    return Config(loop_cycle_enabled=True, loop_cycle_window_size=window)
+    # max_period must sit at or below half the window (issue #594): a period p
+    # needs 2 * p steps of history before the scan will even test it, so a
+    # larger band is permanently dark. window // 2 is the largest band that is
+    # wholly testable, and every test here detects a period at or below it.
+    return Config(
+        loop_cycle_enabled=True,
+        loop_cycle_window_size=window,
+        loop_cycle_max_period=window // 2,
+    )
 
 
 # --- cycle mode --------------------------------------------------------------
@@ -82,7 +90,10 @@ def test_cycle_band_suppresses_faster_true_period():
         loop_cycle_enabled=True,
         loop_cycle_window_size=6,
         loop_cycle_min_period=3,
-        loop_cycle_max_period=4,
+        # max_period must be <= window // 2 (issue #594); the band's upper end
+        # is what the test exercises, and period 3 is the highest testable
+        # period in a 6-step window.
+        loop_cycle_max_period=3,
     )
     d = LoopDetector(config=cfg)
     out = [d.observe(_event(i, s)) for i, s in enumerate(["x", "y"] * 3)]
@@ -99,7 +110,10 @@ def test_cycle_band_accepts_in_band_true_period():
         loop_cycle_enabled=True,
         loop_cycle_window_size=6,
         loop_cycle_min_period=3,
-        loop_cycle_max_period=4,
+        # max_period must be <= window // 2 (issue #594); the band's upper end
+        # is what the test exercises, and period 3 is the highest testable
+        # period in a 6-step window.
+        loop_cycle_max_period=3,
     )
     d = LoopDetector(config=cfg)
     fires = _feed(d, ["m", "n", "o", "m", "n", "o"])
@@ -334,6 +348,9 @@ def test_hardening_coexists_with_plain_loop():
         loop_near_duplicate_enabled=True,
         loop_cycle_enabled=True,
         loop_cycle_window_size=6,
+        # max_period must be <= window // 2 (issue #594); the cycle phase
+        # below repeats period 3, the highest testable period in 6 steps.
+        loop_cycle_max_period=3,
         loop_stall_enabled=True,
     )
     d = LoopDetector(config=cfg)
