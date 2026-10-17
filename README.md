@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/architecture.svg" alt="SNAGLINE Banner" width="100%" />
+  <img src="docs/snagline-banner.jpg" alt="SNAGLINE — Real-Time Failure Detection for AI Agents" width="100%" />
 </p>
 
 <p align="center">
