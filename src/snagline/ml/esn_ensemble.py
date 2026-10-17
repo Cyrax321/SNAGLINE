@@ -362,14 +362,25 @@ class EsnCusumDetector:
         if state is not None and state.shape == st.state.shape:
             st.state = state
         ctx = _arr("context_prev")
-        if (
-            ctx is not None
-            and st.context_prev is not None
-            and ctx.shape == st.context_prev.shape
-        ):
+        # Validated against the expected shape, not against ``st.context_prev``:
+        # _new_state() leaves it None, so the old ``st.context_prev is not None``
+        # guard was never true and the pairing was always dropped. Losing it
+        # blinds the first post-restore step -- _esn_anomaly scores from the
+        # pre-advance context, and without it returns 0.0 and re-seeds
+        # context_prev, so a restart costs one scored step per episode.
+        if ctx is not None and ctx.shape == (self._w.shape[0] + 1,):
             st.context_prev = ctx
         beta = _arr("beta")
-        if beta is not None and st.beta is not None and beta.shape == st.beta.shape:
+        # Same for beta. An episode that finished warm-up solved its own
+        # readout; _new_state() copies it only from a fit(), so on an unfitted
+        # detector (the production path -- Monitor.default never calls fit)
+        # st.beta is None and the old guard dropped the solved readout. The
+        # episode then re-warmed: warm_n was restored past warmup_steps while
+        # warm_ctx/warm_tgt were still empty (they are cleared at the end of a
+        # completed warm-up), so the next observe re-solved from a single pair
+        # and re-seeded the residual statistics from that one sample,
+        # collapsing res_n to 1 and recalibrating the anomaly band.
+        if beta is not None and beta.shape == self._rhs_shape():
             st.beta = beta
         gram = _arr("gram")
         rhs = _arr("rhs")
@@ -384,6 +395,17 @@ class EsnCusumDetector:
         st.warm_n = int(raw.get("warm_n", 0))
         st.warm_ctx = [np.array(c, dtype=float) for c in raw.get("warm_ctx", [])]
         st.warm_tgt = [np.array(t, dtype=float) for t in raw.get("warm_tgt", [])]
+        # Internal consistency of a live state: warm_n counts the buffered
+        # pairs, and a completed warm-up always leaves a solved beta with the
+        # buffers cleared. A snapshot that breaks either invariant (beta absent
+        # but warm_n past the threshold, or a count that outruns its buffers)
+        # would, on the next observe, solve from the restored gram/rhs and call
+        # _seed_residual_stats over warm_ctx -- re-seeding the residual band
+        # from one sample and discarding the restored statistics. Clamp the
+        # count to the pairs actually carried so a foreign payload re-warms
+        # honestly instead of recalibrating silently.
+        if st.beta is None:
+            st.warm_n = min(st.warm_n, len(st.warm_ctx))
 
     # --- internals ---------------------------------------------------------
 

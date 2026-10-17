@@ -20,6 +20,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   snapshot/restore; it now matches. The snapshot also carries the fitted
   readout, so a host that trained on a known-healthy run keeps that model
   across the restart instead of re-learning the live stream (#581).
+- Follow-up to that restore (#581): it serialised every episode's readout and
+  scoring context but then dropped both on load. `_state_from_dict` restored
+  `state`, `gram` and `rhs` by validating the *snapshot's* array shapes, but
+  restored `beta` and `context_prev` by asking whether the *fresh* state
+  already held them -- and `_new_state()` always leaves `context_prev` None,
+  and leaves `beta` None on an unfitted detector. Both guards were therefore
+  unreachable. Losing `context_prev` cost every restored episode its first
+  scored step (`_esn_anomaly` scores from the pre-advance context and returns
+  0.0 without it). Losing `beta` hit the production path, because
+  `Monitor.default()` builds `EsnCusumDetector` without calling `fit()`, so
+  each episode's readout is the one it solved for itself during warm-up. With
+  it dropped, `warm_n` was restored past `warmup_steps` while `warm_ctx`/
+  `warm_tgt` were still empty (they are cleared when a warm-up completes), so
+  the next observe re-solved from a single new pair and re-seeded the residual
+  statistics from that one sample -- collapsing `res_n` and recalibrating the
+  anomaly band on one residual instead of the episode's history. Both fields
+  are now restored by validating their shapes against the live reservoir, like
+  the other three; a snapshot whose `warm_n` outruns the buffers it carries
+  clamps to the pairs actually present so a foreign payload re-warms honestly
+  instead of recalibrating silently.
 
 ### Added
 - `silent_abort_output_action_types` is now a `Config` field
