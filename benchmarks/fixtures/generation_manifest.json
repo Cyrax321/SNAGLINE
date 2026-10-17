@@ -1,0 +1,20 @@
+{
+  "commit_sha": "f91b1fd934f20f776778b3ce1b8422d2c2a28bc0",
+  "files": {
+    "baseline": "goal_drift_baseline.json",
+    "healthy": "healthy_controls.jsonl",
+    "labeled": "labeled_episodes.jsonl"
+  },
+  "generator_version": "3.0",
+  "healthy_controls": 60,
+  "labeled_episodes": 170,
+  "labeled_variants_per_trigger": 10,
+  "legacy_variants_per_trigger": 4,
+  "onset_semantics": "the first event that intentionally introduces the labeled failure condition; null on healthy controls",
+  "platform": "Windows-11-10.0.26300-SP0",
+  "python_version": "3.13.1",
+  "seed_scheme": "random.Random(seed) per episode, seed = f\"{episode_id}/seed\"; the seed string is persisted as the record's `seed` field",
+  "step_index_convention": "zero-based index into the episode's events list",
+  "total_episodes": 230,
+  "trigger_count": 17
+}

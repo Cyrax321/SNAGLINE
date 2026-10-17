@@ -694,6 +694,22 @@ def test_committed_corpus_shape(harness) -> None:
     assert len(labeled) >= 28 and len(healthy) >= 28
     covered = set().union(*(e.label_triggers for e in labeled))
     assert covered == set(harness.SHIPPED_TRIGGERS)
+    # Stage 3 grew the corpus to a fixed 17 x 10 labeled + 60 healthy shape.
+    # Pinning it here catches an accidental regeneration that drops a variant
+    # family, and the per-variant split catches a generator that stops emitting
+    # the config envelope the goal_drift / ml_ensemble labels require.
+    assert len(labeled) == 170 and len(healthy) == 60
+    counts: dict[str, int] = {}
+    variants: dict[str, set[str]] = {}
+    for ep in labeled:
+        trig = next(iter(ep.label_triggers))
+        counts[trig] = counts.get(trig, 0) + 1
+        variants.setdefault(trig, set()).add(ep.config_variant)
+    assert counts == {t: 10 for t in harness.SHIPPED_TRIGGERS}
+    # goal_drift and ml_ensemble episodes must carry their own variant: the
+    # labels are only decidable under their opt-in detectors.
+    assert variants["goal_drift"] == {"goal_drift"}
+    assert variants["ml_ensemble"] == {"ml_ensemble"}
 
 
 def test_committed_corpus_separates_cleanly(harness, committed_outcomes) -> None:
@@ -701,7 +717,16 @@ def test_committed_corpus_separates_cleanly(harness, committed_outcomes) -> None
     control stays silent. Some detectors overlap by design (e.g., stall also
     satisfies loop's repeat count and meltdown's single-tool window), so the
     per-trigger table may show extra FP for those overlapping shapes, but
-    no healthy control may fire and every label must be present."""
+    no healthy control may fire and every label must be present.
+
+    Stage 3 pinned which triggers may cross-fire, and on how many episodes,
+    so a drift here is a detector change to investigate rather than noise:
+    loop <- {stagnation}, meltdown_low <- stall, cycle <- stagnation
+    (one stagnation episode is periodic enough for the cycle mode's
+    minimal-period scan). Stage 4 retired the intra-detector half of that
+    map -- stall and cycle now supersede the plain loop finding on the same
+    episode -- leaving only cross-detector overlap. See
+    reports/EVAL_FINDINGS.md section 6."""
     for outcome in committed_outcomes:
         intended = outcome.label_triggers or set()
         assert intended.issubset(outcome.predicted), (
@@ -716,13 +741,27 @@ def test_committed_corpus_separates_cleanly(harness, committed_outcomes) -> None
     report = harness.score(committed_outcomes)
     for trig in harness.SHIPPED_TRIGGERS:
         stats = report.per_trigger[trig]
-        assert stats.tp == 4 and stats.fn == 0, trig
-        # FP from overlapping shapes (stall->loop/meltdown, stagnation->loop)
-        # is expected and reflects detector overlap, not a corpus bug.
-        if trig not in ("loop", "meltdown_low"):
-            assert stats.fp == 0, trig
-    # Macro may be <1.0 due to known overlaps (stall is also a loop).
-    assert report.macro_f1 >= 0.9
+        assert stats.tp == 10 and stats.fn == 0, trig
+    # Cross-firing is pinned per trigger: a change in any of these counts is a
+    # detector change to diagnose, not tolerated noise. Stage 4 added
+    # loop-family arbitration (detectors/loop.py: ``stall`` and ``cycle``
+    # declare via FailureRisk.supersedes that they replace the coarser plain
+    # ``loop`` finding on the episode, and replay_episode applies it), so the
+    # 13 loop cross-firings a stall or cycle actually describes are now
+    # attributed to the trigger that names the shape. What remains is
+    # cross-detector overlap, which intra-family arbitration cannot reach:
+    # stagnation still trips the plain loop rule by pigeonhole (7-9 distinct
+    # signatures over ~100 steps), stall still fills meltdown_low's 20-step
+    # entropy window six steps before its own 25-step streak, and
+    # stagnation-09 is still periodic enough for the cycle band.
+    assert report.per_trigger["loop"].fp == 9, "stagnation 9 (cross-detector)"
+    assert report.per_trigger["meltdown_low"].fp == 10, "stall"
+    assert report.per_trigger["cycle"].fp == 1, "stagnation-09 is periodic"
+    for trig in harness.SHIPPED_TRIGGERS:
+        if trig not in ("loop", "meltdown_low", "cycle"):
+            assert report.per_trigger[trig].fp == 0, trig
+    # Macro may be <1.0 due to those documented cross-detector overlaps.
+    assert report.macro_f1 >= 0.95
     assert report.healthy_fired == 0
 
 
@@ -756,8 +795,10 @@ def _table_rows(harness, report):
         for ln in lines[2:]
         if ln
         and not ln.startswith("-")
-        and not ln.startswith(("macro-F1", "episodes", "confusion", "  "))
+        and not ln.startswith("macro-")
+        and not ln.startswith(("episodes", "confusion", "  "))
         and "healthy controls that fired" not in ln
+        and "healthy false-positive rate" not in ln
     ]
     return header, trig_rows
 

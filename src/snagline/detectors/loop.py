@@ -59,6 +59,7 @@ from snagline.risk import FailureRisk, TriggerType
 # downstream policy layers map them by name. They live in the TriggerType
 # literal in risk.py alongside the loop-hardening and side-effect-guard
 # groups (issue #304).
+TRIGGER_LOOP: TriggerType = "loop"
 TRIGGER_NEAR_DUPLICATE_LOOP: TriggerType = "near_duplicate_loop"
 TRIGGER_CYCLE: TriggerType = "cycle"
 TRIGGER_STALL: TriggerType = "stall"
@@ -367,6 +368,12 @@ class LoopDetector:
             TRIGGER_CYCLE,
             f"period-{period} cycle across last {len(w)} steps",
             event.timestamp,
+            # A short-period cycle also satisfies the plain loop rule (a
+            # period-2 window holds each signature six times), so the coarse
+            # alert has named the same repetition less precisely. Declare the
+            # substitution; the plain risk is still emitted and still lands on
+            # every sink, so nothing is silenced.
+            supersedes=(TRIGGER_LOOP,),
         )
 
     def _minimal_period(self, w: deque) -> int | None:
@@ -427,6 +434,14 @@ class LoopDetector:
             TRIGGER_STALL,
             f"identical action {count} steps in a row ({elapsed:.3f}s elapsed)",
             event.timestamp,
+            # 25 consecutive identical signatures necessarily contain 3 inside
+            # the 12-step loop window, so ``stall`` is a strict superset of the
+            # plain loop condition and the coarse alert fired ~22 steps ago --
+            # naming a repetition rather than the stall it became. Declare the
+            # substitution so the episode is attributed to the trigger that
+            # describes it. The plain risk was already dispatched and is not
+            # retracted; this corrects the record, not the alert stream.
+            supersedes=(TRIGGER_LOOP,),
         )
 
     def reset(self, episode_id: str) -> None:
