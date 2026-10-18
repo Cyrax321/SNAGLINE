@@ -64,7 +64,7 @@ if [ "$RISKS" -eq 0 ]; then ok "raw loop healthy: zero false positives"; else fa
 echo ""
 echo "--- replay: injected loop trajectory ---"
 REPLAY=$(snagline replay tests/fixtures/trajectories/injected_loop.jsonl --summary 2>&1)
-echo "$REPLAY" | grep -q "2 risk" && ok "replay detects loop fixture" || fail "replay missed loop fixture"
+echo "$REPLAY" | grep -q '"trigger": "loop"' && ok "replay detects loop fixture" || fail "replay missed loop fixture"
 
 echo "--- replay: healthy trajectory ---"
 HEALTHY=$(snagline replay tests/fixtures/trajectories/healthy_run.jsonl --quiet --summary 2>&1)
@@ -80,21 +80,25 @@ echo "$LAT" | grep -q "risk" && ok "replay detects latency spike" || fail "repla
 
 # ── 4. LangChain chaos harness (no API key needed) ──
 echo ""
-echo "--- LangChain chaos: loop mode ---"
-LC_LOOP=$(python3 examples/real_agent_demo.py --mode loop 2>&1 | grep -c '"trigger": "loop"' || true)
-[ "$LC_LOOP" -gt 0 ] && ok "LangChain loop detected ($LC_LOOP fires)" || fail "LangChain loop not detected"
+if python3 -c "from langchain_core.tools import Tool" 2>/dev/null; then
+    echo "--- LangChain chaos: loop mode ---"
+    LC_LOOP=$(python3 examples/real_agent_demo.py --mode loop 2>&1 | grep -c '"trigger": "loop"' || true)
+    [ "$LC_LOOP" -gt 0 ] && ok "LangChain loop detected ($LC_LOOP fires)" || fail "LangChain loop not detected"
 
-echo "--- LangChain chaos: error mode ---"
-LC_ERR=$(python3 examples/real_agent_demo.py --mode error 2>&1 | grep -c '"trigger": "error_cascade"' || true)
-[ "$LC_ERR" -gt 0 ] && ok "LangChain error_cascade detected ($LC_ERR fires)" || fail "LangChain error_cascade not detected"
+    echo "--- LangChain chaos: error mode ---"
+    LC_ERR=$(python3 examples/real_agent_demo.py --mode error 2>&1 | grep -c '"trigger": "error_cascade"' || true)
+    [ "$LC_ERR" -gt 0 ] && ok "LangChain error_cascade detected ($LC_ERR fires)" || fail "LangChain error_cascade not detected"
 
-echo "--- LangChain chaos: latency mode ---"
-LC_LAT=$(python3 examples/real_agent_demo.py --mode latency 2>&1 | grep -c '"trigger": "latency_anomaly"' || true)
-[ "$LC_LAT" -gt 0 ] && ok "LangChain latency_anomaly detected ($LC_LAT fires)" || fail "LangChain latency_anomaly not detected"
+    echo "--- LangChain chaos: latency mode ---"
+    LC_LAT=$(python3 examples/real_agent_demo.py --mode latency 2>&1 | grep -c '"trigger": "latency_anomaly"' || true)
+    [ "$LC_LAT" -gt 0 ] && ok "LangChain latency_anomaly detected ($LC_LAT fires)" || fail "LangChain latency_anomaly not detected"
 
-echo "--- LangChain chaos: healthy mode (false-positive check) ---"
-LC_HLTH=$(python3 examples/real_agent_demo.py --mode healthy 2>&1 | grep -c '"trigger"' || true)
-[ "$LC_HLTH" -eq 0 ] && ok "LangChain healthy: zero false positives" || fail "LangChain healthy: $LC_HLTH false positive(s)"
+    echo "--- LangChain chaos: healthy mode (false-positive check) ---"
+    LC_HLTH=$(python3 examples/real_agent_demo.py --mode healthy 2>&1 | grep -c '"trigger"' || true)
+    [ "$LC_HLTH" -eq 0 ] && ok "LangChain healthy: zero false positives" || fail "LangChain healthy: $LC_HLTH false positive(s)"
+else
+    skip "LangChain chaos harness (langchain-core not installed)"
+fi
 
 # ── 5. LangGraph real agent executor (no API key needed) ──
 echo ""
@@ -121,19 +125,22 @@ sleep 1
 HEALTH=$(curl -sf http://127.0.0.1:8797/health) && echo "$HEALTH" | grep -q '"ok"' && ok "sidecar /health" || fail "sidecar /health"
 
 # canonical StepEvent ingestion + loop detection
+INGESTED=""
 for i in 1 2 3 4; do
-    curl -s -X POST http://127.0.0.1:8797/events -d "{\"step_id\":\"$i\",\"episode_id\":\"s1\",\"timestamp\":1718300000.0,\"action_type\":\"tool_call\",\"action_signature\":\"aaa\",\"tool_name\":\"t\"}" > /dev/null
+    INGESTED=$(curl -s -X POST -H 'Content-Type: application/json' http://127.0.0.1:8797/events -d "{\"step_id\":\"$i\",\"episode_id\":\"s1\",\"timestamp\":1718300000.0,\"action_type\":\"tool_call\",\"action_signature\":\"aaa\",\"tool_name\":\"t\"}")
 done
-ok "sidecar /events ingests 4 steps (see loop risk above)"
+echo "$INGESTED" | grep -q '"ingested"' && ok "sidecar /events ingests 4 steps (see loop risk above)" || fail "sidecar /events: $INGESTED"
 
 # Claude Code native payload
+CC_HOOK=""
 for i in 1 2 3 4; do
-    curl -s -X POST http://127.0.0.1:8797/hooks/claude-code -d "{\"session_id\":\"cc1\",\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ls\"},\"tool_use_id\":\"c$i\"}" > /dev/null
+    CC_HOOK=$(curl -s -X POST -H 'Content-Type: application/json' http://127.0.0.1:8797/hooks/claude-code -d "{\"session_id\":\"cc1\",\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ls\"},\"tool_use_id\":\"c$i\"}")
 done
-ok "sidecar /hooks/claude-code (see loop risk above)"
+echo "$CC_HOOK" | grep -q '"ingested"' && ok "sidecar /hooks/claude-code (see loop risk above)" || fail "sidecar /hooks/claude-code: $CC_HOOK"
 
 # unmapped lifecycle -> ignored
-curl -s -X POST http://127.0.0.1:8797/hooks/claude-code -d '{"hook_event_name":"SessionStart"}' | grep -q '"ignored"' && ok "sidecar ignores lifecycle noise" || fail "sidecar did not ignore lifecycle noise"
+IGNORED=$(curl -s -X POST -H 'Content-Type: application/json' http://127.0.0.1:8797/hooks/claude-code -d '{"hook_event_name":"SessionStart"}')
+echo "$IGNORED" | grep -q '"ignored"' && ok "sidecar ignores lifecycle noise" || fail "sidecar did not ignore lifecycle noise: $IGNORED"
 kill $SIDE 2>/dev/null; wait $SIDE 2>/dev/null || true
 
 # ── 7. Command bridge (snagline hook) ──

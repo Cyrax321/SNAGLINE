@@ -205,6 +205,33 @@ jobs:
           path: accuracy-report.json
           if-no-files-found: ignore
 
+  smoke:
+    # End-to-end wiring: examples, the sidecar, both bridges, and the hook CLI (issue #621).
+    # A hook must never break the host, so this never blocks on an API key.
+    # Framework sections (LangChain, LangGraph) skip under zero extras;
+    # see the unit test matrix for framework integration coverage.
+    name: Real-world smoke (tests/real_world_test.sh)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install (stdlib-only core, zero extras)
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Smoke
+        run: |
+          . .venv/bin/activate
+          bash tests/real_world_test.sh
+
   version-tag-check:
     # Guard for #105: ensure the version in pyproject.toml has a matching
     # annotated tag. Runs only on pushes to master/main; PRs are not expected
