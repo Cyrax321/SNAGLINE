@@ -809,7 +809,7 @@ Contributions are welcome. This project is open source under Apache-2.0 and deli
 
 ### Local development setup
 
-The core has no runtime dependencies; dev tooling is in the `dev` extra:
+The project uses `pip` and `pyproject.toml` as its authoritative dependency workflow (pinned CI dev tools are defined in the `dev` extra). The core has no runtime dependencies:
 
 ```bash
 pip install -e ".[dev]"
