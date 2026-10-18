@@ -738,6 +738,18 @@ def _cmd_watch(args: argparse.Namespace) -> int:
     return 0
 
 
+# Required positional fields and complete field set for StepEvent (issue #620).
+# Mirrors the 13 fields round-tripped losslessly by _event_to_json below.
+_REQUIRED_EVENT_FIELDS: frozenset[str] = frozenset(
+    f.name
+    for f in dataclasses.fields(StepEvent)
+    if f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING
+)
+_ALL_EVENT_FIELDS: frozenset[str] = frozenset(
+    f.name for f in dataclasses.fields(StepEvent)
+)
+
+
 def _cmd_hook(args: argparse.Namespace) -> int:
     """Universal command-hook bridge (fail-open: ALWAYS exits 0).
 
@@ -753,6 +765,12 @@ def _cmd_hook(args: argparse.Namespace) -> int:
         payload = json.loads(raw)
         if not isinstance(payload, dict):
             raise ValueError("payload must be a JSON object")
+        if "hook_event_name" in payload and not isinstance(
+            payload["hook_event_name"], str
+        ):
+            raise ValueError(
+                f"hook_event_name must be a string, got {type(payload['hook_event_name']).__name__}"
+            )
         from snagline.adapters.claude_code import (
             is_claude_code_payload,
             payload_to_event,
@@ -761,7 +779,20 @@ def _cmd_hook(args: argparse.Namespace) -> int:
         if is_claude_code_payload(payload):
             event = payload_to_event(payload, tracker=None)
         else:
-            event = StepEvent(**payload)  # already canonical
+            try:
+                event = StepEvent(**payload)  # already canonical
+            except TypeError as exc:
+                missing = _REQUIRED_EVENT_FIELDS - set(payload)
+                unknown = set(payload) - _ALL_EVENT_FIELDS
+                if missing:
+                    raise ValueError(
+                        f"missing StepEvent fields: {sorted(missing)}"
+                    ) from exc
+                if unknown:
+                    raise ValueError(
+                        f"unknown StepEvent fields: {sorted(unknown)}"
+                    ) from exc
+                raise ValueError(str(exc)) from exc
     except Exception as exc:
         print(f"snagline hook: ignoring malformed payload: {exc}", file=sys.stderr)
         return 0  # fail-open: never fail the host's hook invocation
