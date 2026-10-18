@@ -112,7 +112,11 @@ detector's behavior is exactly the plain path above.
 The trigger strings `near_duplicate_loop`, `cycle`, and `stall` are API:
 downstream policy layers map them by name. When several shapes fire on the
 same step the plain-loop risk keeps precedence; each mode still advances its
-state every step, so nothing is lost.
+state every step, so nothing is lost. When a more specific shape (`cycle` or
+`stall`) fires, the emitted risk declares via `supersedes` and
+`superseded_step_ids` which earlier coarse loop findings it replaces, so
+downstream consumers or evaluation harnesses can retire them without silencing
+real-time dispatches.
 
 ## Pre-execution authorization (`snagline.authorize`)
 

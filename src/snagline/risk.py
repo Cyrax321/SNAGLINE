@@ -79,6 +79,15 @@ class FailureRisk:
     # min_severity-filtered sinks. "" is not a legal severity value, so it
     # can only mean "unset".
     severity: str = ""
+    # Triggers whose earlier, coarser finding this risk replaces for the
+    # episode. Empty (the default) means "standalone finding".
+    supersedes: tuple[TriggerType, ...] = ()
+    # Specific step_ids this risk retires (e.g. earlier coarse loop firings
+    # that described the same repeated action).
+    superseded_step_ids: tuple[str, ...] = ()
+    # Specific triggers that supersede this risk (if emitted after a more
+    # specific trigger already fired on the same repeated actions).
+    superseded_by: tuple[TriggerType, ...] = ()
 
     def __post_init__(self) -> None:
         # Derive a routing hint from the score only when the caller left
