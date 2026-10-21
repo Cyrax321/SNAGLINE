@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   across the restart instead of re-learning the live stream (#581).
 
 ### Added
+- Added a `workflow-lint` job to `.github/workflows/ci.yml` running
+  `rhysd/actionlint@v1.7.7` and added `tests/test_workflows_yaml.py` to validate
+  that all GitHub Actions workflows parse as valid YAML without syntax or
+  indentation errors. This prevents unparseable workflows from merging and
+  failing silently on subsequent runs (#600).
+
 - `silent_abort_output_action_types` is now a `Config` field
   (`SNAGLINE_SILENT_ABORT_OUTPUT_ACTION_TYPES`, comma-separated), read by
   `Monitor.default()`. `SilentAbortDetector` documents its

@@ -205,6 +205,17 @@ jobs:
           path: accuracy-report.json
           if-no-files-found: ignore
 
+  workflow-lint:
+    # Workflow linter (issue #600): runs actionlint on all .github/workflows/*.yml
+    # on every push and PR to catch unparseable workflows, syntax errors, and expression
+    # bugs before merging, preventing broken workflows from failing silently on push.
+    name: Lint workflows (actionlint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Lint workflows (actionlint)
+        uses: rhysd/actionlint@v1.7.7
+
   version-tag-check:
     # Guard for #105: ensure the version in pyproject.toml has a matching
     # annotated tag. Runs only on pushes to master/main; PRs are not expected
