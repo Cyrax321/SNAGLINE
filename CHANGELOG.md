@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `near_duplicate_loop` is no longer `INTENTIONALLY_UNGATED` in the benchmark
+  harness (`benchmarks/detection_accuracy.py`). It now has labeled fixture episodes
+  covering UUID and digit-variant arguments, healthy controls exercising
+  similar-but-distinct actions, and `loop_near_duplicate_enabled=True` in
+  `harness_config`. The detection-accuracy table now covers all 18 shipped
+  triggers at macro-F1 0.954 (#609).
 - `EsnCusumDetector` (the `snagline[ml]` extra) now participates in
   `Monitor.snapshot()`/`restore()`. It had no `dump_state`/`load_state`, and
   `MLOrchestrator.dump_state` reaches its bases with a `getattr` guard, so the

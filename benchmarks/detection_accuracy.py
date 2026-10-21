@@ -81,15 +81,15 @@ SHIPPED_TRIGGERS: tuple[str, ...] = (
     "governance_decay",
     "cycle",
     "stall",
+    "near_duplicate_loop",
     "idle_gap",
     "wall_clock_budget",
 )
 # Triggers that exist in code but are intentionally not gated here.
-# - near_duplicate_loop: LoopDetector hardening mode behind its own flag; not
-#   yet given labeled fixtures, so it would be counted as uncovered if listed.
 # - semantic_drift: not a distinct trigger string; the drift extra emits the
 #   same "goal_drift" label, so gating it separately would double-count.
-INTENTIONALLY_UNGATED: tuple[str, ...] = ("near_duplicate_loop",)
+# (near_duplicate_loop was previously ungated; labeled fixtures added in #609)
+INTENTIONALLY_UNGATED: tuple[str, ...] = ()
 
 # Harness config variants (issue #118). Every variant includes the standard
 # flags above; the named opt-in detector is switched on top of them.
@@ -141,6 +141,7 @@ def harness_config(
         compaction_tripwire_enabled=True,
         loop_cycle_enabled=True,
         loop_stall_enabled=True,
+        loop_near_duplicate_enabled=True,
         idle_warn_seconds=10.0,
         max_episode_wall_seconds=120.0,
     )

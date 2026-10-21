@@ -114,16 +114,22 @@ def _tc(
     side_effect: bool = False,
     metadata: dict | None = None,
     timestamp: float | None = None,
+    action_signature: str | None = None,
 ) -> dict:
     """Build one StepEvent-compatible dict (structure only, no content)."""
+    sig = (
+        action_signature
+        if action_signature is not None
+        else make_signature(
+            action_type, tool if action_type == "tool_call" else None, args
+        )
+    )
     d: dict = {
         "step_id": f"{ep}-s{i}",
         "episode_id": ep,
         "timestamp": BASE_TS + i * STEP_GAP_S if timestamp is None else timestamp,
         "action_type": action_type,
-        "action_signature": make_signature(
-            action_type, tool if action_type == "tool_call" else None, args
-        ),
+        "action_signature": sig,
         "tool_name": tool if action_type == "tool_call" else None,
         "latency_ms": latency_ms,
         "error": error,
@@ -420,6 +426,60 @@ def build_stall(ep: str, rng: random.Random) -> list[dict]:
     return b.finish_with_output()
 
 
+def build_near_duplicate_loop(ep: str, rng: random.Random) -> list[dict]:
+    """Three near-duplicate calls (UUID or digit variants) inside the 12-slot window.
+
+    Raw signatures are pairwise distinct so plain loop stays silent, but
+    normalization collapses volatile UUIDs or digit runs to one key so
+    near_duplicate_loop fires at count 3. Total tool calls stay well below the
+    20-slot meltdown window so entropy is inert.
+    """
+    b = _Builder(ep, rng)
+    # Varied warmup with non-digit args to keep all detectors quiet
+    b.add("search_web", "query=alpha")
+    b.add("read_file", "path=init.txt")
+    b.add("call_api", "endpoint=status")
+
+    var = int(ep.split("-")[-1]) if "-" in ep else 0
+    if var == 0:
+        uuids = [
+            "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+            "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+            "e3b0c442-98fc-1c14-9afb-4c7b8e5f9a01",
+        ]
+        for u in uuids:
+            b.add("fetch_user", f"id={u}", action_signature=f"fetch_user:id={u}")
+    elif var == 1:
+        for i in range(3):
+            b.add(
+                "fetch_page",
+                f"page={101 + i}",
+                action_signature=f"fetch_page:page={101 + i}",
+            )
+    elif var == 2:
+        uuids = [
+            "12345678-1234-1234-1234-123456789abc",
+            "87654321-4321-4321-4321-cba987654321",
+            "abcdef01-2345-6789-abcd-ef0123456789",
+        ]
+        for u in uuids:
+            b.add(
+                "download_artifact",
+                f"run_id={u}",
+                action_signature=f"download_artifact:run_id={u}",
+            )
+    else:
+        for i in range(3):
+            b.add(
+                "query_order",
+                f"order_id={5001 + i}",
+                action_signature=f"query_order:order_id={5001 + i}",
+            )
+
+    b.add("summarize", "target=result")
+    return b.finish_with_output()
+
+
 def build_idle_gap(ep: str, rng: random.Random) -> list[dict]:
     """One gap >=10s between consecutive ingests fires idle_gap.
 
@@ -644,6 +704,7 @@ LABELED_BUILDERS = {
     "governance_decay": build_governance_decay,
     "cycle": build_cycle,
     "stall": build_stall,
+    "near_duplicate_loop": build_near_duplicate_loop,
     "idle_gap": build_idle_gap,
     "wall_clock_budget": build_wall_clock_budget,
 }
@@ -875,6 +936,61 @@ def _healthy_long(ep: str, rng: random.Random, n: int) -> list[dict]:
     return healthy_plain(ep, rng, n)
 
 
+def healthy_near_duplicate_pair_recovery(ep: str, rng: random.Random) -> list[dict]:
+    """Two near-duplicate calls then recovery: count 2 < repeat_threshold 3.
+
+    A second pair under a different action template appears later, also staying
+    at 2 repeats. Neither plain loop nor near_duplicate_loop ever reaches
+    the threshold of 3.
+    """
+    b = _Builder(ep, rng)
+    b.add("fetch_page", "page=101", action_signature="fetch_page:page=101")
+    b.add("fetch_page", "page=102", action_signature="fetch_page:page=102")
+    b.add("search_web", "query=alpha")
+    b.add("read_file", "path=beta")
+    b.add("run_sql", "query=gamma")
+    b.add("query_user", "id=201", action_signature="query_user:id=201")
+    b.add("query_user", "id=202", action_signature="query_user:id=202")
+    b.add("summarize", "target=doc")
+    return b.finish_with_output()
+
+
+def healthy_near_duplicate_distinct_actions(ep: str, rng: random.Random) -> list[dict]:
+    """Distinct tools each called with UUID parameters stay silent.
+
+    Even though volatile UUIDs collapse to <uuid>, the action names differ
+    (get_user vs delete_pod vs search_resource vs send_notification), so each
+    normalized key has count 1.
+    """
+    b = _Builder(ep, rng)
+    uuids = [
+        "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+        "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+        "e3b0c442-98fc-1c14-9afb-4c7b8e5f9a01",
+        "12345678-1234-1234-1234-123456789abc",
+    ]
+    tools = ["get_user", "delete_pod", "search_resource", "send_notification"]
+    for t, u in zip(tools, uuids, strict=True):
+        b.add(t, f"id={u}", action_signature=f"{t}:id={u}")
+    b.add("read_file", "path=done.txt")
+    return b.finish_with_output()
+
+
+def healthy_near_duplicate_opaque_hashes(ep: str, rng: random.Random) -> list[dict]:
+    """Opaque hex digests without dashes do not collapse under the heuristic.
+
+    Hex strings without UUID formatting remain distinct after normalization,
+    proving that genuinely different hashes are not falsely grouped into loops.
+    """
+    b = _Builder(ep, rng)
+    hashes = ["a1b2c3d4e5f60718", "b2c3d4e5f6071829", "d4e5f6a70819283b"]
+    for h in hashes:
+        b.add("check_blob", f"hash={h}", action_signature=f"check_blob:hash={h}")
+    b.add("search_web", "query=ok")
+    b.add("summarize", "target=final")
+    return b.finish_with_output()
+
+
 HEALTHY_BUILDERS = [
     # plain varied runs at several lengths
     lambda ep, rng: healthy_plain(ep, rng, 10),
@@ -918,6 +1034,10 @@ HEALTHY_BUILDERS = [
     lambda ep, rng: _healthy_long(ep, rng, 58),
     lambda ep, rng: _healthy_long(ep, rng, 60),
     lambda ep, rng: _healthy_long(ep, rng, 62),
+    # Healthy controls for near_duplicate_loop (issue #609)
+    healthy_near_duplicate_pair_recovery,
+    healthy_near_duplicate_distinct_actions,
+    healthy_near_duplicate_opaque_hashes,
 ]
 
 

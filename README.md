@@ -446,28 +446,29 @@ no cherry-picking, and no claim of parity with the source paper
 replay results on the synthetic fixture corpus:
 
 ```
-trigger            TP   FP   FN  precision   recall      f1
------------------------------------------------------------
-loop                4    8    0      0.333    1.000   0.500
-error_cascade       4    0    0      1.000    1.000   1.000
-latency_anomaly     4    0    0      1.000    1.000   1.000
-token_runaway       4    0    0      1.000    1.000   1.000
-budget_breach       4    0    0      1.000    1.000   1.000
-meltdown_low        4    4    0      0.500    1.000   0.667
-meltdown_high       4    0    0      1.000    1.000   1.000
-silent_abort        4    0    0      1.000    1.000   1.000
-goal_drift          4    0    0      1.000    1.000   1.000
-ml_ensemble         4    0    0      1.000    1.000   1.000
-stagnation          4    0    0      1.000    1.000   1.000
+trigger                 TP   FP   FN  precision   recall      f1
+----------------------------------------------------------------
+loop                     4    8    0      0.333    1.000   0.500
+error_cascade            4    0    0      1.000    1.000   1.000
+latency_anomaly          4    0    0      1.000    1.000   1.000
+token_runaway            4    0    0      1.000    1.000   1.000
+budget_breach            4    0    0      1.000    1.000   1.000
+meltdown_low             4    4    0      0.500    1.000   0.667
+meltdown_high            4    0    0      1.000    1.000   1.000
+silent_abort             4    0    0      1.000    1.000   1.000
+goal_drift               4    0    0      1.000    1.000   1.000
+ml_ensemble              4    0    0      1.000    1.000   1.000
+stagnation               4    0    0      1.000    1.000   1.000
 side_effect_duplicate    4    0    0      1.000    1.000   1.000
-governance_decay    4    0    0      1.000    1.000   1.000
-cycle               4    0    0      1.000    1.000   1.000
-stall               4    0    0      1.000    1.000   1.000
-idle_gap            4    0    0      1.000    1.000   1.000
-wall_clock_budget    4    0    0      1.000    1.000   1.000
------------------------------------------------------------
-macro-F1: 0.951
-episodes: 109 (68 labeled, 41 healthy controls)
+governance_decay         4    0    0      1.000    1.000   1.000
+cycle                    4    0    0      1.000    1.000   1.000
+stall                    4    0    0      1.000    1.000   1.000
+near_duplicate_loop      4    0    0      1.000    1.000   1.000
+idle_gap                 4    0    0      1.000    1.000   1.000
+wall_clock_budget        4    0    0      1.000    1.000   1.000
+----------------------------------------------------------------
+macro-F1: 0.954
+episodes: 116 (72 labeled, 44 healthy controls)
 confusion (firings on other data):
   stagnation -> loop: 4
   stall -> loop: 4
