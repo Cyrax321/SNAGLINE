@@ -875,6 +875,99 @@ def _healthy_long(ep: str, rng: random.Random, n: int) -> list[dict]:
     return healthy_plain(ep, rng, n)
 
 
+def healthy_three_retries_spaced_recovery(ep: str, rng: random.Random) -> list[dict]:
+    """Three retries across an episode that succeed on the third attempt.
+
+    In any single 12-step window, at most 2 occurrences appear (under the
+    repeat_threshold of 3). Intermediate recovery and diagnostic tool calls
+    allow earlier attempts to age out of the sliding window, exercising the
+    eviction boundary without triggering a false positive (issue #605).
+    """
+    b = _Builder(ep, rng)
+    # Attempt 1 (fails)
+    b.add("fetch_data", "endpoint=/flaky", error=True, error_type="Timeout")
+    # Attempt 2 (fails)
+    b.add("fetch_data", "endpoint=/flaky", error=True, error_type="Timeout")
+    # Intermediate diagnostic & recovery work across tools (11 steps)
+    for i in range(11):
+        b.add(_cycle_tool(i), f"diag={rng.randrange(10**6)}")
+    # Attempt 3 (succeeds) - step 13, step 0 has aged out of the 12-slot window
+    b.add("fetch_data", "endpoint=/flaky", error=False)
+    b.add("summarize", "target=report")
+    return b.finish_with_output()
+
+
+def healthy_cusum_burst_sub_threshold(ep: str, rng: random.Random) -> list[dict]:
+    """A burst accumulating ~2.5 sigma of CUSUM before recovering below mean.
+
+    Freezes steady baseline over 20 steps (mu0=1000, sigma0=50). A short burst
+    pushes positive increments to accumulate ~2.5 sigma against the alarm
+    threshold of 5.0, then subsequent below-mean steps drain the accumulator
+    (issue #605).
+    """
+    b = _Builder(ep, rng)
+    for i in range(20):
+        b.add(
+            _cycle_tool(i),
+            f"t={rng.randrange(10**6)}",
+            tokens_in=800,
+            tokens_out=200,
+        )
+    # Burst step: 1150 tokens gives z=(1150-1000)/50 = 3.0, increment = 3.0 - 0.5 = 2.5
+    b.add(_cycle_tool(20), "burst_step", tokens_in=950, tokens_out=200)
+    # Recovery steps: 850 tokens gives z=(850-1000)/50 = -3.0, draining CUSUM
+    b.add(_cycle_tool(21), "recovery_step", tokens_in=650, tokens_out=200)
+    for i in range(5):
+        b.add(
+            _cycle_tool(22 + i),
+            f"post={rng.randrange(10**6)}",
+            tokens_in=800,
+            tokens_out=200,
+        )
+    return b.finish_with_output()
+
+
+def healthy_latency_post_warmup_sub_threshold(
+    ep: str, rng: random.Random
+) -> list[dict]:
+    """Latency control with 15+ timed events post-warmup staying under alarm line.
+
+    Absorbs 5-step warmup around 400ms (freezing mu0~400ms, sigma0~20ms).
+    Followed by 10 post-warmup timed calls with realistic jitter and a moderate
+    spike (450ms, z=2.5, inc=+2.0) that stays well below alarm threshold h=5.0,
+    directly exercising the active latency CUSUM detector post-warmup (issue #605).
+    """
+    b = _Builder(ep, rng)
+    for ms in (400.0, 395.0, 405.0, 398.0, 402.0):
+        b.add("search_web", f"q={rng.randrange(10**6)}", latency_ms=ms)
+    for ms in (410.0, 395.0, 450.0, 390.0, 400.0, 405.0, 395.0, 402.0, 398.0, 400.0):
+        b.add("search_web", f"q={rng.randrange(10**6)}", latency_ms=ms)
+    for i in range(5):
+        b.add(_cycle_tool(i), f"end={rng.randrange(10**6)}")
+    return b.finish_with_output()
+
+
+def healthy_planning_and_timed_tools(ep: str, rng: random.Random) -> list[dict]:
+    """Reasoning and plan_step actions followed by >= 10 timed tool calls.
+
+    Exercises non-tool action types (planning and reasoning steps) alongside
+    a sustained sequence of 12 timed tool calls cycling across the tool pool
+    (issue #605).
+    """
+    b = _Builder(ep, rng)
+    b.add("__plan__", "step1: analyze requirements", action_type="plan_step")
+    b.add("__plan__", "step2: query database", action_type="reasoning")
+    b.add("__plan__", "step3: aggregate findings", action_type="plan_step")
+    for i in range(12):
+        tool = _cycle_tool(i)
+        b.add(
+            tool,
+            f"exec={rng.randrange(10**6)}",
+            latency_ms=150.0 + (i % 3) * 10.0,
+        )
+    return b.finish_with_output()
+
+
 HEALTHY_BUILDERS = [
     # plain varied runs at several lengths
     lambda ep, rng: healthy_plain(ep, rng, 10),
@@ -918,6 +1011,11 @@ HEALTHY_BUILDERS = [
     lambda ep, rng: _healthy_long(ep, rng, 58),
     lambda ep, rng: _healthy_long(ep, rng, 60),
     lambda ep, rng: _healthy_long(ep, rng, 62),
+    # Issue #605: adversarial near-threshold controls exercising boundary cases
+    healthy_three_retries_spaced_recovery,
+    healthy_cusum_burst_sub_threshold,
+    healthy_latency_post_warmup_sub_threshold,
+    healthy_planning_and_timed_tools,
 ]
 
 

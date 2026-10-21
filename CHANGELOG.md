@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   across the restart instead of re-learning the live stream (#581).
 
 ### Added
+- Added four near-threshold healthy controls to the detection-accuracy fixture
+  corpus (`healthy_controls.jsonl`): a 3-retry-then-success trace exercising
+  loop window eviction, a CUSUM burst accumulating ~2.5 sigma before recovery,
+  an extended latency trajectory with 15+ post-warmup timed calls staying
+  under the alarm threshold, and a planning phase with reasoning steps and
+  >= 10 timed tool calls (#605).
 - `silent_abort_output_action_types` is now a `Config` field
   (`SNAGLINE_SILENT_ABORT_OUTPUT_ACTION_TYPES`, comma-separated), read by
   `Monitor.default()`. `SilentAbortDetector` documents its
