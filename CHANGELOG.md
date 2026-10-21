@@ -20,8 +20,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   snapshot/restore; it now matches. The snapshot also carries the fitted
   readout, so a host that trained on a known-healthy run keeps that model
   across the restart instead of re-learning the live stream (#581).
+- Fixed `SemanticGoalDriftDetector` being unable to detect goal changes and
+  multi-tool vocabulary shifts (#603). Previously, scoring a cumulative running
+  centroid over the entire episode diluted sustained distribution shifts and
+  washed out multi-tool vocabulary differences below the tolerance threshold.
+  The detector now measures deviation over a sliding window
+  (`semantic_drift_window_size`, default 20) using dual complementary
+  statistics (windowed centroid deviation and mean per-event deviation) with a
+  calibrated default tolerance of 0.2, resolving the multi-tool ceiling blind spot.
 
 ### Added
+- Added optional `intent: str | None = None` field to `StepEvent` and the `raw`
+  adapter step function, allowing hosts to declare high-level purpose without
+  violating the privacy contract. `_event_label` incorporates `event.intent`,
+  allowing `SemanticGoalDriftDetector` to detect goal changes when tools
+  remain identical (#603).
+- Added `Config.semantic_drift_window_size` (env
+  `SNAGLINE_SEMANTIC_DRIFT_WINDOW_SIZE`, default 20) with startup validation (#603).
+
 - `silent_abort_output_action_types` is now a `Config` field
   (`SNAGLINE_SILENT_ABORT_OUTPUT_ACTION_TYPES`, comma-separated), read by
   `Monitor.default()`. `SilentAbortDetector` documents its

@@ -253,7 +253,8 @@ the path variant below.
 | `SNAGLINE_SEMANTIC_DRIFT_ENABLED` | `semantic_drift_enabled` | False | Enable the semantic goal-drift detector (needs the `drift` extra) |
 | `SNAGLINE_SEMANTIC_DRIFT_MODEL` | `semantic_drift_model` | all-MiniLM-L6-v2 | sentence-transformers model to load for structural-label embeddings |
 | `SNAGLINE_SEMANTIC_DRIFT_MIN_SAMPLES` | `semantic_drift_min_samples` | 10 | Live steps before semantic scoring starts |
-| `SNAGLINE_SEMANTIC_DRIFT_TOLERANCE` | `semantic_drift_tolerance` | 0.3 | Cosine deviation treated as noise |
+| `SNAGLINE_SEMANTIC_DRIFT_WINDOW_SIZE` | `semantic_drift_window_size` | 20 | Sliding window size for live deviation (issue #603) |
+| `SNAGLINE_SEMANTIC_DRIFT_TOLERANCE` | `semantic_drift_tolerance` | 0.2 | Cosine deviation treated as noise (issue #603) |
 | `SNAGLINE_SEMANTIC_DRIFT_CUSUM_K` | `semantic_drift_cusum_k` | 0.05 | Slack subtracted per evaluation |
 | `SNAGLINE_SEMANTIC_DRIFT_CUSUM_H` | `semantic_drift_cusum_h` | 0.5 | Sustained-deviation alarm threshold |
 | `SNAGLINE_MAX_EPISODE_WALL_SECONDS` | `max_episode_wall_seconds` | None | Wall-clock budget per episode from event timestamps; unset disables |

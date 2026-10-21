@@ -65,6 +65,7 @@ def watch(
         tokens_out: int | None = None,
         metadata: dict[str, Any] | None = None,
         side_effect: bool = False,
+        intent: str | None = None,
         **extra: Any,
     ) -> StepEvent:
         sig = _build_signature(action_type, tool_name, args)
@@ -84,6 +85,7 @@ def watch(
             tokens_out=tokens_out,
             metadata=md,
             side_effect=side_effect,
+            intent=intent,
         )
         monitor.ingest(event)
         return event

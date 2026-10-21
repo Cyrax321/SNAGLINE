@@ -605,6 +605,7 @@ def _validated_counts_and_windows(cfg: Config) -> None:
         "loop_cycle_window_size",
         "meltdown_window_size",
         "meltdown_rearm_steps",
+        "semantic_drift_window_size",
     ):
         value = getattr(cfg, name)
         if value < 1:
@@ -800,7 +801,10 @@ class Config:
     semantic_drift_enabled: bool = False
     semantic_drift_model: str = "all-MiniLM-L6-v2"  # provenance + load target
     semantic_drift_min_samples: int = 10  # live steps before scoring starts
-    semantic_drift_tolerance: float = 0.3  # cosine deviation treated as noise
+    semantic_drift_window_size: int = (
+        20  # sliding window size for live deviation (issue #603)
+    )
+    semantic_drift_tolerance: float = 0.2  # cosine deviation treated as noise (calibrated to stay below multi-tool shift, issue #603)
     semantic_drift_cusum_k: float = 0.05  # slack subtracted per evaluation
     semantic_drift_cusum_h: float = 0.5  # sustained-deviation alarm threshold
 

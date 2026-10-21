@@ -60,13 +60,20 @@ Embedder = Callable[[StepEvent], Sequence[float]]
 
 
 def _event_label(event: StepEvent) -> str:
-    """Structural text embedded for a step. Content-free by construction.
+    """Text embedded for a step.
 
+    Includes structural labels (action_type, tool_name, error_type) and any
+    explicit host-supplied intent/purpose declared on the step (issue #603).
     Deliberately excludes ``action_signature`` (an opaque hash: meaningless
     in embedding space) and ``metadata`` (may carry raw content; detectors
     never read it, project.md section 4/11).
     """
-    parts = [event.action_type, event.tool_name or "", event.error_type or ""]
+    parts = [
+        event.action_type,
+        event.tool_name or "",
+        event.error_type or "",
+        getattr(event, "intent", None) or "",
+    ]
     return " ".join(p for p in parts if p)
 
 
@@ -89,14 +96,17 @@ def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
 
 
 class _LiveState:
-    """Per-episode accumulator: running embedding sum and CUSUM debt."""
+    """Per-episode accumulator: running embedding sum, sliding window, and CUSUM debt."""
 
-    __slots__ = ("debt", "n", "sum")
+    __slots__ = ("debt", "n", "sum", "window", "window_dev_sum", "window_sum")
 
     def __init__(self) -> None:
         self.sum: list[float] | None = None
         self.n = 0
         self.debt = 0.0
+        self.window: list[list[float]] = []
+        self.window_sum: list[float] | None = None
+        self.window_dev_sum = 0.0
 
 
 class SemanticGoalDriftDetector:
@@ -187,7 +197,14 @@ class SemanticGoalDriftDetector:
         # change the key set mid-comprehension (issue #231).
         return {
             "episodes": {
-                ep: {"sum": st.sum, "n": st.n, "debt": st.debt}
+                ep: {
+                    "sum": st.sum,
+                    "n": st.n,
+                    "debt": st.debt,
+                    "window": st.window,
+                    "window_sum": st.window_sum,
+                    "window_dev_sum": st.window_dev_sum,
+                }
                 for ep, st in snapshot_items(self._episodes)
                 if st.sum is not None
             }
@@ -228,6 +245,15 @@ class SemanticGoalDriftDetector:
                 continue
             st.n = int(raw.get("n", 0))
             st.debt = float(raw.get("debt", 0.0))
+            w = raw.get("window")
+            if isinstance(w, list):
+                st.window = [
+                    [float(v) for v in row] for row in w if isinstance(row, list)
+                ]
+            w_sum = raw.get("window_sum")
+            if isinstance(w_sum, list):
+                st.window_sum = [float(v) for v in w_sum]
+            st.window_dev_sum = float(raw.get("window_dev_sum", 0.0))
             episodes[str(ep)] = st
         self._episodes = episodes
 
@@ -265,18 +291,51 @@ class SemanticGoalDriftDetector:
         for i, v in enumerate(vec):
             st.sum[i] += v
         st.n += 1
+
+        win_size = max(
+            getattr(self._cfg, "semantic_drift_window_size", 20),
+            self._cfg.semantic_drift_min_samples,
+        )
+        st.window.append(vec)
+        if st.window_sum is None:
+            st.window_sum = [0.0] * len(vec)
+        for i, v in enumerate(vec):
+            st.window_sum[i] += v
+        dev_vec = max(0.0, 1.0 - _cosine(vec, self._baseline_centroid))
+        st.window_dev_sum += dev_vec
+
+        if len(st.window) > win_size:
+            old_vec = st.window.pop(0)
+            for i, v in enumerate(old_vec):
+                st.window_sum[i] -= v
+            old_dev = max(0.0, 1.0 - _cosine(old_vec, self._baseline_centroid))
+            st.window_dev_sum = max(0.0, st.window_dev_sum - old_dev)
+
         if st.n < self._cfg.semantic_drift_min_samples:
             return None
-        live = [s / st.n for s in st.sum]
-        sim = _cosine(live, self._baseline_centroid)
-        dev = max(0.0, 1.0 - sim)
+
+        # Two complementary statistics:
+        # 1. Centroid deviation over the active sliding window: captures coherent
+        #    directional divergence or single-tool collapse without dilution from
+        #    historical baselines (issue #603).
+        # 2. Mean per-event deviation across the window: preserves distance when
+        #    a multi-tool vocabulary shift would otherwise wash out under vector
+        #    averaging (issue #603).
+        live_window = [s / len(st.window) for s in st.window_sum]
+        sim_window = _cosine(live_window, self._baseline_centroid)
+        dev_window = max(0.0, 1.0 - sim_window)
+        dev_events = st.window_dev_sum / len(st.window)
+        dev = max(dev_window, dev_events)
+
         tol = self._cfg.semantic_drift_tolerance
-        signal = 0.0 if dev <= tol else min(1.0, (dev - tol) / (2.0 - tol))
+        denom = max(0.001, 1.0 - tol if tol < 1.0 else 2.0 - tol)
+        signal = 0.0 if dev <= tol else min(1.0, (dev - tol) / denom)
         st.debt = max(0.0, st.debt + signal - self._cfg.semantic_drift_cusum_k)
         if st.debt >= self._cfg.semantic_drift_cusum_h:
             h = self._cfg.semantic_drift_cusum_h
             score = min(1.0, 0.5 + 0.5 * (st.debt - h) / h)
             st.debt = 0.0  # re-arm so persistent drift re-alarms later
+            sim = max(-1.0, min(1.0, 1.0 - dev))
             return FailureRisk(
                 event.episode_id,
                 event.step_id,

@@ -67,6 +67,9 @@ class StepEvent:
         default_factory=dict
     )  # adapter-specific; detectors never read this
     side_effect: bool = False  # host-declared non-idempotent action (issue #88)
+    intent: str | None = (
+        None  # host-declared task/intent or high-level purpose (issue #603)
+    )
 
 
 @dataclass(frozen=True, slots=True)

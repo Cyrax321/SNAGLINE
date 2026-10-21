@@ -197,17 +197,20 @@ running centroid of embedded structural labels against the persisted
 (`drift/goal_drift.py`).
 
 * **What is embedded:** a short label built from `action_type`,
-  `tool_name`, and `error_type` only. Prompt or response content and
-  `metadata` are never read, never logged, and never persisted. The only
-  stored artifact is an averaged vector of floats inside the baseline JSON.
-* **How it decides:** cosine similarity between the live running centroid
-  and the healthy reference gives a deviation `1 - cos`. Values within
-  `semantic_drift_tolerance` (default 0.3) are treated as noise. Above it,
-  a CUSUM accumulates `signal - cusum_k` and fires a `goal_drift` risk
-  when the debt reaches `semantic_drift_cusum_h` (defaults `k=0.05`,
-  `h=0.5`). After firing the accumulator re-arms, so persistent drift
-  re-alarms later. Fewer than `semantic_drift_min_samples` (default 10)
-  live steps never fire.
+  `tool_name`, and `error_type`, plus any optional host-declared `intent`
+  on the `StepEvent` (issue #603). Prompt or response content and `metadata`
+  are never read, never logged, and never persisted. The only stored
+  artifact is an averaged vector of floats inside the baseline JSON.
+* **How it decides:** tracks live deviation over a sliding window
+  (`semantic_drift_window_size`, default 20) against the healthy reference
+  centroid using dual complementary statistics: windowed centroid deviation
+  and mean per-event deviation, ensuring multi-tool vocabulary shifts do
+  not average away (issue #603). Values within `semantic_drift_tolerance`
+  (default 0.2) are treated as noise. Above it, a CUSUM accumulates
+  `signal - cusum_k` and fires a `goal_drift` risk when the debt reaches
+  `semantic_drift_cusum_h` (defaults `k=0.05`, `h=0.5`). After firing the
+  accumulator re-arms, so persistent drift re-alarms later. Fewer than
+  `semantic_drift_min_samples` (default 10) live steps never fire.
 * **Extra and laziness:** `pip install snagline[drift]`
   (`sentence-transformers`). The package imports without the extra; the
   transformer is loaded lazily, exactly once, on first use. An injectable

@@ -119,12 +119,14 @@ def test_semantic_drift_keys_coerce_from_environment():
             "SNAGLINE_SEMANTIC_DRIFT_ENABLED": "true",
             "SNAGLINE_SEMANTIC_DRIFT_MODEL": "custom/model",
             "SNAGLINE_SEMANTIC_DRIFT_MIN_SAMPLES": "7",
+            "SNAGLINE_SEMANTIC_DRIFT_WINDOW_SIZE": "15",
             "SNAGLINE_SEMANTIC_DRIFT_TOLERANCE": "0.4",
         }
     )
     assert cfg.semantic_drift_enabled is True
     assert cfg.semantic_drift_model == "custom/model"
     assert cfg.semantic_drift_min_samples == 7
+    assert cfg.semantic_drift_window_size == 15
     assert cfg.semantic_drift_tolerance == pytest.approx(0.4)
 
 
@@ -135,7 +137,8 @@ def test_semantic_drift_defaults_keep_preset_off():
     # Hand-computed expectation of the shipped defaults (not read back from
     # the same object): documented in README and DETECTOR_GUIDE.
     assert cfg.semantic_drift_min_samples == 10
-    assert cfg.semantic_drift_tolerance == 0.3
+    assert cfg.semantic_drift_window_size == 20
+    assert cfg.semantic_drift_tolerance == 0.2
     assert cfg.semantic_drift_cusum_k == 0.05
     assert cfg.semantic_drift_cusum_h == 0.5
 
@@ -656,3 +659,235 @@ def test_fit_rejects_non_finite_embeddings():
 
     with pytest.raises(ValueError, match="non-finite"):
         fit_semantic_baseline(_healthy(3), bad)
+
+
+def test_semantic_drift_window_size_validation():
+    with pytest.raises(ValueError, match="semantic_drift_window_size must be >= 1"):
+        Config(semantic_drift_window_size=0)
+    with pytest.raises(ValueError, match="semantic_drift_window_size must be >= 1"):
+        Config(semantic_drift_window_size=-5)
+
+
+def test_event_label_includes_intent_when_declared():
+    base = StepEvent(
+        step_id="1",
+        episode_id="ep",
+        timestamp=1.0,
+        action_type="tool_call",
+        action_signature="sig",
+        tool_name="search",
+        intent="extract passwords",
+    )
+    assert _event_label(base) == "tool_call search extract passwords"
+
+    no_intent = StepEvent(
+        step_id="2",
+        episode_id="ep",
+        timestamp=2.0,
+        action_type="tool_call",
+        action_signature="sig",
+        tool_name="search",
+    )
+    assert _event_label(no_intent) == "tool_call search"
+
+
+def test_goal_change_with_same_tools_detected_via_intent():
+    # Issue #603: when tools are identical, intent differentiates purpose
+    intent_table = {
+        "benign research": [0.95, 0.10, 0.0],
+        "credential harvest": [0.50, 0.80, 0.30],
+    }
+
+    def embed_intent(event: StepEvent) -> list[float]:
+        return list(intent_table[event.intent])  # type: ignore[index]
+
+    base_events = [
+        StepEvent(
+            f"b{i}",
+            "b",
+            float(i),
+            "tool_call",
+            f"sig-{i}",
+            tool_name="search_web",
+            intent="benign research",
+        )
+        for i in range(30)
+    ]
+    baseline = fit_semantic_baseline(base_events, embed_intent)
+
+    det = SemanticGoalDriftDetector(
+        baseline,
+        config=Config(semantic_drift_min_samples=10, semantic_drift_tolerance=0.2),
+        embedder=embed_intent,
+    )
+
+    # 15 steps of benign intent stay silent
+    for i in range(15):
+        assert (
+            det.observe(
+                StepEvent(
+                    f"s{i}",
+                    "ep_intent",
+                    float(i),
+                    "tool_call",
+                    f"sig-{i}",
+                    tool_name="search_web",
+                    intent="benign research",
+                )
+            )
+            is None
+        )
+
+    # Drift begins: purpose flips while tools stay identical
+    fired = None
+    for j in range(15, 60):
+        risk = det.observe(
+            StepEvent(
+                f"s{j}",
+                "ep_intent",
+                float(j),
+                "tool_call",
+                f"sig-{j}",
+                tool_name="search_web",
+                intent="credential harvest",
+            )
+        )
+        if risk is not None:
+            fired = risk
+            break
+
+    assert fired is not None
+    assert fired.trigger == "goal_drift"
+
+
+def test_multi_tool_vocabulary_drift_fires_without_washing_out():
+    # Issue #603: multi-tool shift does not wash out under vector averaging
+    base_tools = {
+        "search_web": [0.96, 0.10, 0.05],
+        "read_file": [0.94, 0.12, -0.05],
+        "run_sql": [0.95, 0.08, 0.08],
+        "summarize_text": [0.95, 0.11, -0.08],
+    }
+    drift_tools = {
+        "drop_table": [0.60, 0.70, 0.25],
+        "delete_users": [0.52, 0.75, 0.30],
+        "wipe_logs": [0.62, 0.68, 0.28],
+        "disable_alerts": [0.65, 0.65, 0.25],
+    }
+    all_tools = {**base_tools, **drift_tools}
+
+    def embed(event: StepEvent) -> list[float]:
+        return list(all_tools[event.tool_name])  # type: ignore[index]
+
+    base_events = [
+        StepEvent(
+            f"b{i}",
+            "b",
+            float(i),
+            "tool_call",
+            f"sig-{i}",
+            tool_name=list(base_tools)[i % 4],
+        )
+        for i in range(40)
+    ]
+    baseline = fit_semantic_baseline(base_events, embed)
+
+    det = SemanticGoalDriftDetector(
+        baseline,
+        config=Config(
+            semantic_drift_min_samples=10,
+            semantic_drift_window_size=20,
+            semantic_drift_tolerance=0.2,
+        ),
+        embedder=embed,
+    )
+
+    # 20 steps of baseline tools
+    for i in range(20):
+        t = list(base_tools)[i % 4]
+        assert (
+            det.observe(
+                StepEvent(
+                    f"s{i}",
+                    "ep_mix",
+                    float(i),
+                    "tool_call",
+                    f"sig-{i}",
+                    tool_name=t,
+                )
+            )
+            is None
+        )
+
+    # 40 steps of multi-tool destructive shift
+    fired = None
+    for j in range(20, 60):
+        t = list(drift_tools)[j % 4]
+        risk = det.observe(
+            StepEvent(
+                f"s{j}",
+                "ep_mix",
+                float(j),
+                "tool_call",
+                f"sig-{j}",
+                tool_name=t,
+            )
+        )
+        if risk is not None:
+            fired = risk
+            break
+
+    assert fired is not None
+    assert fired.trigger == "goal_drift"
+
+
+def test_multi_tool_healthy_stream_stays_silent():
+    # Long multi-tool healthy stream stays silent
+    base_tools = {
+        "search_web": [0.96, 0.10, 0.05],
+        "read_file": [0.94, 0.12, -0.05],
+        "run_sql": [0.95, 0.08, 0.08],
+        "summarize_text": [0.95, 0.11, -0.08],
+    }
+
+    def embed(event: StepEvent) -> list[float]:
+        return list(base_tools[event.tool_name])  # type: ignore[index]
+
+    base_events = [
+        StepEvent(
+            f"b{i}",
+            "b",
+            float(i),
+            "tool_call",
+            f"sig-{i}",
+            tool_name=list(base_tools)[i % 4],
+        )
+        for i in range(40)
+    ]
+    baseline = fit_semantic_baseline(base_events, embed)
+
+    det = SemanticGoalDriftDetector(
+        baseline,
+        config=Config(
+            semantic_drift_min_samples=10,
+            semantic_drift_window_size=20,
+            semantic_drift_tolerance=0.2,
+        ),
+        embedder=embed,
+    )
+
+    for i in range(120):
+        t = list(base_tools)[i % 4]
+        assert (
+            det.observe(
+                StepEvent(
+                    f"h{i}",
+                    "ep_healthy",
+                    float(i),
+                    "tool_call",
+                    f"sig-{i}",
+                    tool_name=t,
+                )
+            )
+            is None
+        )
