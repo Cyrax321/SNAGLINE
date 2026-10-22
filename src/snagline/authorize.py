@@ -483,7 +483,8 @@ def policy_from_dict(data: Mapping[str, Any]) -> Policy:
             {"type": "deny_tools",     "tools": ["Write", "Edit"]},
             {"type": "allow_tools",    "tools": ["Read", "Grep"]},
             {"type": "deny_resource",  "patterns": ["*.pem", "/etc/ssh/*"]},
-            {"type": "deny_command",   "patterns": ["rm -rf*"]}
+            {"type": "deny_command",   "patterns": ["rm -rf*"]},
+            {"type": "shell_threats",  "decision": "deny", "min_severity": "warning"}
           ]
         }
 
@@ -540,6 +541,11 @@ def _rule_from_dict(raw: Any, index: int) -> Rule:
     if not isinstance(raw, Mapping):
         raise PolicyError(f"rules[{index}] must be an object; got {type(raw).__name__}")
     kind = raw.get("type")
+    # Shell threat detection (issue #638) is a structured rule, not a
+    # tools/patterns list. Handled before the simple builders so a typo'd
+    # shell_threats entry still gets a precise schema error.
+    if kind == "shell_threats":
+        return _shell_threats_rule_from_dict(raw, index)
     builders: dict[str, Callable[..., Rule]] = {
         "deny_tools": deny_tools,
         "ask_tools": ask_tools,
@@ -550,13 +556,76 @@ def _rule_from_dict(raw: Any, index: int) -> Rule:
     if kind not in builders:
         raise PolicyError(
             f"rules[{index}].type={kind!r} is not a known rule type; "
-            f"expected one of {sorted(builders)}"
+            f"expected one of {sorted([*builders, 'shell_threats'])}"
         )
     key = "patterns" if kind.startswith("deny_") and kind != "deny_tools" else "tools"
     values = raw.get(key, [])
     if not isinstance(values, list) or not all(isinstance(v, str) for v in values):
         raise PolicyError(f"rules[{index}].{key} must be a list of strings")
     return builders[kind](*values)
+
+
+def _shell_threats_rule_from_dict(raw: Mapping[str, Any], index: int) -> Rule:
+    """Build a shell-threat authorize rule from a declarative policy entry.
+
+    Schema::
+
+        {"type": "shell_threats", "decision": "deny", "min_severity": "warning",
+         "disabled_rules": ["command_chaining"]}
+
+    Optional keys only; defaults match :class:`snagline.shell_security.ShellThreatConfig`.
+    """
+    from snagline.shell_security import (
+        BUILTIN_RULE_IDS,
+        ShellThreatConfig,
+        as_authorize_rule,
+    )
+
+    decision = raw.get("decision", "deny")
+    if decision not in ("ask", "deny"):
+        raise PolicyError(
+            f"rules[{index}].decision={decision!r} must be 'ask' or 'deny'"
+        )
+    min_severity = raw.get("min_severity", "warning")
+    if min_severity not in ("info", "warning", "critical"):
+        raise PolicyError(
+            f"rules[{index}].min_severity={min_severity!r} must be "
+            f"one of info|warning|critical"
+        )
+    disabled = raw.get("disabled_rules", [])
+    if not isinstance(disabled, list) or not all(isinstance(v, str) for v in disabled):
+        raise PolicyError(f"rules[{index}].disabled_rules must be a list of strings")
+    enabled = raw.get("enabled_rules")
+    enabled_set: frozenset[str] | None
+    if enabled is None:
+        enabled_set = None
+    elif isinstance(enabled, list) and all(isinstance(v, str) for v in enabled):
+        unknown = set(enabled) - BUILTIN_RULE_IDS
+        if unknown:
+            raise PolicyError(
+                f"rules[{index}].enabled_rules has unknown ids {sorted(unknown)}"
+            )
+        enabled_set = frozenset(enabled)
+    else:
+        raise PolicyError(f"rules[{index}].enabled_rules must be a list of strings")
+    overrides_raw = raw.get("severity_overrides", {})
+    if not isinstance(overrides_raw, Mapping):
+        raise PolicyError(f"rules[{index}].severity_overrides must be an object")
+    overrides: dict[str, Any] = {}
+    for key, value in overrides_raw.items():
+        if value not in ("info", "warning", "critical"):
+            raise PolicyError(
+                f"rules[{index}].severity_overrides[{key!r}]={value!r} is not a severity"
+            )
+        overrides[str(key)] = value
+    cfg = ShellThreatConfig(
+        enabled_rules=enabled_set,
+        disabled_rules=frozenset(disabled),
+        severity_overrides=overrides,
+        min_severity=min_severity,
+        decision=decision,
+    )
+    return as_authorize_rule(cfg)
 
 
 def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
