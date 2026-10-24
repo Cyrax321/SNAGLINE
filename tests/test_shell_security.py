@@ -260,6 +260,27 @@ def test_authorize_ask_mode_and_min_severity() -> None:
     assert ask_policy.decide(chained).decision == "ask"
 
 
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"min_severity": "bogus"},
+        {"decision": "allow"},
+        {"severity_overrides": {"destructive_command": "bogus"}},
+    ],
+)
+def test_shell_threat_config_rejects_values_that_would_fail_open(
+    kwargs: dict[str, Any],
+) -> None:
+    with pytest.raises(ValueError):
+        ShellThreatConfig(**kwargs)
+
+
+def test_bad_config_fails_at_construction_not_open_at_decide() -> None:
+    """A typo must not become 'allow': Policy.decide swallows rule errors."""
+    with pytest.raises(ValueError):
+        Policy(rules=(as_authorize_rule(ShellThreatConfig(min_severity="bogus")),))
+
+
 def test_policy_from_dict_shell_threats() -> None:
     policy = policy_from_dict(
         {
