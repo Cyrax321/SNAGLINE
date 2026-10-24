@@ -306,6 +306,23 @@ def test_policy_from_dict_rejects_a_malformed_rule_list() -> None:
         policy_from_dict({"rules": [{"type": "deny_tools", "tools": [1, 2]}]})
 
 
+def test_resource_glob_is_case_sensitive_on_every_os() -> None:
+    """The verdict must be a property of the policy, not of the host OS."""
+    policy = Policy(rules=(deny_resource_glob("*.pem"),))
+    upper = ToolRequest.from_tool_input("Read", {"file_path": "/secrets/CERT.PEM"})
+    lower = ToolRequest.from_tool_input("Read", {"file_path": "/secrets/cert.pem"})
+    assert policy.decide(upper).decision == "allow"
+    assert policy.decide(lower).decision == "deny"
+
+
+def test_command_glob_is_case_sensitive_on_every_os() -> None:
+    policy = Policy(rules=(deny_command_glob("rm -rf*"),))
+    upper = ToolRequest.from_tool_input("Bash", {"command": "RM -RF /"})
+    lower = ToolRequest.from_tool_input("Bash", {"command": "rm -rf /"})
+    assert policy.decide(upper).decision == "allow"
+    assert policy.decide(lower).decision == "deny"
+
+
 def test_policy_file_round_trip_json(tmp_path) -> None:
     path = tmp_path / "policy.json"
     path.write_text(

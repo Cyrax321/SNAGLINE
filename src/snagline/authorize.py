@@ -289,16 +289,18 @@ def allow_tools(*tool_names: str) -> Rule:
 def deny_resource_glob(*patterns: str) -> Rule:
     """Deny when the requested resource matches any shell-style glob.
 
-    ``fnmatch`` semantics, so ``*.pem`` and ``/etc/ssh/*`` behave the way an
-    operator reading the policy expects. Matching is against ``request.resource``
-    only; ``None`` never matches, so a request with no identifiable resource
-    is decided by the rest of the policy rather than by this rule.
+    ``fnmatchcase`` semantics: case-sensitive on every OS, so the same policy
+    gives the same verdict on Windows, Linux and macOS. ``*.pem`` and
+    ``/etc/ssh/*`` behave the way an operator reading the policy expects.
+    Matching is against ``request.resource`` only; ``None`` never matches, so a
+    request with no identifiable resource is decided by the rest of the policy
+    rather than by this rule.
     """
     return lambda request: RuleVerdict(
         "deny_resource_glob",
         "deny"
         if request.resource is not None
-        and any(fnmatch.fnmatch(request.resource, pat) for pat in patterns)
+        and any(fnmatch.fnmatchcase(request.resource, pat) for pat in patterns)
         else None,
         f"resource {request.resource!r} matches a denied pattern",
     )
@@ -309,14 +311,15 @@ def deny_command_glob(*patterns: str) -> Rule:
 
     Narrower than :func:`deny_resource_glob` on purpose: a command string and a
     file path live in different risk classes, and one rule that covers both
-    invites a pattern written for the wrong one.
+    invites a pattern written for the wrong one. Matching is case-sensitive on
+    every OS, like :func:`deny_resource_glob`.
     """
     return lambda request: RuleVerdict(
         "deny_command_glob",
         "deny"
         if request.action == "execute"
         and request.resource is not None
-        and any(fnmatch.fnmatch(request.resource, pat) for pat in patterns)
+        and any(fnmatch.fnmatchcase(request.resource, pat) for pat in patterns)
         else None,
         f"command matches a denied pattern: {request.resource!r}",
     )
