@@ -559,7 +559,21 @@ def _rule_from_dict(raw: Any, index: int) -> Rule:
             f"expected one of {sorted([*builders, 'shell_threats'])}"
         )
     key = "patterns" if kind.startswith("deny_") and kind != "deny_tools" else "tools"
-    values = raw.get(key, [])
+    allowed = {"type", key}
+    unknown = set(raw) - allowed
+    if unknown:
+        # A typo'd key used to be ignored, which built a rule with an empty
+        # list: one that silently matches nothing and denies nothing.
+        paths = ", ".join(f"rules[{index}].{k}" for k in sorted(unknown))
+        raise PolicyError(
+            f"unknown rule keys {paths}; expected one of {sorted(allowed)}"
+        )
+    if key not in raw:
+        raise PolicyError(
+            f"rules[{index}].{key} is missing; expected a list of strings "
+            f"(use an explicit [] for an intentionally empty rule)"
+        )
+    values = raw[key]
     if not isinstance(values, list) or not all(isinstance(v, str) for v in values):
         raise PolicyError(f"rules[{index}].{key} must be a list of strings")
     return builders[kind](*values)
@@ -580,6 +594,21 @@ def _shell_threats_rule_from_dict(raw: Mapping[str, Any], index: int) -> Rule:
         ShellThreatConfig,
         as_authorize_rule,
     )
+
+    allowed = {
+        "type",
+        "decision",
+        "min_severity",
+        "disabled_rules",
+        "enabled_rules",
+        "severity_overrides",
+    }
+    unknown = set(raw) - allowed
+    if unknown:
+        paths = ", ".join(f"rules[{index}].{k}" for k in sorted(unknown))
+        raise PolicyError(
+            f"unknown rule keys {paths}; expected one of {sorted(allowed)}"
+        )
 
     decision = raw.get("decision", "deny")
     if decision not in ("ask", "deny"):

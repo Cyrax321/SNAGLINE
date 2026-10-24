@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `policy_from_dict` now rejects an unknown key inside a rule entry and a missing
+  `patterns`/`tools` list with a `PolicyError` naming `rules[i].<key>`. Before, a
+  typo'd key was ignored and the rule was built with an empty list: a deny rule
+  that matched nothing and silently allowed what it was written to block (#651).
+  An explicitly empty list (`"tools": []`) still loads, so a rule that can never
+  match stays possible on purpose.
 - `EsnCusumDetector` (the `snagline[ml]` extra) now participates in
   `Monitor.snapshot()`/`restore()`. It had no `dump_state`/`load_state`, and
   `MLOrchestrator.dump_state` reaches its bases with a `getattr` guard, so the

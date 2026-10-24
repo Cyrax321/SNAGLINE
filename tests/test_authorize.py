@@ -373,6 +373,39 @@ def test_policy_from_dict_rejects_a_non_object_rule() -> None:
         policy_from_dict({"rules": ["deny_tools"]})
 
 
+def test_rule_with_typo_d_key_raises_instead_of_building_an_empty_rule() -> None:
+    """A typo'd key used to be ignored, leaving a rule that matches nothing."""
+    with pytest.raises(PolicyError, match=r"rules\[0\]\.pattern"):
+        policy_from_dict({"rules": [{"type": "deny_resource", "pattern": ["/etc/shadow"]}]})
+
+
+def test_rule_with_typo_d_tools_key_raises() -> None:
+    with pytest.raises(PolicyError, match=r"rules\[0\]\.tool"):
+        policy_from_dict({"rules": [{"type": "deny_tools", "tool": ["Bash"]}]})
+
+
+def test_rule_with_unknown_extra_key_raises() -> None:
+    with pytest.raises(PolicyError, match=r"rules\[0\]\.sevrity"):
+        policy_from_dict(
+            {"rules": [{"type": "deny_tools", "tools": ["Bash"], "sevrity": "high"}]}
+        )
+
+
+def test_rule_without_its_list_raises() -> None:
+    with pytest.raises(PolicyError, match=r"rules\[0\]\.tools is missing"):
+        policy_from_dict({"rules": [{"type": "deny_tools"}]})
+
+
+def test_rule_with_explicit_empty_list_is_still_allowed() -> None:
+    policy = policy_from_dict({"rules": [{"type": "deny_tools", "tools": []}]})
+    assert len(policy.rules) == 1
+
+
+def test_shell_threats_rule_with_unknown_key_raises() -> None:
+    with pytest.raises(PolicyError, match=r"rules\[0\]\.decisio"):
+        policy_from_dict({"rules": [{"type": "shell_threats", "decisio": "deny"}]})
+
+
 def test_unknown_tool_decision_survives_a_rule_that_opines() -> None:
     """Unknown-tool handling must not be reachable only via the empty path."""
     policy = Policy(rules=(deny_resource_glob("*"),), unknown_tool_decision="deny")
