@@ -467,7 +467,7 @@ idle_gap            4    0    0      1.000    1.000   1.000
 wall_clock_budget    4    0    0      1.000    1.000   1.000
 -----------------------------------------------------------
 macro-F1: 0.951
-episodes: 109 (68 labeled, 41 healthy controls)
+episodes: 113 (68 labeled, 45 healthy controls)
 confusion (firings on other data):
   stagnation -> loop: 4
   stall -> loop: 4
