@@ -15,6 +15,7 @@ import types
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from typing import Any, Union, get_args, get_origin, get_type_hints
+from urllib.parse import urlsplit
 
 from snagline.baseline import BaselineProfile
 
@@ -130,10 +131,24 @@ def _coerce_file_value(name: str, hint: Any, value: Any) -> Any:
     here with the field name and both types, before a downstream comparison
     fails with no context.
 
+    ``null`` is accepted on an ``X | None`` field as the documented "disabled"
+    spelling (issue #590): it is the one way a file expresses an unset optional
+    scalar, and rejecting it forced operators to delete the key instead. It is
+    rejected on a non-optional scalar, where ``None`` is not a value the field
+    can hold and passing it through would surface later as an off-point
+    ``TypeError`` inside a range check.
+
     Non-scalar fields (``BaselineProfile`` and friends) are passed through
     unchanged: a file cannot construct them, and the env path keeps them out
     of reach for the same reason.
     """
+    if value is None:
+        args = _union_args(hint)
+        if args is not None and type(None) in args:
+            return None
+        raise TypeError(
+            f"config field {name!r} is not optional; null is not a valid value"
+        )
     scalar = _coercible_hint(hint)
     if scalar is frozenset:
         # A string-collection field: the file may carry a native list, and a
@@ -277,6 +292,21 @@ def _validated_enforcement(cfg: Config) -> None:
     # points agree and catches the typo at startup.
     if float(cfg.halt_timeout_s) <= 0:
         raise ValueError(f"halt_timeout_s must be positive; got {cfg.halt_timeout_s!r}")
+    # Issue #587: the *endpoint* was the one enforcement knob still validated
+    # only in Monitor._configure_policy. serve/watch/replay build the Config
+    # first and print their banner before the Monitor is constructed, so a
+    # missing or non-http(s) halt_url told the operator a listener was coming
+    # and then died in a traceback. Checking it here moves the failure to the
+    # same place the numeric knobs already fail: before any banner is printed.
+    if cfg.policy == "halt_webhook":
+        if not cfg.halt_url:
+            raise ValueError("policy='halt_webhook' requires halt_url")
+        scheme = urlsplit(cfg.halt_url).scheme.strip().lower()
+        if scheme not in ("http", "https"):
+            raise ValueError(
+                "halt_url must be an http(s) endpoint; got scheme "
+                f"{scheme!r} (halt_url={cfg.halt_url!r})"
+            )
 
 
 def _validated_log_format(value: str) -> str:
@@ -494,6 +524,26 @@ def _validated_window_thresholds(cfg: Config) -> None:
             f"two full periods; got {cfg.loop_cycle_window_size!r}. A shorter "
             "window can never contain a repeat, so cycle mode would never fire"
         )
+    # The scan needs two full periods of a candidate inside the window before
+    # it will even test that candidate (``_minimal_period`` returns None as
+    # soon as ``n < 2 * p``), so a max_period above half the effective window
+    # is a band the detector can never see (issue #594) -- the upper part of
+    # the configured range is permanently dark and the failure reads as "no
+    # loop found" rather than a misconfiguration. The effective bound is the
+    # scaled cap when auto-scaling is on, exactly as for the repeat threshold
+    # above; without scaling it is the nominal window size.
+    if cfg.loop_cycle_enabled and cfg.loop_cycle_window_size > 0:
+        cycle_limit = max(cfg.loop_cycle_window_size, cap)
+        if cfg.loop_cycle_max_period > cycle_limit // 2:
+            raise ValueError(
+                f"loop_cycle_max_period must fit inside the cycle window (<= "
+                f"{cycle_limit // 2}, half of the "
+                f"{'scaled cap' if scaled else 'window size'} {cycle_limit}; "
+                f"got {cfg.loop_cycle_max_period!r}. Detecting a period p "
+                f"requires 2 * p steps of history, so anything above half the "
+                "window is never testable and cycle mode would silently skip "
+                "the top of its own configured band"
+            )
 
 
 def _validated_divisor_thresholds(cfg: Config) -> None:
@@ -643,6 +693,25 @@ def _validated_counts_and_windows(cfg: Config) -> None:
             "1.0 bits, so the low threshold pages on a single tool call rather "
             "than a collapse"
         )
+    # Issue #591: entropy is measured in bits and is always >= 0, so a negative
+    # threshold can never be a meaningful bar. A negative low makes
+    # ``H < low`` unreachable -- the collapse alarm is dead for the whole run
+    # while the detector reports itself healthy -- and a negative high makes
+    # ``H > high`` trivially true, false-alarming on the first window of every
+    # episode. NaN is worse still: every comparison against it is False, so the
+    # low alarm dies and the high one dies with it, silently. Both are config
+    # errors at startup, not values to carry into the window arithmetic.
+    for value, label, relation in (
+        (cfg.meltdown_low_entropy, "meltdown_low_entropy", "below"),
+        (cfg.meltdown_high_entropy, "meltdown_high_entropy", "above"),
+    ):
+        if not math.isfinite(value) or value < 0:
+            raise ValueError(
+                f"{label} must be a finite, non-negative number of bits; got "
+                f"{value!r}. Entropy is always >= 0, so a negative {label} can "
+                f"never be crossed and {relation}-threshold alarms would "
+                "either never fire or fire on every window"
+            )
 
 
 def _validated_semantic_drift(cfg: Config) -> None:

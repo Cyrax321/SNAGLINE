@@ -105,6 +105,20 @@ class MeltdownDetector:
         )
         if not (self.low_entropy < self.high_entropy):
             raise ValueError("meltdown_low_entropy must be < meltdown_high_entropy")
+        # Issue #591: entropy is non-negative bits, so a negative or non-finite
+        # threshold is never a real bar -- ``H < low`` becomes unreachable and
+        # ``H > high`` trivially true. Config rejects this via
+        # _validated_counts_and_windows; this guard is defense in depth for a
+        # detector constructed directly, alongside the window check below.
+        for value, label in (
+            (self.low_entropy, "low_entropy"),
+            (self.high_entropy, "high_entropy"),
+        ):
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(
+                    f"{label} must be a finite, non-negative number of bits; "
+                    f"got {value!r}"
+                )
         # Issue #346: below 3 the entropy statistic is vacuous -- a one-item
         # window scores 0.0 bits by construction and a two-item window can only
         # be 0.0 or 1.0 -- so the low threshold pages on an ordinary one-tool

@@ -17,8 +17,9 @@ import json
 import math
 import time
 from dataclasses import dataclass, field
-from typing import IO
+from typing import IO, Any
 
+from snagline._input import open_input as _open_input
 from snagline.events import StepEvent
 
 
@@ -40,6 +41,56 @@ def _usable_latency(latency_ms: float) -> bool:
         and math.isfinite(latency_ms)
         and latency_ms >= 0.0
     )
+
+
+def _validate_moments(mean: Any, std: Any) -> tuple[float, float]:
+    """Coerce persisted latency moments, rejecting values that poison consumers.
+
+    The live fit path drops unusable samples via ``_usable_latency`` (issues
+    #350/#438); the *load* path used on-disk numbers verbatim, so a profile
+    written by hand, by an older version, or by a crashed fit carried NaN or
+    negative moments straight into the detectors (issue #592). A NaN mean makes
+    ``latency - mean`` NaN and every CUSUM comparison False, arming nothing;
+    a negative mean makes every healthy latency look like an anomaly and pages
+    on step 0. A negative std is not a spread at all. Coerce to float and
+    reject loudly at load so the diagnostic names the profile, not a detector.
+    """
+    try:
+        mean_f = float(mean)
+        std_f = float(std)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"baseline moments must be numeric; got mean={mean!r}, std={std!r}"
+        ) from exc
+    if not math.isfinite(mean_f):
+        raise ValueError(f"baseline mean_latency must be finite; got {mean_f!r}")
+    if math.isfinite(std_f):
+        if std_f < 0.0:
+            raise ValueError(f"baseline std_latency must be >= 0; got {std_f!r}")
+    else:
+        raise ValueError(f"baseline std_latency must be finite; got {std_f!r}")
+    if mean_f < 0.0:
+        raise ValueError(f"baseline mean_latency must be >= 0; got {mean_f!r}")
+    return mean_f, std_f
+
+
+def _optional_latency(value: Any) -> float | None:
+    """Validate a persisted optional latency bound, or None when absent.
+
+    ``min_latency`` / ``max_latency`` are absent on legacy profiles and on tools
+    that never saw a latency-bearing call, so ``None`` stays ``None``. A present
+    bound must satisfy the same contract a live sample does (#438): non-finite
+    and negative values are not measurements, and they are what the detectors
+    clamp against (issue #592).
+    """
+    if value is None:
+        return None
+    if not _usable_latency(value):
+        raise ValueError(
+            f"baseline latency bound must be a finite, non-negative number; "
+            f"got {value!r}"
+        )
+    return float(value)
 
 
 @dataclass
@@ -105,23 +156,44 @@ class ToolBaseline:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> ToolBaseline:
-        tb = cls(tool_name=data["tool_name"])
+    def from_dict(cls, data: dict, name: str | None = None) -> ToolBaseline:
+        # ``to_dict`` writes ``tool_name`` inside the entry, but a profile
+        # hand-edited or written by an older version may name its tools only
+        # via the outer ``tools`` map. Accept the containing key as a fallback
+        # so such a profile loads and the #592 moment validation gets the
+        # chance to run, instead of a bare KeyError from the load path.
+        tool_name = data.get("tool_name", name)
+        if not tool_name:
+            raise ValueError(
+                "baseline tool entry has no tool_name and was loaded without a "
+                "key name to fall back on"
+            )
+        tb = cls(tool_name=tool_name)
         tb.count = data["count"]
         # Profiles written before latency_count existed counted only
         # latency-bearing calls, which was also the error-rate denominator;
         # defaulting latency_count to count reproduces those statistics.
         tb.latency_count = int(data.get("latency_count", tb.count))
-        tb.latency_sum = data.get("mean_latency", 0.0) * tb.latency_count
+        mean = data.get("mean_latency", 0.0)
+        std = data.get("std_latency", 0.0)
+        # Issue #592: the load path used on-disk moments verbatim, so a
+        # hand-edited or corrupted profile reached the detectors unvalidated.
+        # A NaN mean makes ``latency > mean + k*std`` False forever -- the
+        # latency CUSUM silently never arms -- and a negative mean makes the
+        # error-rate and latency pages critical on step 0 of every episode,
+        # because a healthy call's latency is above a negative baseline by
+        # definition. Validate here rather than in every consumer; the live
+        # fit path already rejects these at add_event (issues #350/#438).
+        mean, std = _validate_moments(mean, std)
+        tb.latency_sum = mean * tb.latency_count
         tb.latency_sum_sq = (
-            data.get("std_latency", 0.0) ** 2 * max(1, tb.latency_count - 1)
-            + tb.latency_sum**2 / tb.latency_count
+            std**2 * max(1, tb.latency_count - 1) + tb.latency_sum**2 / tb.latency_count
             if tb.latency_count
             else 0.0
         )
         tb.error_count = data.get("error_count", 0)
-        tb.min_latency = data.get("min_latency")
-        tb.max_latency = data.get("max_latency")
+        tb.min_latency = _optional_latency(data.get("min_latency"))
+        tb.max_latency = _optional_latency(data.get("max_latency"))
         return tb
 
 
@@ -192,7 +264,7 @@ class BaselineProfile:
             fitted_at=float(data.get("fitted_at", 0.0)),
         )
         for name, tb in data.get("tools", {}).items():
-            profile.tools[name] = ToolBaseline.from_dict(tb)
+            profile.tools[name] = ToolBaseline.from_dict(tb, name)
         centroid = data.get("embedding_centroid")
         if centroid is not None:
             profile.embedding_centroid = [float(v) for v in centroid]
@@ -205,7 +277,7 @@ def fit_baseline_from_jsonl(path: str) -> BaselineProfile:
     """Fit a ``BaselineProfile`` from a JSONL trajectory (mirrors replay's
     fail-soft line handling: malformed lines are skipped, not fatal)."""
     profile = BaselineProfile(fitted_at=time.time())
-    with open(path, encoding="utf-8") as fh:
+    with _open_input(path) as fh:
         for _lineno, line in enumerate(fh, start=1):
             line = line.strip()
             if not line:
@@ -235,7 +307,7 @@ def save_baseline(profile: BaselineProfile, path: str) -> None:
 def load_baseline(path: str) -> BaselineProfile:
     """Load a ``BaselineProfile`` previously written by ``save_baseline``
     (the inverse of ``save_baseline``, via ``BaselineProfile.from_dict``)."""
-    with open(path, encoding="utf-8") as fh:
+    with _open_input(path) as fh:
         return BaselineProfile.from_dict(json.load(fh))
 
 

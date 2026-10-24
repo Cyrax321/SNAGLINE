@@ -51,6 +51,17 @@ def _ev(
     )
 
 
+def _score(det: EsnCusumDetector, event: StepEvent) -> float:
+    """Score one event against a fresh episode state.
+
+    ``_mahalanobis_score`` takes the episode state alongside the event since
+    #593 moved the unseen-tool credit onto a per-episode latch; these unit
+    tests exercise the scoring of a single step, so each call gets its own
+    state the way a first step in a new episode would.
+    """
+    return det._mahalanobis_score(det._new_state(), event)
+
+
 def _healthy(n: int, start: int = 0) -> list[StepEvent]:
     """Steady, predictable steps: stable latency, cycling signatures."""
     return [
@@ -225,22 +236,22 @@ def test_mahalanobis_exact_value_two_sigma_latency_and_error():
     d2_wild = z_lat_wild**2 + z_err_wild**2
     expected_wild = d2_wild / (d2_wild + 2)
     wild = _ev(1, latency=140.0, error=True)
-    assert det._mahalanobis_score(wild) == pytest.approx(expected_wild, abs=1e-9)
+    assert _score(det, wild) == pytest.approx(expected_wild, abs=1e-9)
     # Calm event at the healthy mean: latency term is exactly 0; the error
     # term contributes ((0-p)/sigma_e)^2 = 0.25, dof=2 -> 0.25/2.25 = 1/9.
     calm = _ev(0, latency=100.0, error=False)
-    assert det._mahalanobis_score(calm) == pytest.approx(1.0 / 9.0, abs=1e-9)
+    assert _score(det, calm) == pytest.approx(1.0 / 9.0, abs=1e-9)
 
 
 def test_mahalanobis_unknown_tool_scores_constant():
     profile = _profile(100.0, 0.0)
     det = _fast(baseline=profile)
-    assert det._mahalanobis_score(_ev(0, tool="never_seen")) == pytest.approx(0.6)
+    assert _score(det, _ev(0, tool="never_seen")) == pytest.approx(0.6)
 
 
 def test_mahalanobis_disabled_without_baseline():
     det = _fast()
-    assert det._mahalanobis_score(_ev(0, latency=9999.0, error=True)) == 0.0
+    assert _score(det, _ev(0, latency=9999.0, error=True)) == 0.0
 
 
 def _untimed_profile(n: int = 50, error_every: int = 0) -> BaselineProfile:
@@ -270,12 +281,10 @@ def test_mahalanobis_untimed_baseline_does_not_score_latency():
     # A perfectly ordinary latency, against a baseline that has no latency
     # samples at all: the latency term is absent, and the event matches the
     # baseline's zero error rate, so there is nothing to score.
-    assert det._mahalanobis_score(_ev(0, latency=100.0)) == pytest.approx(0.0, abs=1e-9)
+    assert _score(det, _ev(0, latency=100.0)) == pytest.approx(0.0, abs=1e-9)
     # And a wild one: without timed samples the baseline has no latency
     # opinion, so 9000 ms is no more anomalous than 1 ms.
-    assert det._mahalanobis_score(_ev(1, latency=9000.0)) == pytest.approx(
-        0.0, abs=1e-9
-    )
+    assert _score(det, _ev(1, latency=9000.0)) == pytest.approx(0.0, abs=1e-9)
 
 
 def test_untimed_baseline_healthy_stream_stays_silent():
@@ -297,13 +306,13 @@ def test_untimed_baseline_still_scores_genuine_errors():
     baseline is genuinely anomalous when it errors live.
     """
     det = _fast(baseline=_untimed_profile())
-    assert det._mahalanobis_score(_ev(0, latency=100.0, error=True)) > 0.9
+    assert _score(det, _ev(0, latency=100.0, error=True)) > 0.9
 
 
 def test_mahalanobis_timed_baseline_still_flags_latency():
     """Regression guard: the gate must not neuter the timed path."""
     det = _fast(baseline=_profile(100.0, 20.0))
-    assert det._mahalanobis_score(_ev(0, latency=5000.0, error=False)) > 0.9
+    assert _score(det, _ev(0, latency=5000.0, error=False)) > 0.9
 
 
 # --- Fail-open guarantees ----------------------------------------------------

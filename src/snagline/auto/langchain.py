@@ -102,7 +102,7 @@ def _model_name(model):
     return getattr(model, "model_name", None) or getattr(model, "model", "langchain")
 
 
-def _wrap_one(monitor, original, tool_name):
+def _wrap_one(monitor, original, tool_name, guard=None, inner=False):
     # Idempotent: wrapping an already-wrapped callable stacks a second layer
     # and double-counts every call (issue #336). The OpenAI/Anthropic modules
     # share the same sentinel, so one host instrumenting through more than one
@@ -111,6 +111,21 @@ def _wrap_one(monitor, original, tool_name):
         return original
     counter = itertools.count()
     is_async = inspect.iscoroutinefunction(original)
+    # ``invoke`` on a chat model delegates to ``generate`` (and ``ainvoke`` to
+    # ``agenerate``), so patching all four on one instance emits two events for
+    # one user-facing call -- the outer entrypoint plus the generation it called
+    # into. Global mode avoids this by patching only the outermost entrypoints
+    # on the class; per-client mode promises the batch entrypoints too (issue
+    # #339), so it keeps them but suppresses the nested event instead: an inner
+    # entrypoint reached from a wrapped outer one on the same instance is
+    # already accounted for by that outer call (issue #589).
+    #
+    # ``guard`` is shared by every entrypoint patched on one instance. Both the
+    # outer and the inner entrypoints bracket the call with it, so a nested
+    # inner sees the outer's depth; ``inner`` marks only the delegation targets,
+    # which suppress their own event when they were reached from an outer
+    # entrypoint. The outer entrypoints always emit -- the user called them.
+    guarded = guard is not None
 
     def _sync(*args, **kwargs):
         model, call_args = _resolve_model(original, args)
@@ -118,12 +133,24 @@ def _wrap_one(monitor, original, tool_name):
         model_name = _model_name(model)
         start = time.perf_counter()
         error = False
+        outer = True
+        if guarded:
+            outer = guard.enter()
+            if inner and not outer:
+                # Reached from a wrapped invoke on this same instance; the
+                # outer call emits, so this one must not.
+                try:
+                    return original(*args, **kwargs)
+                finally:
+                    guard.exit()
         try:
             result = original(*args, **kwargs)
         except Exception:
             error = True
             raise
         finally:
+            if guarded:
+                guard.exit()
             _emit(monitor, counter, model_name, tool_name, sig_text, start, error)
         return result
 
@@ -133,12 +160,22 @@ def _wrap_one(monitor, original, tool_name):
         model_name = _model_name(model)
         start = time.perf_counter()
         error = False
+        outer = True
+        if guarded:
+            outer = guard.enter()
+            if inner and not outer:
+                try:
+                    return await original(*args, **kwargs)
+                finally:
+                    guard.exit()
         try:
             result = await original(*args, **kwargs)
         except Exception:
             error = True
             raise
         finally:
+            if guarded:
+                guard.exit()
             _emit(monitor, counter, model_name, tool_name, sig_text, start, error)
         return result
 
@@ -146,10 +183,43 @@ def _wrap_one(monitor, original, tool_name):
     # Mark the wrapper so a second wrap_client does not stack another layer
     # (issue #336); the guard in _wrap_one reads this attribute.
     wrapper.__snagline_wrapped__ = True  # type: ignore[attr-defined,union-attr]
+    wrapper.__snagline_inner__ = inner  # type: ignore[attr-defined,union-attr]
     return wrapper
 
 
-def _patch_target(monitor, target, methods=_LANGCHAIN_METHODS) -> int:
+class _CallGuard:
+    """Re-entrancy counter for the entrypoints patched on one instance.
+
+    ``enter`` returns True for the outermost call on this instance and False
+    for any call nested inside one still in flight; only the outermost emits.
+    The counter is plain state rather than thread-local: an instance shared
+    across threads or interleaved coroutines is the SDK's own concern, and the
+    failure mode of an over-counted depth is a suppressed nested event, which
+    is still one event per logical call rather than two.
+    """
+
+    def __init__(self) -> None:
+        self._depth = 0
+
+    def enter(self) -> bool:
+        outer = self._depth == 0
+        self._depth += 1
+        return outer
+
+    def exit(self) -> None:
+        if self._depth > 0:
+            self._depth -= 1
+
+
+# The entrypoints ``invoke``/``ainvoke`` delegate to on a chat model. A
+# per-client wrap of all four needs this set to mark the inner pair so a call
+# through the outer entrypoint is recorded once (issue #589); global mode
+# never patches the inner pair (``_LANGCHAIN_GLOBAL_METHODS``), so it passes
+# no guard and keeps its existing single-event behaviour.
+_INNER_METHODS = frozenset({"generate", "agenerate"})
+
+
+def _patch_target(monitor, target, methods=_LANGCHAIN_METHODS, guard=None) -> int:
     """Patch ``methods`` on ``target`` (instance *or* class).
 
     Returns the number of entrypoints that were patched. Callers use the count
@@ -157,13 +227,26 @@ def _patch_target(monitor, target, methods=_LANGCHAIN_METHODS) -> int:
     the entrypoints we look for" (issue #339), and it is how the instrument_*
     entrypoints honour their documented "True if anything was patched" contract
     on the explicit-client path (issue #321).
+
+    ``guard`` is only supplied by per-client mode, where the outer and inner
+    entrypoints are both patched on one instance and the inner ones must not
+    double-count a call the outer one already recorded (issue #589).
     """
     patched = 0
     for name in methods:
         method = getattr(target, name, None)
         if method is None or not callable(method):
             continue
-        setattr(target, name, _wrap_one(monitor, method, "langchain." + name))
+        # Every entrypoint shares the guard: the outer ones must enter it too,
+        # or a nested inner would see depth 0 and emit a second event. Only the
+        # delegation targets are marked ``inner``, so a call the user made
+        # directly through invoke/generate is always recorded exactly once.
+        method_inner = guard is not None and name in _INNER_METHODS
+        setattr(
+            target,
+            name,
+            _wrap_one(monitor, method, "langchain." + name, guard, inner=method_inner),
+        )
         patched += 1
     if patched == 0:
         logger.warning(
@@ -176,9 +259,12 @@ def _patch_target(monitor, target, methods=_LANGCHAIN_METHODS) -> int:
 def wrap_client(monitor, client):
     """Patch the invoke/generate entrypoints on ``client`` in place.
 
-    Returns the same client for chaining.
+    Returns the same client for chaining. All four entrypoints are wrapped so a
+    caller using the batch API directly is still observed (issue #339); the
+    guard keeps a chat-model call that goes ``invoke`` -> ``generate`` at one
+    event instead of two (issue #589).
     """
-    _patch_target(monitor, client)
+    _patch_target(monitor, client, guard=_CallGuard())
     return client
 
 

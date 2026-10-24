@@ -19,16 +19,17 @@ import dataclasses
 import json
 import math
 import os
+import ssl
 import sys
 import time
 import urllib.request
 from collections.abc import Callable, Iterator
 from contextlib import suppress
 from pathlib import Path
-from typing import IO
 
 from snagline import __version__
-from snagline.baseline import ToolBaseline
+from snagline._input import _BadInputFile, _DecodeGuardedFile, open_input
+from snagline.baseline import BaselineProfile, ToolBaseline
 from snagline.config import Config
 from snagline.events import StepEvent
 from snagline.monitor import Monitor
@@ -65,34 +66,25 @@ class _CountingSink:
         self.risks.append(risk)
 
 
-class _BadInputFile(OSError):
-    """A user-named input file could not be opened (issue #428).
+def _open_input(path: str) -> _DecodeGuardedFile:
+    """Open a named input file, or fail naming it (issues #428, #595).
 
-    Subclasses ``OSError`` so library callers that already catch ``OSError``
-    from ``replay()`` keep working; the CLI catches this subclass to turn the
-    failure into a one-line diagnostic instead of a traceback.
+    Thin re-export over :func:`snagline._input.open_input` so the CLI's existing
+    call sites read as one local helper; see that module for why a decode
+    failure needs its own guard.
     """
-
-
-def _open_input(path: str) -> IO[str]:
-    """Open a named input file, or fail naming it (issue #428).
-
-    ``open()``'s own message already names the path, but the CLI wants the
-    command in the diagnostic too, and a raw ``FileNotFoundError`` surfacing
-    out of ``main()`` reads as a crash of the tool itself.
-    """
-    try:
-        return open(path, encoding="utf-8")
-    except OSError as exc:
-        raise _BadInputFile(f"cannot open {path}: {exc}") from exc
+    return open_input(path)
 
 
 def replay(path: str, monitor: Monitor | None = None) -> int:
     """Replay a JSONL trajectory file through ``monitor`` (live offline analysis).
 
     Each line must be a JSON object with the ``StepEvent`` fields. Returns the
-    number of steps replayed. With the default monitor this also prints any
-    ``FailureRisk`` to stderr via the console sink.
+    number of steps replayed, or ``-1`` when the file itself cannot be read or
+    decoded -- a bad input file is a usage error, not a crash, so ``replay``
+    reports it on stderr and returns the sentinel rather than propagating
+    (issue #595). The CLI maps both shapes to exit 2. With the default monitor
+    this also prints any ``FailureRisk`` to stderr via the console sink.
     """
     if monitor is None:
         monitor = Monitor.default()
@@ -104,26 +96,30 @@ def replay(path: str, monitor: Monitor | None = None) -> int:
     # Without this, reusing the same monitor across replay() calls leaks state
     # from one trajectory into the next (issue #18).
     episodes: set = set()
-    with _open_input(path) as fh:
-        for lineno, line in enumerate(fh, start=1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-                event = StepEvent(**obj)
-            except (json.JSONDecodeError, TypeError, ValueError) as exc:
-                # Fail-soft on the input side too: a malformed trajectory line
-                # must never crash the whole replay (issue #5).
-                print(
-                    f"snagline replay: skipping malformed line {lineno}: {exc}",
-                    file=sys.stderr,
-                )
-                skipped += 1
-                continue
-            episodes.add(event.episode_id)
-            monitor.ingest(event)
-            steps += 1
+    try:
+        with _open_input(path) as fh:
+            for lineno, line in enumerate(fh, start=1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                    event = StepEvent(**obj)
+                except (json.JSONDecodeError, TypeError, ValueError) as exc:
+                    # Fail-soft on the input side too: a malformed trajectory line
+                    # must never crash the whole replay (issue #5).
+                    print(
+                        f"snagline replay: skipping malformed line {lineno}: {exc}",
+                        file=sys.stderr,
+                    )
+                    skipped += 1
+                    continue
+                episodes.add(event.episode_id)
+                monitor.ingest(event)
+                steps += 1
+    except _BadInputFile as exc:
+        print(f"snagline replay: {exc}", file=sys.stderr)
+        return -1
     # Tear down per-episode state so a later replay() on the same monitor starts
     # clean (fail-open: a teardown error must not abort the summary).
     for episode_id in episodes:
@@ -142,7 +138,8 @@ def _build_config(args: argparse.Namespace) -> Config:
 
 
 def _resolve_config_or_usage(args: argparse.Namespace, prog: str) -> Config | None:
-    """Resolve the config, converting a validation error into exit 2 (issue #353).
+    """Resolve the config, converting a bad config into exit 2 (issues #353,
+    #596).
 
     Every ranged or closed-set knob is range-checked in ``Config`` itself, so
     a bad ``SNAGLINE_*`` value, config-file field, or flag surfaces here as a
@@ -151,10 +148,15 @@ def _resolve_config_or_usage(args: argparse.Namespace, prog: str) -> Config | No
     how the parser rejects an unknown flag; letting it escape printed a
     traceback and claimed a server was starting first. Returns ``None`` and
     prints the message when the config is unusable.
+
+    A missing or unreadable ``--config`` path is an ``OSError`` from
+    ``Config.load_file``, not a ``ValueError``, so it needs the same catch or
+    it tracebacks on every subcommand while the file itself is never named in a
+    diagnostic the operator can act on (issue #596).
     """
     try:
         return _build_config(args)
-    except ValueError as exc:
+    except (ValueError, OSError) as exc:
         print(f"snagline {prog}: {exc}", file=sys.stderr)
         return None
 
@@ -1013,6 +1015,30 @@ def _list_stored_versions(store, tenant: str, deployment: str) -> int:
     return 0
 
 
+def _save_profile(profile: BaselineProfile, path: str) -> bool:
+    """Persist a fitted profile, or report an unwritable path and fail.
+
+    ``save_baseline`` opens ``path`` for writing, so a ``--output`` whose parent
+    directory does not exist raises ``FileNotFoundError`` *after* a fit that may
+    have taken minutes, and the operator saw the traceback instead of the
+    "wrote ..." line that would have told them where it went (issue #598). The
+    fit is not redone on a retry either way, so the diagnostic names the path
+    and the profile is not silently dropped. Returns False on a write failure.
+    """
+    # Imported here rather than at module scope because both callers sit behind
+    # a subcommand; the non-semantic path below imported only
+    # fit_baseline_from_jsonl, so a NameError escaped from here on exactly the
+    # path #598's diagnostic was written for.
+    from snagline.baseline import save_baseline
+
+    try:
+        save_baseline(profile, path)
+    except OSError as exc:
+        print(f"snagline baseline: cannot write {path}: {exc}", file=sys.stderr)
+        return False
+    return True
+
+
 def _cmd_baseline(args: argparse.Namespace) -> int:
     """Fit a healthy-run baseline from a trajectory and persist it.
 
@@ -1036,7 +1062,15 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
             return 2
         from snagline.baseline_store import BaselineStore
 
-        store = BaselineStore(args.store_dir, max_versions=args.max_versions or 10)
+        # Same validation the fit/retrain path applies: this is a read, but the
+        # knob reaches the same store constructor, and ``or 10`` here let an
+        # explicit 0 silently mean 10 and a negative pass straight through
+        # (issue #332), which then tracebacks out of a read-only command
+        # instead of exiting 2 the way the fit path already does (#597).
+        limit = _resolved_max_versions(args)
+        if limit is None:
+            return 2
+        store = BaselineStore(args.store_dir, max_versions=limit)
         return _list_stored_versions(store, args.tenant, args.deployment)
 
     if getattr(args, "trajectory", None) == "retrain":
@@ -1103,7 +1137,7 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
                 return vec.tolist() if hasattr(vec, "tolist") else list(vec)
 
             def _iter_events():  # type: ignore[no-untyped-def]
-                with open(args.trajectory, encoding="utf-8") as fh:
+                with _open_input(args.trajectory) as fh:
                     for line in fh:
                         line = line.strip()
                         if not line:
@@ -1147,7 +1181,7 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
         )
         return 0
 
-    from snagline.baseline import fit_baseline_from_jsonl, save_baseline
+    from snagline.baseline import fit_baseline_from_jsonl
 
     if getattr(args, "semantic", False):
         semantic_model = getattr(args, "semantic_model", "all-MiniLM-L6-v2")
@@ -1185,7 +1219,7 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
             return vec.tolist() if hasattr(vec, "tolist") else list(vec)
 
         def _iter_events():  # type: ignore[no-untyped-def]
-            with open(args.trajectory, encoding="utf-8") as fh:
+            with _open_input(args.trajectory) as fh:
                 for line in fh:
                     line = line.strip()
                     if not line:
@@ -1205,7 +1239,8 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
         except Exception as exc:
             print(f"snagline baseline: semantic fit failed: {exc}", file=sys.stderr)
             return 1
-        save_baseline(profile, args.output)
+        if not _save_profile(profile, args.output):
+            return 2
         tools = profile.tools
         print(
             f"snagline baseline: fitted {len(tools)} tool(s) from {profile.total_steps} step(s) "
@@ -1224,7 +1259,8 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    save_baseline(profile, args.output)
+    if not _save_profile(profile, args.output):
+        return 2
 
     tools = profile.tools
     print(
@@ -1306,6 +1342,24 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         except OSError as exc:
             print(
                 f"snagline serve: cannot read {flag} {candidate}: {exc}",
+                file=sys.stderr,
+            )
+            return 2
+    if args.certfile:
+        # Readable is not usable: a PEM that opens fine but does not parse is
+        # rejected only when the listener wraps its socket, which is *after*
+        # the banner below has advertised https:// to a supervisor. Load the
+        # chain into a throwaway context the same way _resolve_tls does so the
+        # failure is reported here, as the contract the readability check above
+        # already claims (issue #599).
+        try:
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.load_cert_chain(args.certfile, args.keyfile)
+            if args.client_ca:
+                context.load_verify_locations(args.client_ca)
+        except (ssl.SSLError, OSError) as exc:
+            print(
+                f"snagline serve: cannot load TLS material: {exc}",
                 file=sys.stderr,
             )
             return 2
@@ -1536,10 +1590,10 @@ def main(argv: list[str] | None = None) -> int:
             sinks.extend(_console_sinks(cfg))
         sinks.append(counter)
         monitor = Monitor.default(config=cfg, sinks=sinks)
-        try:
-            steps = replay(args.trajectory, monitor=monitor)
-        except _BadInputFile as exc:
-            print(f"snagline replay: {exc}", file=sys.stderr)
+        # replay() reports a bad input file itself and returns -1 rather than
+        # propagating (issue #595); both shapes map to exit 2.
+        steps = replay(args.trajectory, monitor=monitor)
+        if steps < 0:
             return 2
         if args.summary:
             print(

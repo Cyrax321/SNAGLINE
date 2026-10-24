@@ -221,16 +221,17 @@ def test_plain_and_server_tls_modes_unchanged_without_client_ca(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@requires_openssl
 def test_cli_serve_forwards_client_ca(monkeypatch, tmp_path):
     from snagline.cli import main
 
-    # The CLI now verifies the cert/key are readable before the banner (#430),
-    # so the paths must exist even though serve() is faked.
-    cert = tmp_path / "c.pem"
-    key = tmp_path / "k.pem"
-    ca = tmp_path / "ca.pem"
-    for p in (cert, key, ca):
-        p.write_text("material", encoding="utf-8")
+    # The CLI loads the cert chain before the banner (#599), so the files have
+    # to be material the chain check accepts rather than placeholder text.
+    ca_cert, ca_key = _generate_ca(tmp_path)
+    server_cert, server_key = _generate_signed_cert(
+        tmp_path, ca_cert, ca_key, "127.0.0.1", "server"
+    )
+    cert, key, ca = server_cert, server_key, ca_cert
 
     captured: dict = {}
 
@@ -259,13 +260,16 @@ def test_cli_serve_forwards_client_ca(monkeypatch, tmp_path):
     assert captured["client_ca"] == str(ca)
 
 
+@requires_openssl
 def test_cli_serve_without_client_ca_passes_none_or_absent(monkeypatch, tmp_path):
     from snagline.cli import main
 
-    cert = tmp_path / "c.pem"
-    key = tmp_path / "k.pem"
-    cert.write_text("cert", encoding="utf-8")
-    key.write_text("key", encoding="utf-8")
+    # Real chain material for the same reason as above (#599).
+    ca_cert, ca_key = _generate_ca(tmp_path)
+    server_cert, server_key = _generate_signed_cert(
+        tmp_path, ca_cert, ca_key, "127.0.0.1", "server"
+    )
+    cert, key = server_cert, server_key
 
     captured: dict = {}
 
