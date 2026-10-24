@@ -245,9 +245,7 @@ def _patch_target(monitor, target, methods=_LANGCHAIN_METHODS, guard=None) -> in
         setattr(
             target,
             name,
-            _wrap_one(
-                monitor, method, "langchain." + name, guard, inner=method_inner
-            ),
+            _wrap_one(monitor, method, "langchain." + name, guard, inner=method_inner),
         )
         patched += 1
     if patched == 0:

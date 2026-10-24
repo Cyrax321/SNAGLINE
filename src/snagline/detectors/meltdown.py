@@ -110,8 +110,10 @@ class MeltdownDetector:
         # ``H > high`` trivially true. Config rejects this via
         # _validated_counts_and_windows; this guard is defense in depth for a
         # detector constructed directly, alongside the window check below.
-        for value, label in ((self.low_entropy, "low_entropy"),
-                             (self.high_entropy, "high_entropy")):
+        for value, label in (
+            (self.low_entropy, "low_entropy"),
+            (self.high_entropy, "high_entropy"),
+        ):
             if not math.isfinite(value) or value < 0:
                 raise ValueError(
                     f"{label} must be a finite, non-negative number of bits; "

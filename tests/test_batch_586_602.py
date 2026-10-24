@@ -259,6 +259,7 @@ def test_588_sync_client_still_classified_as_sync() -> None:
         return {"ok": True}
 
     assert mod._is_async_call(_create) is False
+
     # unwrap is the identity on an undecorated async function.
     async def _async_create(**kw: Any) -> Any:
         return {"ok": True}
@@ -416,9 +417,10 @@ def test_590_env_unset_and_file_null_agree() -> None:
     with tempfile.TemporaryDirectory() as d:
         path = _write_text(d, "snagline.json", json.dumps({}))
         from_env = Config.resolve(environ={})
-        assert from_env.episode_token_budget is Config.resolve(
-            path=path
-        ).episode_token_budget
+        assert (
+            from_env.episode_token_budget
+            is Config.resolve(path=path).episode_token_budget
+        )
 
 
 # --------------------------------------------------------------------------
@@ -625,9 +627,10 @@ def test_593_latch_survives_snapshot_restore() -> None:
     st = restored._episodes["ep"]
     assert "newtool" in st.unseen_tools
     # A restored episode must not re-credit a tool it already saw.
-    assert restored._mahalanobis_score(
-        st, _event(9, tool_name="newtool", latency_ms=50.0)
-    ) == 0.0
+    assert (
+        restored._mahalanobis_score(st, _event(9, tool_name="newtool", latency_ms=50.0))
+        == 0.0
+    )
 
 
 def test_593_old_snapshot_without_latch_still_restores() -> None:
@@ -729,7 +732,10 @@ def test_594_periods_within_the_band_are_detected() -> None:
         fired = None
         for i in range(30):
             risk = det.observe(
-                _event(i, action_signature=make_signature("tool_call", "t", f"s{i % period}"))
+                _event(
+                    i,
+                    action_signature=make_signature("tool_call", "t", f"s{i % period}"),
+                )
             )
             if risk is not None:
                 fired = risk
@@ -896,7 +902,9 @@ def test_597_list_versions_rejects_bad_max_versions(
         assert "-5" in captured.err
 
 
-def test_597_list_versions_accepts_unset_and_counts(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_597_list_versions_accepts_unset_and_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from snagline.cli import _cmd_baseline
 
     with tempfile.TemporaryDirectory() as d:
@@ -1052,14 +1060,27 @@ def test_599_valid_pem_is_accepted(
     from cryptography.x509 import CertificateBuilder, Name
 
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    subject = Name([__import__("cryptography.x509", fromlist=["NameAttribute"]).NameAttribute(__import__("cryptography.x509.oid", fromlist=["NameOID"]).NameOID.COMMON_NAME, "localhost")])
+    subject = Name(
+        [
+            __import__("cryptography.x509", fromlist=["NameAttribute"]).NameAttribute(
+                __import__(
+                    "cryptography.x509.oid", fromlist=["NameOID"]
+                ).NameOID.COMMON_NAME,
+                "localhost",
+            )
+        ]
+    )
     now = datetime.datetime.now(datetime.timezone.utc)
     cert = (
         CertificateBuilder()
         .subject_name(subject)
         .issuer_name(subject)
         .public_key(key.public_key())
-        .serial_number(__import__("cryptography.x509", fromlist=["random_serial_number"]).random_serial_number())
+        .serial_number(
+            __import__(
+                "cryptography.x509", fromlist=["random_serial_number"]
+            ).random_serial_number()
+        )
         .not_valid_before(now - datetime.timedelta(days=1))
         .not_valid_after(now + datetime.timedelta(days=365))
         .sign(key, hashes.SHA256())

@@ -72,9 +72,7 @@ class _DecodeGuardedFile:
         try:
             return op()
         except UnicodeDecodeError as exc:
-            raise _BadInputFile(
-                f"cannot decode {self._path} as utf-8: {exc}"
-            ) from exc
+            raise _BadInputFile(f"cannot decode {self._path} as utf-8: {exc}") from exc
 
     def __iter__(self) -> Iterator[str]:
         while True:

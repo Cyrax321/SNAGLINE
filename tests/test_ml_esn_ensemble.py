@@ -284,9 +284,7 @@ def test_mahalanobis_untimed_baseline_does_not_score_latency():
     assert _score(det, _ev(0, latency=100.0)) == pytest.approx(0.0, abs=1e-9)
     # And a wild one: without timed samples the baseline has no latency
     # opinion, so 9000 ms is no more anomalous than 1 ms.
-    assert _score(det, _ev(1, latency=9000.0)) == pytest.approx(
-        0.0, abs=1e-9
-    )
+    assert _score(det, _ev(1, latency=9000.0)) == pytest.approx(0.0, abs=1e-9)
 
 
 def test_untimed_baseline_healthy_stream_stays_silent():

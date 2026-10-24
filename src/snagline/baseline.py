@@ -187,8 +187,7 @@ class ToolBaseline:
         mean, std = _validate_moments(mean, std)
         tb.latency_sum = mean * tb.latency_count
         tb.latency_sum_sq = (
-            std**2 * max(1, tb.latency_count - 1)
-            + tb.latency_sum**2 / tb.latency_count
+            std**2 * max(1, tb.latency_count - 1) + tb.latency_sum**2 / tb.latency_count
             if tb.latency_count
             else 0.0
         )
