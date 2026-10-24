@@ -284,6 +284,46 @@ def test_policy_from_dict_rejects_bad_shell_threats_schema() -> None:
         policy_from_dict({"rules": [{"type": "shell_threats", "decision": "allow"}]})
 
 
+# --- commands longer than the inspection window (issue #650) ---------------
+
+
+def _long_command(tail: str) -> str:
+    return "ls -la " + "a" * 4096 + " ; " + tail
+
+
+def test_truncated_execute_request_is_marked() -> None:
+    request = ToolRequest.from_tool_input(
+        "Bash", {"command": _long_command("rm -rf /")}
+    )
+    assert request.action == "execute"
+    assert request.truncated is True
+    assert request.resource is not None and request.resource.endswith("<truncated>")
+
+
+def test_short_execute_request_is_not_marked() -> None:
+    request = ToolRequest.from_tool_input("Bash", {"command": "ls -la"})
+    assert request.truncated is False
+
+
+def test_threat_hidden_in_the_truncated_tail_still_denies() -> None:
+    # The destructive tail sits past the host's 4096-char window, so every
+    # regex rule sees only a benign prefix.
+    request = ToolRequest.from_tool_input(
+        "Bash", {"command": _long_command("rm -rf /")}
+    )
+    policy = Policy(rules=(as_authorize_rule(),))
+    verdict = policy.decide(request)
+    assert verdict.decision == "deny"
+    assert "truncated_command" in verdict.reason
+
+
+def test_untruncated_long_benign_command_is_still_allowed() -> None:
+    exactly = "echo " + "b" * (4096 - 5)
+    request = ToolRequest.from_tool_input("Bash", {"command": exactly})
+    assert request.truncated is False
+    assert Policy(rules=(as_authorize_rule(),)).decide(request).decision == "allow"
+
+
 # --- documented false-positive / false-negative notes as executable checks -
 
 

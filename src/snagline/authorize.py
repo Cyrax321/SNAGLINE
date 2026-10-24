@@ -118,6 +118,9 @@ class ToolRequest:
     resource: str | None = None
     tool_input: Mapping[str, Any] = field(default_factory=dict)
     episode_id: str | None = None
+    #: True when ``resource`` was cut at ``_MAX_RESOURCE_CHARS``. Detectors that
+    #: scan the text must then fail closed instead of trusting a prefix.
+    truncated: bool = False
 
     @property
     def signature(self) -> str:
@@ -149,20 +152,26 @@ class ToolRequest:
         safe = _redact(data)
         known = _TOOL_RESOURCES.get(tool_name)
         if known is None:
+            resource = _first_str(safe, ("url", "path", "file_path", "command"))
+            truncated = resource is not None and resource.endswith(_TRUNCATION_MARKER)
             return cls(
                 tool_name=tool_name,
                 action="unknown",
-                resource=_first_str(safe, ("url", "path", "file_path", "command")),
+                resource=resource,
                 tool_input=safe,
                 episode_id=episode_id,
+                truncated=truncated,
             )
         keys, action = known
+        resource = _first_str(safe, keys)
+        truncated = resource is not None and resource.endswith(_TRUNCATION_MARKER)
         return cls(
             tool_name=tool_name,
             action=action,
-            resource=_first_str(safe, keys),
+            resource=resource,
             tool_input=safe,
             episode_id=episode_id,
+            truncated=truncated,
         )
 
 
@@ -198,6 +207,8 @@ _CONTENT_KEYS = frozenset(
 _MAX_RESOURCE_CHARS = 4096
 
 _CONTENT_MARKER = "<content redacted>"
+#: Suffix appended to a structural value that hit ``_MAX_RESOURCE_CHARS``.
+_TRUNCATION_MARKER = "...<truncated>"
 
 
 #: How deep :func:`_redact` walks into nested dicts and lists. Hosts nest
@@ -224,7 +235,7 @@ def _redact_value(value: Any, depth: int) -> Any:
         items = [_redact_value(item, depth - 1) for item in value]
         return tuple(items) if isinstance(value, tuple) else items
     if isinstance(value, str) and len(value) > _MAX_RESOURCE_CHARS:
-        return value[:_MAX_RESOURCE_CHARS] + "...<truncated>"
+        return value[:_MAX_RESOURCE_CHARS] + _TRUNCATION_MARKER
     return value
 
 
