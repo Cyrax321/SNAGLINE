@@ -59,6 +59,7 @@ from snagline.risk import FailureRisk, TriggerType
 # downstream policy layers map them by name. They live in the TriggerType
 # literal in risk.py alongside the loop-hardening and side-effect-guard
 # groups (issue #304).
+TRIGGER_LOOP: TriggerType = "loop"
 TRIGGER_NEAR_DUPLICATE_LOOP: TriggerType = "near_duplicate_loop"
 TRIGGER_CYCLE: TriggerType = "cycle"
 TRIGGER_STALL: TriggerType = "stall"
@@ -165,6 +166,9 @@ class LoopDetector:
         self._window_sizes: dict[str, int | None] = {}
         self._near_counts_map: dict[str, Counter[str]] = {}
         self._near_sizes: dict[str, int | None] = {}
+        # Track which step_ids produced a coarse loop for each signature so
+        # subsequent stall or cycle risks can declare which specific findings they retire.
+        self._plain_fired_steps: dict[str, dict[str, list[str]]] = {}
 
     def observe(self, event: StepEvent) -> FailureRisk | None:
         hardened = self._observe_hardened(event) if self._any_mode else None
@@ -227,17 +231,10 @@ class LoopDetector:
                     seen = w.count(sig)
                 if seen < self.repeat_threshold:
                     fired.discard(sig)
+                    self._plain_fired_steps.get(event.episode_id, {}).pop(sig, None)
             if not fired:
-                # Every escalated signature re-armed, so this episode is back to
-                # "nothing looping". Drop the entry instead of leaving an empty
-                # set behind: otherwise every episode that ever looped keeps
-                # bookkeeping until ``reset()``, an unbounded per-episode leak of
-                # exactly the kind the DedupSink sweep removes. Clearing the
-                # local too makes the escalation path below recreate the entry
-                # through ``setdefault`` -- mutating the detached set would
-                # record the fire against a dict entry that no longer exists and
-                # silently disable dedupe for the rest of the episode.
                 del self._fired[event.episode_id]
+                self._plain_fired_steps.pop(event.episode_id, None)
                 fired = None
         if count < self.repeat_threshold:
             return None
@@ -246,14 +243,30 @@ class LoopDetector:
         elif event.action_signature in fired:
             return None
         fired.add(event.action_signature)
+        self._plain_fired_steps.setdefault(event.episode_id, {}).setdefault(
+            event.action_signature, []
+        ).append(event.step_id)
+
+        superseded_by: tuple[TriggerType, ...] = ()
+        if (
+            self._stall_fired.get(event.episode_id)
+            and self._stall_sig.get(event.episode_id) == event.action_signature
+        ):
+            superseded_by = (TRIGGER_STALL,)
+        elif self._cycle_fired.get(event.episode_id) and event.action_signature in set(
+            self._cycle_windows.get(event.episode_id, ())
+        ):
+            superseded_by = (TRIGGER_CYCLE,)
+
         score = min(1.0, count / max(self.repeat_threshold, 1) * 0.5)
         return FailureRisk(
             event.episode_id,
             event.step_id,
             score,
-            "loop",
+            TRIGGER_LOOP,
             f"action repeated {count}x in last {len(w)} steps",
             event.timestamp,
+            superseded_by=superseded_by,
         )
 
     def _observe_hardened(self, event: StepEvent) -> FailureRisk | None:
@@ -360,6 +373,14 @@ class LoopDetector:
         self._cycle_fired[event.episode_id] = True
         repeats = len(w) // period
         score = min(1.0, repeats * 0.25)
+        cycle_sigs = set(w)
+        plain_steps = self._plain_fired_steps.get(event.episode_id, {})
+        retired = tuple(
+            step_id
+            for sig, step_ids in plain_steps.items()
+            if sig in cycle_sigs
+            for step_id in step_ids
+        )
         return FailureRisk(
             event.episode_id,
             event.step_id,
@@ -367,6 +388,8 @@ class LoopDetector:
             TRIGGER_CYCLE,
             f"period-{period} cycle across last {len(w)} steps",
             event.timestamp,
+            supersedes=(TRIGGER_LOOP,),
+            superseded_step_ids=retired,
         )
 
     def _minimal_period(self, w: deque) -> int | None:
@@ -420,6 +443,7 @@ class LoopDetector:
         self._stall_fired[event.episode_id] = True
         elapsed = max(0.0, event.timestamp - self._stall_start[event.episode_id])
         score = min(1.0, count / max(self.loop_stall_steps, 1) * 0.5)
+        retired = tuple(self._plain_fired_steps.get(event.episode_id, {}).get(sig, []))
         return FailureRisk(
             event.episode_id,
             event.step_id,
@@ -427,6 +451,8 @@ class LoopDetector:
             TRIGGER_STALL,
             f"identical action {count} steps in a row ({elapsed:.3f}s elapsed)",
             event.timestamp,
+            supersedes=(TRIGGER_LOOP,),
+            superseded_step_ids=retired,
         )
 
     def reset(self, episode_id: str) -> None:
@@ -447,6 +473,7 @@ class LoopDetector:
         self._stall_count.pop(episode_id, None)
         self._stall_start.pop(episode_id, None)
         self._stall_fired.pop(episode_id, None)
+        self._plain_fired_steps.pop(episode_id, None)
 
     def dump_state(self) -> dict[str, Any]:
         # _fired holds per-episode sets of escalated signatures (issue #94

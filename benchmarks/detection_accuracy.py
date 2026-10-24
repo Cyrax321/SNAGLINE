@@ -316,6 +316,34 @@ class EpisodeOutcome:
     predicted: set[str] = field(default_factory=set)
 
 
+def reduce_risks(
+    risks: Sequence[FailureRisk],
+    episode_id: str,
+    label_triggers: frozenset[str] | None,
+) -> EpisodeOutcome:
+    """Reduce an episode's emitted risks to an outcome.
+
+    Applies loop-family arbitration (issue #604): when stall or cycle fires,
+    it declares via FailureRisk.supersedes and FailureRisk.superseded_step_ids
+    that it replaces earlier coarse loop findings describing the same repeated
+    actions.
+    """
+    retired_step_ids: set[str] = set()
+    for risk in risks:
+        if risk.superseded_step_ids:
+            retired_step_ids.update(risk.superseded_step_ids)
+
+    outcome = EpisodeOutcome(episode_id, label_triggers)
+    for risk in risks:
+        trig = risk_to_label_trigger(risk)
+        if risk.step_id in retired_step_ids:
+            continue
+        if getattr(risk, "superseded_by", ()):
+            continue
+        outcome.predicted.add(trig)
+    return outcome
+
+
 def replay_episode(
     episode: Episode, fixtures_dir: Path | None = None
 ) -> EpisodeOutcome:
@@ -337,10 +365,7 @@ def replay_episode(
     # Finalize pass: judges silent-abort-style completion checks, then tears
     # down per-episode state.
     monitor.end_episode(episode.episode_id)
-    outcome = EpisodeOutcome(episode.episode_id, episode.label_triggers)
-    for risk in collector.risks:
-        outcome.predicted.add(risk_to_label_trigger(risk))
-    return outcome
+    return reduce_risks(collector.risks, episode.episode_id, episode.label_triggers)
 
 
 # --------------------------------------------------------------------------
