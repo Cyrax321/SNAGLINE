@@ -92,6 +92,31 @@ class ShellThreatConfig:
     min_severity: ShellSeverity = "warning"
     decision: Literal["ask", "deny"] = "deny"
 
+    def __post_init__(self) -> None:
+        """Reject values that would otherwise fail open inside the rule.
+
+        `findings_at_or_above` looks the threshold up in `_SEVERITY_RANK`;
+        an unknown value raised `KeyError` inside the authorize rule, and
+        `Policy.decide` swallows rule failures and falls back to `allow`.
+        Failing here instead means a typo can never widen the policy.
+        """
+        if self.min_severity not in _SEVERITY_RANK:
+            msg = (
+                "min_severity must be one of info|warning|critical, "
+                f"got {self.min_severity!r}"
+            )
+            raise ValueError(msg)
+        if self.decision not in ("ask", "deny"):
+            msg = f"decision must be 'ask' or 'deny', got {self.decision!r}"
+            raise ValueError(msg)
+        for rule_id, severity in self.severity_overrides.items():
+            if severity not in _SEVERITY_RANK:
+                msg = (
+                    f"severity_overrides[{rule_id!r}] must be one of "
+                    f"info|warning|critical, got {severity!r}"
+                )
+                raise ValueError(msg)
+
 
 # ---------------------------------------------------------------------------
 # Built-in rules (each independently testable)
