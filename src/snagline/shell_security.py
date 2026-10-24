@@ -312,6 +312,15 @@ def as_authorize_rule(config: ShellThreatConfig | None = None):
     def _rule(request: ToolRequest) -> RuleVerdict | None:
         if request.action != "execute" or not request.resource:
             return None
+        if request.truncated:
+            # The tail was cut at the host's inspection window, so a threat
+            # there is invisible to every rule below. Fail closed rather than
+            # clear a command that was never fully read.
+            return RuleVerdict(
+                rule_id="shell_threats",
+                decision=cfg.decision,
+                reason="shell threat (truncated_command) command exceeds the inspection window",
+            )
         hits = findings_at_or_above(
             inspect_command(request.resource, cfg),
             cfg.min_severity,
