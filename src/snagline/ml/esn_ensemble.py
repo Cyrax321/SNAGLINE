@@ -99,6 +99,7 @@ class _EpisodeState:
         "res_n",
         "rhs",
         "state",
+        "unseen_tools",
         "warm_ctx",
         "warm_n",
         "warm_tgt",
@@ -120,6 +121,9 @@ class _EpisodeState:
         # residual statistics the moment the readout is solved.
         self.warm_ctx: list[np.ndarray] = []
         self.warm_tgt: list[np.ndarray] = []
+        # Tools absent from the baseline that have already contributed their
+        # one-shot unseen-tool signal this episode (issue #593).
+        self.unseen_tools: set[str] = set()
 
 
 class EsnCusumDetector:
@@ -351,6 +355,10 @@ class EsnCusumDetector:
             # are bounded by warmup_steps and dropped once warm-up completes.
             "warm_ctx": [np.asarray(c, dtype=float).tolist() for c in st.warm_ctx],
             "warm_tgt": [np.asarray(t, dtype=float).tolist() for t in st.warm_tgt],
+            # The unseen-tool latch is per episode, so it has to survive a
+            # restart or a restored episode re-credits the signal and can
+            # re-alarm on the same traffic (issue #593).
+            "unseen_tools": sorted(st.unseen_tools),
         }
 
     def _state_from_dict(self, st: _EpisodeState, raw: dict[str, Any]) -> None:
@@ -384,6 +392,11 @@ class EsnCusumDetector:
         st.warm_n = int(raw.get("warm_n", 0))
         st.warm_ctx = [np.array(c, dtype=float) for c in raw.get("warm_ctx", [])]
         st.warm_tgt = [np.array(t, dtype=float) for t in raw.get("warm_tgt", [])]
+        # Absent on snapshots written before the latch, which is exactly the
+        # case that must not re-credit an already-seen unseen tool (#593).
+        st.unseen_tools = {
+            str(name) for name in raw.get("unseen_tools", []) if isinstance(name, str)
+        }
 
     # --- internals ---------------------------------------------------------
 
@@ -394,7 +407,7 @@ class EsnCusumDetector:
             self._episodes[event.episode_id] = st
         x = self._features(event)
         anomaly = self._esn_anomaly(st, x)
-        signal = max(anomaly, self._mahalanobis_score(event))
+        signal = max(anomaly, self._mahalanobis_score(st, event))
         st.cusum = max(0.0, st.cusum + signal - self._k)
         if st.cusum >= self._h:
             # __init__ rejects cusum_h <= 0; the floor guards only a future
@@ -492,7 +505,7 @@ class EsnCusumDetector:
             st.res_m2 += delta * (residual - st.res_mu)
         return anomaly
 
-    def _mahalanobis_score(self, event: StepEvent) -> float:
+    def _mahalanobis_score(self, st: _EpisodeState, event: StepEvent) -> float:
         """Diagonal-covariance Mahalanobis score vs BaselineProfile, [0, 1).
 
         Computed over the standardized latency and error terms of the
@@ -503,12 +516,28 @@ class EsnCusumDetector:
         reported no ``latency_ms`` contributes its error rate and nothing
         else, rather than scoring every live latency as a ~100-sigma
         deviation from a mean of zero (issue #348).
+
+        A tool absent from the profile contributes ``_UNKNOWN_TOOL_SCORE``
+        exactly once per episode (issue #593): the module promises a CUSUM
+        over the combined signal so *only sustained* drift alarms, but a
+        per-step 0.6 floor made the debt grow by ``0.6 - k`` on every step
+        regardless of what the step was, so the alarm became a function of
+        step count alone and fired every ~9 steps for the whole episode on
+        perfectly healthy unseen-tool traffic. ``goal_drift`` emits its 0.6
+        once behind an episode-level latch; the equivalent here is to credit
+        the signal once and let the CUSUM decay on the healthy steps that
+        follow, while the ESN residual anomaly still contributes per step.
         """
         if self._baseline is None:
             return 0.0
         key = event.tool_name or "default"
         tb = self._baseline.tools.get(key)
         if tb is None:
+            if key in st.unseen_tools:
+                # Already credited this episode; the CUSUM must be able to
+                # decay on the healthy steps that follow the first one.
+                return 0.0
+            st.unseen_tools.add(key)
             return _UNKNOWN_TOOL_SCORE
         if tb.count < 2:
             return 0.0

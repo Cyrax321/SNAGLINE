@@ -314,17 +314,17 @@ def test_unloadable_certfile_raises_at_startup(tmp_path) -> None:
         make_server(Monitor.default(), host="127.0.0.1", port=0, certfile=str(bad))
 
 
+@requires_openssl
 def test_cli_serve_forwards_tls_flags(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from snagline.cli import main
 
-    # The CLI now verifies the cert/key are readable before the banner (#430),
-    # so the paths must exist even though serve() is faked.
-    cert = tmp_path / "c.pem"
-    key = tmp_path / "k.pem"
-    cert.write_text("cert", encoding="utf-8")
-    key.write_text("key", encoding="utf-8")
+    # The CLI loads the cert chain before the banner (#599) so a readable but
+    # unparseable PEM is refused instead of tracebacks after advertising https.
+    # Dummy text no longer reaches the faked serve(), so the forwarding test
+    # needs material the chain check will actually accept.
+    cert, key = _generate_self_signed_cert(tmp_path)
 
     captured: dict[str, Any] = {}
 

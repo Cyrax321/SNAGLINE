@@ -1013,6 +1013,9 @@ def test_constructor_and_default_agree_on_a_config():
 def test_constructor_still_validates_config_borne_policy():
     # The config path reaches the same _configure_policy validation: a bad
     # value fails loudly at construction, not silently at ingest time.
-    cfg = Config(policy="halt_webhook", halt_url=None)
+    # #587 moved the halt_url check into Config.__post_init__ itself so the
+    # failure lands before serve prints its banner, so the rejection now
+    # happens on the Config line; the Monitor no longer needs to be the layer
+    # that raises for the contract to hold.
     with pytest.raises(ValueError, match="requires halt_url"):
-        Monitor([], [], config=cfg)
+        Config(policy="halt_webhook", halt_url=None)
