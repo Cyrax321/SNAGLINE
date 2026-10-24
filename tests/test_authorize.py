@@ -444,6 +444,50 @@ def test_bash_command_is_not_treated_as_content() -> None:
     assert request.tool_input["command"] == "rm -rf /etc"
 
 
+def test_nested_content_is_redacted() -> None:
+    """Content under a structural key must not survive either."""
+    request = ToolRequest.from_tool_input(
+        "SomeNewTool",
+        {
+            "notebook": {"content": "TOP SECRET FILE BODY"},
+            "payload": {"new_string": "ANOTHER SECRET"},
+        },
+    )
+    assert "TOP SECRET FILE BODY" not in repr(request)
+    assert "ANOTHER SECRET" not in repr(request)
+    assert request.tool_input["notebook"]["content"] == "<content redacted>"
+    assert request.tool_input["payload"]["new_string"] == "<content redacted>"
+
+
+def test_content_nested_in_a_list_is_redacted() -> None:
+    """A MultiEdit-style list of edits keeps no bodies."""
+    request = ToolRequest.from_tool_input(
+        "Scratchpad",
+        {"changes": [{"old_string": "SECRET-A", "new_string": "SECRET-B"}]},
+    )
+    assert "SECRET-A" not in repr(request)
+    assert "SECRET-B" not in repr(request)
+    edits = request.tool_input["changes"]
+    assert edits[0]["old_string"] == "<content redacted>"
+
+
+def test_oversized_nested_strings_are_truncated() -> None:
+    huge = "b" * 10_000
+    request = ToolRequest.from_tool_input("SomeNewTool", {"payload": {"query": huge}})
+    retained = request.tool_input["payload"]["query"]
+    assert len(retained) < len(huge)
+    assert retained.endswith("<truncated>")
+
+
+def test_values_below_the_depth_limit_collapse_to_the_marker() -> None:
+    """Deeper than ``_REDACT_DEPTH`` is dropped, not walked forever."""
+    deep: dict = {"leaf": "SECRET-DEEP"}
+    for _ in range(6):
+        deep = {"level": deep}
+    request = ToolRequest.from_tool_input("SomeNewTool", {"payload": deep})
+    assert "SECRET-DEEP" not in repr(request)
+
+
 def test_oversized_structural_values_are_truncated() -> None:
     """The resource is read from the redacted copy, so the cap applies to it.
 

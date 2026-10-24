@@ -200,6 +200,34 @@ _MAX_RESOURCE_CHARS = 4096
 _CONTENT_MARKER = "<content redacted>"
 
 
+#: How deep :func:`_redact` walks into nested dicts and lists. Hosts nest
+#: content under structural keys (``{"notebook": {"content": ...}}``,
+#: ``{"changes": [{"new_string": ...}]}``); anything deeper is collapsed to the
+#: marker instead of being retained.
+_REDACT_DEPTH = 3
+
+
+def _redact_value(value: Any, depth: int) -> Any:
+    """Redact one tool-input value, walking dicts/lists up to ``depth`` levels."""
+    if isinstance(value, Mapping):
+        if depth <= 0:
+            return _CONTENT_MARKER
+        return {
+            key: _CONTENT_MARKER
+            if key in _CONTENT_KEYS
+            else _redact_value(item, depth - 1)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        if depth <= 0:
+            return _CONTENT_MARKER
+        items = [_redact_value(item, depth - 1) for item in value]
+        return tuple(items) if isinstance(value, tuple) else items
+    if isinstance(value, str) and len(value) > _MAX_RESOURCE_CHARS:
+        return value[:_MAX_RESOURCE_CHARS] + "...<truncated>"
+    return value
+
+
 def _redact(data: Mapping[str, Any]) -> dict[str, Any]:
     """Copy ``data`` with content-bearing values replaced by a marker.
 
@@ -211,16 +239,19 @@ def _redact(data: Mapping[str, Any]) -> dict[str, Any]:
     they would sit in ``ToolRequest.tool_input`` and in its ``repr``. Keys are
     preserved and values replaced, so ``"content" in request.tool_input`` still
     answers "was content supplied?" without answering "what was it?".
+
+    The walk is recursive (dicts and lists, bounded by :data:`_REDACT_DEPTH`):
+    content nested under a structural key -- an unknown tool's
+    ``{"notebook": {"content": ...}}``, an ``edits`` list, an MCP-served tool --
+    is redacted too, and the size cap applies to nested strings as well. At the
+    depth limit a container collapses to the marker rather than being kept.
     """
-    out: dict[str, Any] = {}
-    for key, value in data.items():
-        if key in _CONTENT_KEYS:
-            out[key] = _CONTENT_MARKER
-        elif isinstance(value, str) and len(value) > _MAX_RESOURCE_CHARS:
-            out[key] = value[:_MAX_RESOURCE_CHARS] + "...<truncated>"
-        else:
-            out[key] = value
-    return out
+    return {
+        key: _CONTENT_MARKER
+        if key in _CONTENT_KEYS
+        else _redact_value(value, _REDACT_DEPTH)
+        for key, value in data.items()
+    }
 
 
 def _first_str(data: Mapping[str, Any], keys: Iterable[str]) -> str | None:
