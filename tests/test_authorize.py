@@ -65,6 +65,34 @@ def test_rule_error_decision_opts_into_strictness() -> None:
     assert result.decision == "deny"
 
 
+def test_a_raising_rule_does_not_erase_a_later_deny() -> None:
+    """The crash is one missing opinion, not the end of the evaluation."""
+
+    def boom(request: ToolRequest) -> None:
+        raise RuntimeError("custom rule bug")
+
+    policy = Policy(rules=(boom, deny_tools("Bash")), default_decision="allow")
+    result = policy.decide(ToolRequest.from_tool_input("Bash", {"command": "rm -rf /"}))
+    assert result.decision == "deny", "the later explicit deny must still run"
+    assert "deny_tools" in result.matched_rules
+
+
+def test_rule_error_decision_joins_the_strictest_wins_selection() -> None:
+    """A configured failure decision competes with the surviving verdicts."""
+
+    def boom(request: ToolRequest) -> None:
+        raise RuntimeError("custom rule bug")
+
+    policy = Policy(
+        rules=(boom, allow_tools("Read")),
+        default_decision="allow",
+        rule_error_decision="deny",
+    )
+    result = policy.decide(ToolRequest.from_tool_input("Read", {}))
+    assert result.decision == "deny"
+    assert "rule_error" in result.matched_rules
+
+
 def test_malformed_tool_input_does_not_raise() -> None:
     """A host sending the wrong shape is not a reason to crash the gate."""
     malformed: tuple[object, ...] = (None, [], "a string", 7)
