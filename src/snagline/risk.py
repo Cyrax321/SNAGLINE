@@ -79,6 +79,21 @@ class FailureRisk:
     # min_severity-filtered sinks. "" is not a legal severity value, so it
     # can only mean "unset".
     severity: str = ""
+    # Triggers whose earlier, coarser finding this risk replaces for the
+    # episode. Empty (the default) means "standalone finding".
+    #
+    # Supersession is declarative metadata, not a retraction: detectors emit
+    # risks in detection order, so the coarse alert has already been dispatched
+    # to real-time sinks by the time the specific one lands -- a webhook cannot
+    # un-send a message. A consumer that reduces the episode's risks (the
+    # episode summary, the evaluation harness, a stateful sink's retained
+    # table) applies this to report the trigger that actually describes the
+    # failure, instead of naming it once coarsely and never correcting the
+    # record. The classic case is the loop family: 25 consecutive identical
+    # signatures necessarily contain 3 within a 12-step window, so the plain
+    # ``loop`` condition is a strict subset of ``stall`` and fires 22 steps
+    # earlier; the stall risk declares the substitution (detectors/loop.py).
+    supersedes: tuple[TriggerType, ...] = ()
 
     def __post_init__(self) -> None:
         # Derive a routing hint from the score only when the caller left

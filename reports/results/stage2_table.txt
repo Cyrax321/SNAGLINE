@@ -1,0 +1,49 @@
+trigger                 TP   FP   FN   TN  precision   recall      f1 specificity
+---------------------------------------------------------------------------------
+loop                     4    8    0   97      0.333    1.000   0.500       0.924
+error_cascade            4    0    0  105      1.000    1.000   1.000       1.000
+latency_anomaly          4    0    0  105      1.000    1.000   1.000       1.000
+token_runaway            4    0    0  105      1.000    1.000   1.000       1.000
+budget_breach            4    0    0  105      1.000    1.000   1.000       1.000
+meltdown_low             4    4    0  101      0.500    1.000   0.667       0.962
+meltdown_high            4    0    0  105      1.000    1.000   1.000       1.000
+silent_abort             4    0    0  105      1.000    1.000   1.000       1.000
+goal_drift               4    0    0  105      1.000    1.000   1.000       1.000
+ml_ensemble              4    0    0  105      1.000    1.000   1.000       1.000
+stagnation               4    0    0  105      1.000    1.000   1.000       1.000
+side_effect_duplicate    4    0    0  105      1.000    1.000   1.000       1.000
+governance_decay         4    0    0  105      1.000    1.000   1.000       1.000
+cycle                    4    0    0  105      1.000    1.000   1.000       1.000
+stall                    4    0    0  105      1.000    1.000   1.000       1.000
+idle_gap                 4    0    0  105      1.000    1.000   1.000       1.000
+wall_clock_budget        4    0    0  105      1.000    1.000   1.000       1.000
+---------------------------------------------------------------------------------
+macro-F1: 0.951
+episodes: 109 (68 labeled, 41 healthy controls)
+confusion (firings on other data):
+  stagnation -> loop: 4
+  stall -> loop: 4
+  stall -> meltdown_low: 4
+healthy controls that fired: 0
+
+detection latency (first detection step - onset step, zero-based steps):
+trigger               episodes detected  onset   median      p95
+----------------------------------------------------------------
+loop                       109       12      4      2.0      n/a
+error_cascade              109        4      4      2.0      n/a
+latency_anomaly            109        4      4      0.0      n/a
+token_runaway              109        4      4      0.0      n/a
+budget_breach              109        4      4      0.0      n/a
+meltdown_low               109        8      4     19.0      n/a
+meltdown_high              109        4      4     19.0      n/a
+silent_abort               109        4      4      0.0      n/a
+goal_drift                 109        4      4      4.5      n/a
+ml_ensemble                109        4      4      2.0      n/a
+stagnation                 109        4      4     55.5      n/a
+side_effect_duplicate      109        4      4      2.0      n/a
+governance_decay           109        4      4      3.0      n/a
+cycle                      109        4      4     11.0      n/a
+stall                      109        4      4     24.0      n/a
+idle_gap                   109        4      4      0.0      n/a
+wall_clock_budget          109        4      4     64.0      n/a
+p95 is reported only with >= 5 latency samples (nearest-rank); median needs >= 1

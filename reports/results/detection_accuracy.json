@@ -1,0 +1,3434 @@
+{
+  "confusion": [
+    {
+      "count": 1,
+      "predicted": "cycle",
+      "true": "stagnation"
+    },
+    {
+      "count": 9,
+      "predicted": "loop",
+      "true": "stagnation"
+    },
+    {
+      "count": 10,
+      "predicted": "meltdown_low",
+      "true": "stall"
+    }
+  ],
+  "definitions": {
+    "detection_latency": "first_detection_step - onset_step, or null",
+    "first_detection_step": "earliest zero-based event index whose ingest (or the end_episode finalize pass) emitted this trigger; repeated firings never replace it",
+    "latency_scope": "latency statistics cover only expected-trigger hits on episodes with a recorded onset; cross-firing timings are in the per-episode first_detection map instead",
+    "onset_step": "zero-based index of the first event at which the fixture generator intentionally introduces the labeled failure condition; null when the generator cannot derive one",
+    "tn": "one-vs-rest: the episode does not expect this trigger and the trigger does not fire; TP+FP+TN+FN equals the episode count"
+  },
+  "episode_records": [
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-00",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-01",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-02",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-03",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-04",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-05",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-06",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-07",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-08",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-09",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-10",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-11",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-12",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-13",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-14",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-15",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-16",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-17",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-18",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-19",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-20",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-21",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-22",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-23",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-24",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-25",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-26",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-27",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-28",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-29",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-30",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-31",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-32",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-33",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-34",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-35",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-36",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-37",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-38",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-39",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-40",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-41",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-42",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-43",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-44",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-45",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-46",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-47",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-48",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-49",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-50",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-51",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-52",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-53",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-54",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-55",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-56",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-57",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-58",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TN",
+      "detected_triggers": [],
+      "detection_latency": null,
+      "episode_id": "healthy-59",
+      "expected_trigger": null,
+      "first_detection": {},
+      "first_detection_step": null,
+      "onset_step": null
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop"
+      ],
+      "detection_latency": 2,
+      "episode_id": "loop-00",
+      "expected_trigger": "loop",
+      "first_detection": {
+        "loop": 6
+      },
+      "first_detection_step": 6,
+      "onset_step": 4
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop"
+      ],
+      "detection_latency": 2,
+      "episode_id": "loop-01",
+      "expected_trigger": "loop",
+      "first_detection": {
+        "loop": 6
+      },
+      "first_detection_step": 6,
+      "onset_step": 4
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop"
+      ],
+      "detection_latency": 2,
+      "episode_id": "loop-02",
+      "expected_trigger": "loop",
+      "first_detection": {
+        "loop": 6
+      },
+      "first_detection_step": 6,
+      "onset_step": 4
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop"
+      ],
+      "detection_latency": 2,
+      "episode_id": "loop-03",
+      "expected_trigger": "loop",
+      "first_detection": {
+        "loop": 6
+      },
+      "first_detection_step": 6,
+      "onset_step": 4
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop"
+      ],
+      "detection_latency": 2,
+      "episode_id": "loop-04",
+      "expected_trigger": "loop",
+      "first_detection": {
+        "loop": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 7
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop"
+      ],
+      "detection_latency": 2,
+      "episode_id": "loop-05",
+      "expected_trigger": "loop",
+      "first_detection": {
+        "loop": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 7
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop"
+      ],
+      "detection_latency": 2,
+      "episode_id": "loop-06",
+      "expected_trigger": "loop",
+      "first_detection": {
+        "loop": 4
+      },
+      "first_detection_step": 4,
+      "onset_step": 2
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop"
+      ],
+      "detection_latency": 2,
+      "episode_id": "loop-07",
+      "expected_trigger": "loop",
+      "first_detection": {
+        "loop": 8
+      },
+      "first_detection_step": 8,
+      "onset_step": 6
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop"
+      ],
+      "detection_latency": 2,
+      "episode_id": "loop-08",
+      "expected_trigger": "loop",
+      "first_detection": {
+        "loop": 8
+      },
+      "first_detection_step": 8,
+      "onset_step": 6
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop"
+      ],
+      "detection_latency": 2,
+      "episode_id": "loop-09",
+      "expected_trigger": "loop",
+      "first_detection": {
+        "loop": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 3
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "error_cascade"
+      ],
+      "detection_latency": 2,
+      "episode_id": "error_cascade-00",
+      "expected_trigger": "error_cascade",
+      "first_detection": {
+        "error_cascade": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 3
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "error_cascade"
+      ],
+      "detection_latency": 2,
+      "episode_id": "error_cascade-01",
+      "expected_trigger": "error_cascade",
+      "first_detection": {
+        "error_cascade": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 3
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "error_cascade"
+      ],
+      "detection_latency": 2,
+      "episode_id": "error_cascade-02",
+      "expected_trigger": "error_cascade",
+      "first_detection": {
+        "error_cascade": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 3
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "error_cascade"
+      ],
+      "detection_latency": 2,
+      "episode_id": "error_cascade-03",
+      "expected_trigger": "error_cascade",
+      "first_detection": {
+        "error_cascade": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 3
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "error_cascade"
+      ],
+      "detection_latency": 2,
+      "episode_id": "error_cascade-04",
+      "expected_trigger": "error_cascade",
+      "first_detection": {
+        "error_cascade": 4
+      },
+      "first_detection_step": 4,
+      "onset_step": 2
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "error_cascade"
+      ],
+      "detection_latency": 2,
+      "episode_id": "error_cascade-05",
+      "expected_trigger": "error_cascade",
+      "first_detection": {
+        "error_cascade": 4
+      },
+      "first_detection_step": 4,
+      "onset_step": 2
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "error_cascade"
+      ],
+      "detection_latency": 2,
+      "episode_id": "error_cascade-06",
+      "expected_trigger": "error_cascade",
+      "first_detection": {
+        "error_cascade": 8
+      },
+      "first_detection_step": 8,
+      "onset_step": 6
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "error_cascade"
+      ],
+      "detection_latency": 2,
+      "episode_id": "error_cascade-07",
+      "expected_trigger": "error_cascade",
+      "first_detection": {
+        "error_cascade": 7
+      },
+      "first_detection_step": 7,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "error_cascade"
+      ],
+      "detection_latency": 2,
+      "episode_id": "error_cascade-08",
+      "expected_trigger": "error_cascade",
+      "first_detection": {
+        "error_cascade": 8
+      },
+      "first_detection_step": 8,
+      "onset_step": 6
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "error_cascade"
+      ],
+      "detection_latency": 2,
+      "episode_id": "error_cascade-09",
+      "expected_trigger": "error_cascade",
+      "first_detection": {
+        "error_cascade": 6
+      },
+      "first_detection_step": 6,
+      "onset_step": 4
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "latency_anomaly"
+      ],
+      "detection_latency": 0,
+      "episode_id": "latency_anomaly-00",
+      "expected_trigger": "latency_anomaly",
+      "first_detection": {
+        "latency_anomaly": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "latency_anomaly"
+      ],
+      "detection_latency": 0,
+      "episode_id": "latency_anomaly-01",
+      "expected_trigger": "latency_anomaly",
+      "first_detection": {
+        "latency_anomaly": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "latency_anomaly"
+      ],
+      "detection_latency": 0,
+      "episode_id": "latency_anomaly-02",
+      "expected_trigger": "latency_anomaly",
+      "first_detection": {
+        "latency_anomaly": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "latency_anomaly"
+      ],
+      "detection_latency": 0,
+      "episode_id": "latency_anomaly-03",
+      "expected_trigger": "latency_anomaly",
+      "first_detection": {
+        "latency_anomaly": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "latency_anomaly"
+      ],
+      "detection_latency": 0,
+      "episode_id": "latency_anomaly-04",
+      "expected_trigger": "latency_anomaly",
+      "first_detection": {
+        "latency_anomaly": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "latency_anomaly"
+      ],
+      "detection_latency": 0,
+      "episode_id": "latency_anomaly-05",
+      "expected_trigger": "latency_anomaly",
+      "first_detection": {
+        "latency_anomaly": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "latency_anomaly"
+      ],
+      "detection_latency": 0,
+      "episode_id": "latency_anomaly-06",
+      "expected_trigger": "latency_anomaly",
+      "first_detection": {
+        "latency_anomaly": 6
+      },
+      "first_detection_step": 6,
+      "onset_step": 6
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "latency_anomaly"
+      ],
+      "detection_latency": 0,
+      "episode_id": "latency_anomaly-07",
+      "expected_trigger": "latency_anomaly",
+      "first_detection": {
+        "latency_anomaly": 7
+      },
+      "first_detection_step": 7,
+      "onset_step": 7
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "latency_anomaly"
+      ],
+      "detection_latency": 0,
+      "episode_id": "latency_anomaly-08",
+      "expected_trigger": "latency_anomaly",
+      "first_detection": {
+        "latency_anomaly": 7
+      },
+      "first_detection_step": 7,
+      "onset_step": 7
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "latency_anomaly"
+      ],
+      "detection_latency": 0,
+      "episode_id": "latency_anomaly-09",
+      "expected_trigger": "latency_anomaly",
+      "first_detection": {
+        "latency_anomaly": 6
+      },
+      "first_detection_step": 6,
+      "onset_step": 6
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "token_runaway"
+      ],
+      "detection_latency": 0,
+      "episode_id": "token_runaway-00",
+      "expected_trigger": "token_runaway",
+      "first_detection": {
+        "token_runaway": 20
+      },
+      "first_detection_step": 20,
+      "onset_step": 20
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "token_runaway"
+      ],
+      "detection_latency": 0,
+      "episode_id": "token_runaway-01",
+      "expected_trigger": "token_runaway",
+      "first_detection": {
+        "token_runaway": 20
+      },
+      "first_detection_step": 20,
+      "onset_step": 20
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "token_runaway"
+      ],
+      "detection_latency": 0,
+      "episode_id": "token_runaway-02",
+      "expected_trigger": "token_runaway",
+      "first_detection": {
+        "token_runaway": 20
+      },
+      "first_detection_step": 20,
+      "onset_step": 20
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "token_runaway"
+      ],
+      "detection_latency": 0,
+      "episode_id": "token_runaway-03",
+      "expected_trigger": "token_runaway",
+      "first_detection": {
+        "token_runaway": 20
+      },
+      "first_detection_step": 20,
+      "onset_step": 20
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "token_runaway"
+      ],
+      "detection_latency": 0,
+      "episode_id": "token_runaway-04",
+      "expected_trigger": "token_runaway",
+      "first_detection": {
+        "token_runaway": 20
+      },
+      "first_detection_step": 20,
+      "onset_step": 20
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "token_runaway"
+      ],
+      "detection_latency": 0,
+      "episode_id": "token_runaway-05",
+      "expected_trigger": "token_runaway",
+      "first_detection": {
+        "token_runaway": 20
+      },
+      "first_detection_step": 20,
+      "onset_step": 20
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "token_runaway"
+      ],
+      "detection_latency": 0,
+      "episode_id": "token_runaway-06",
+      "expected_trigger": "token_runaway",
+      "first_detection": {
+        "token_runaway": 21
+      },
+      "first_detection_step": 21,
+      "onset_step": 21
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "token_runaway"
+      ],
+      "detection_latency": 0,
+      "episode_id": "token_runaway-07",
+      "expected_trigger": "token_runaway",
+      "first_detection": {
+        "token_runaway": 20
+      },
+      "first_detection_step": 20,
+      "onset_step": 20
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "token_runaway"
+      ],
+      "detection_latency": 0,
+      "episode_id": "token_runaway-08",
+      "expected_trigger": "token_runaway",
+      "first_detection": {
+        "token_runaway": 20
+      },
+      "first_detection_step": 20,
+      "onset_step": 20
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "token_runaway"
+      ],
+      "detection_latency": 0,
+      "episode_id": "token_runaway-09",
+      "expected_trigger": "token_runaway",
+      "first_detection": {
+        "token_runaway": 20
+      },
+      "first_detection_step": 20,
+      "onset_step": 20
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "budget_breach"
+      ],
+      "detection_latency": 0,
+      "episode_id": "budget_breach-00",
+      "expected_trigger": "budget_breach",
+      "first_detection": {
+        "budget_breach": 30
+      },
+      "first_detection_step": 30,
+      "onset_step": 30
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "budget_breach"
+      ],
+      "detection_latency": 0,
+      "episode_id": "budget_breach-01",
+      "expected_trigger": "budget_breach",
+      "first_detection": {
+        "budget_breach": 30
+      },
+      "first_detection_step": 30,
+      "onset_step": 30
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "budget_breach"
+      ],
+      "detection_latency": 0,
+      "episode_id": "budget_breach-02",
+      "expected_trigger": "budget_breach",
+      "first_detection": {
+        "budget_breach": 30
+      },
+      "first_detection_step": 30,
+      "onset_step": 30
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "budget_breach"
+      ],
+      "detection_latency": 0,
+      "episode_id": "budget_breach-03",
+      "expected_trigger": "budget_breach",
+      "first_detection": {
+        "budget_breach": 30
+      },
+      "first_detection_step": 30,
+      "onset_step": 30
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "budget_breach"
+      ],
+      "detection_latency": 0,
+      "episode_id": "budget_breach-04",
+      "expected_trigger": "budget_breach",
+      "first_detection": {
+        "budget_breach": 28
+      },
+      "first_detection_step": 28,
+      "onset_step": 28
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "budget_breach"
+      ],
+      "detection_latency": 0,
+      "episode_id": "budget_breach-05",
+      "expected_trigger": "budget_breach",
+      "first_detection": {
+        "budget_breach": 28
+      },
+      "first_detection_step": 28,
+      "onset_step": 28
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "budget_breach"
+      ],
+      "detection_latency": 0,
+      "episode_id": "budget_breach-06",
+      "expected_trigger": "budget_breach",
+      "first_detection": {
+        "budget_breach": 20
+      },
+      "first_detection_step": 20,
+      "onset_step": 20
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "budget_breach"
+      ],
+      "detection_latency": 0,
+      "episode_id": "budget_breach-07",
+      "expected_trigger": "budget_breach",
+      "first_detection": {
+        "budget_breach": 20
+      },
+      "first_detection_step": 20,
+      "onset_step": 20
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "budget_breach"
+      ],
+      "detection_latency": 0,
+      "episode_id": "budget_breach-08",
+      "expected_trigger": "budget_breach",
+      "first_detection": {
+        "budget_breach": 20
+      },
+      "first_detection_step": 20,
+      "onset_step": 20
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "budget_breach"
+      ],
+      "detection_latency": 0,
+      "episode_id": "budget_breach-09",
+      "expected_trigger": "budget_breach",
+      "first_detection": {
+        "budget_breach": 24
+      },
+      "first_detection_step": 24,
+      "onset_step": 24
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_low"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_low-00",
+      "expected_trigger": "meltdown_low",
+      "first_detection": {
+        "meltdown_low": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_low"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_low-01",
+      "expected_trigger": "meltdown_low",
+      "first_detection": {
+        "meltdown_low": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_low"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_low-02",
+      "expected_trigger": "meltdown_low",
+      "first_detection": {
+        "meltdown_low": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_low"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_low-03",
+      "expected_trigger": "meltdown_low",
+      "first_detection": {
+        "meltdown_low": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_low"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_low-04",
+      "expected_trigger": "meltdown_low",
+      "first_detection": {
+        "meltdown_low": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_low"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_low-05",
+      "expected_trigger": "meltdown_low",
+      "first_detection": {
+        "meltdown_low": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_low"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_low-06",
+      "expected_trigger": "meltdown_low",
+      "first_detection": {
+        "meltdown_low": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_low"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_low-07",
+      "expected_trigger": "meltdown_low",
+      "first_detection": {
+        "meltdown_low": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_low"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_low-08",
+      "expected_trigger": "meltdown_low",
+      "first_detection": {
+        "meltdown_low": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_low"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_low-09",
+      "expected_trigger": "meltdown_low",
+      "first_detection": {
+        "meltdown_low": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_high"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_high-00",
+      "expected_trigger": "meltdown_high",
+      "first_detection": {
+        "meltdown_high": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_high"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_high-01",
+      "expected_trigger": "meltdown_high",
+      "first_detection": {
+        "meltdown_high": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_high"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_high-02",
+      "expected_trigger": "meltdown_high",
+      "first_detection": {
+        "meltdown_high": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_high"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_high-03",
+      "expected_trigger": "meltdown_high",
+      "first_detection": {
+        "meltdown_high": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_high"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_high-04",
+      "expected_trigger": "meltdown_high",
+      "first_detection": {
+        "meltdown_high": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_high"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_high-05",
+      "expected_trigger": "meltdown_high",
+      "first_detection": {
+        "meltdown_high": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_high"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_high-06",
+      "expected_trigger": "meltdown_high",
+      "first_detection": {
+        "meltdown_high": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_high"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_high-07",
+      "expected_trigger": "meltdown_high",
+      "first_detection": {
+        "meltdown_high": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_high"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_high-08",
+      "expected_trigger": "meltdown_high",
+      "first_detection": {
+        "meltdown_high": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_high"
+      ],
+      "detection_latency": 19,
+      "episode_id": "meltdown_high-09",
+      "expected_trigger": "meltdown_high",
+      "first_detection": {
+        "meltdown_high": 19
+      },
+      "first_detection_step": 19,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "silent_abort"
+      ],
+      "detection_latency": 0,
+      "episode_id": "silent_abort-00",
+      "expected_trigger": "silent_abort",
+      "first_detection": {
+        "silent_abort": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "silent_abort"
+      ],
+      "detection_latency": 0,
+      "episode_id": "silent_abort-01",
+      "expected_trigger": "silent_abort",
+      "first_detection": {
+        "silent_abort": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "silent_abort"
+      ],
+      "detection_latency": 0,
+      "episode_id": "silent_abort-02",
+      "expected_trigger": "silent_abort",
+      "first_detection": {
+        "silent_abort": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "silent_abort"
+      ],
+      "detection_latency": 0,
+      "episode_id": "silent_abort-03",
+      "expected_trigger": "silent_abort",
+      "first_detection": {
+        "silent_abort": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "silent_abort"
+      ],
+      "detection_latency": 0,
+      "episode_id": "silent_abort-04",
+      "expected_trigger": "silent_abort",
+      "first_detection": {
+        "silent_abort": 4
+      },
+      "first_detection_step": 4,
+      "onset_step": 4
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "silent_abort"
+      ],
+      "detection_latency": 0,
+      "episode_id": "silent_abort-05",
+      "expected_trigger": "silent_abort",
+      "first_detection": {
+        "silent_abort": 8
+      },
+      "first_detection_step": 8,
+      "onset_step": 8
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "silent_abort"
+      ],
+      "detection_latency": 0,
+      "episode_id": "silent_abort-06",
+      "expected_trigger": "silent_abort",
+      "first_detection": {
+        "silent_abort": 8
+      },
+      "first_detection_step": 8,
+      "onset_step": 8
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "silent_abort"
+      ],
+      "detection_latency": 0,
+      "episode_id": "silent_abort-07",
+      "expected_trigger": "silent_abort",
+      "first_detection": {
+        "silent_abort": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 9
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "silent_abort"
+      ],
+      "detection_latency": 0,
+      "episode_id": "silent_abort-08",
+      "expected_trigger": "silent_abort",
+      "first_detection": {
+        "silent_abort": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 9
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "silent_abort"
+      ],
+      "detection_latency": 0,
+      "episode_id": "silent_abort-09",
+      "expected_trigger": "silent_abort",
+      "first_detection": {
+        "silent_abort": 10
+      },
+      "first_detection_step": 10,
+      "onset_step": 10
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "goal_drift"
+      ],
+      "detection_latency": 9,
+      "episode_id": "goal_drift-00",
+      "expected_trigger": "goal_drift",
+      "first_detection": {
+        "goal_drift": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "goal_drift"
+      ],
+      "detection_latency": 9,
+      "episode_id": "goal_drift-01",
+      "expected_trigger": "goal_drift",
+      "first_detection": {
+        "goal_drift": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "goal_drift"
+      ],
+      "detection_latency": 0,
+      "episode_id": "goal_drift-02",
+      "expected_trigger": "goal_drift",
+      "first_detection": {
+        "goal_drift": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 9
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "goal_drift"
+      ],
+      "detection_latency": 0,
+      "episode_id": "goal_drift-03",
+      "expected_trigger": "goal_drift",
+      "first_detection": {
+        "goal_drift": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 9
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "goal_drift"
+      ],
+      "detection_latency": 9,
+      "episode_id": "goal_drift-04",
+      "expected_trigger": "goal_drift",
+      "first_detection": {
+        "goal_drift": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "goal_drift"
+      ],
+      "detection_latency": 0,
+      "episode_id": "goal_drift-05",
+      "expected_trigger": "goal_drift",
+      "first_detection": {
+        "goal_drift": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 9
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "goal_drift"
+      ],
+      "detection_latency": 9,
+      "episode_id": "goal_drift-06",
+      "expected_trigger": "goal_drift",
+      "first_detection": {
+        "goal_drift": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "goal_drift"
+      ],
+      "detection_latency": 0,
+      "episode_id": "goal_drift-07",
+      "expected_trigger": "goal_drift",
+      "first_detection": {
+        "goal_drift": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 9
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "goal_drift"
+      ],
+      "detection_latency": 9,
+      "episode_id": "goal_drift-08",
+      "expected_trigger": "goal_drift",
+      "first_detection": {
+        "goal_drift": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "goal_drift"
+      ],
+      "detection_latency": 0,
+      "episode_id": "goal_drift-09",
+      "expected_trigger": "goal_drift",
+      "first_detection": {
+        "goal_drift": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 9
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "ml_ensemble"
+      ],
+      "detection_latency": 2,
+      "episode_id": "ml_ensemble-00",
+      "expected_trigger": "ml_ensemble",
+      "first_detection": {
+        "ml_ensemble": 4
+      },
+      "first_detection_step": 4,
+      "onset_step": 2
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "ml_ensemble"
+      ],
+      "detection_latency": 0,
+      "episode_id": "ml_ensemble-01",
+      "expected_trigger": "ml_ensemble",
+      "first_detection": {
+        "ml_ensemble": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "ml_ensemble"
+      ],
+      "detection_latency": 2,
+      "episode_id": "ml_ensemble-02",
+      "expected_trigger": "ml_ensemble",
+      "first_detection": {
+        "ml_ensemble": 3
+      },
+      "first_detection_step": 3,
+      "onset_step": 1
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "ml_ensemble"
+      ],
+      "detection_latency": 2,
+      "episode_id": "ml_ensemble-03",
+      "expected_trigger": "ml_ensemble",
+      "first_detection": {
+        "ml_ensemble": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 3
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "ml_ensemble"
+      ],
+      "detection_latency": 2,
+      "episode_id": "ml_ensemble-04",
+      "expected_trigger": "ml_ensemble",
+      "first_detection": {
+        "ml_ensemble": 3
+      },
+      "first_detection_step": 3,
+      "onset_step": 1
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "ml_ensemble"
+      ],
+      "detection_latency": 0,
+      "episode_id": "ml_ensemble-05",
+      "expected_trigger": "ml_ensemble",
+      "first_detection": {
+        "ml_ensemble": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "ml_ensemble"
+      ],
+      "detection_latency": 2,
+      "episode_id": "ml_ensemble-06",
+      "expected_trigger": "ml_ensemble",
+      "first_detection": {
+        "ml_ensemble": 3
+      },
+      "first_detection_step": 3,
+      "onset_step": 1
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "ml_ensemble"
+      ],
+      "detection_latency": 2,
+      "episode_id": "ml_ensemble-07",
+      "expected_trigger": "ml_ensemble",
+      "first_detection": {
+        "ml_ensemble": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 3
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "ml_ensemble"
+      ],
+      "detection_latency": 2,
+      "episode_id": "ml_ensemble-08",
+      "expected_trigger": "ml_ensemble",
+      "first_detection": {
+        "ml_ensemble": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 3
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "ml_ensemble"
+      ],
+      "detection_latency": 0,
+      "episode_id": "ml_ensemble-09",
+      "expected_trigger": "ml_ensemble",
+      "first_detection": {
+        "ml_ensemble": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop",
+        "stagnation"
+      ],
+      "detection_latency": 62,
+      "episode_id": "stagnation-00",
+      "expected_trigger": "stagnation",
+      "first_detection": {
+        "loop": 3,
+        "stagnation": 62
+      },
+      "first_detection_step": 62,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop",
+        "stagnation"
+      ],
+      "detection_latency": 55,
+      "episode_id": "stagnation-01",
+      "expected_trigger": "stagnation",
+      "first_detection": {
+        "loop": 10,
+        "stagnation": 55
+      },
+      "first_detection_step": 55,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop",
+        "stagnation"
+      ],
+      "detection_latency": 56,
+      "episode_id": "stagnation-02",
+      "expected_trigger": "stagnation",
+      "first_detection": {
+        "loop": 4,
+        "stagnation": 56
+      },
+      "first_detection_step": 56,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop",
+        "stagnation"
+      ],
+      "detection_latency": 54,
+      "episode_id": "stagnation-03",
+      "expected_trigger": "stagnation",
+      "first_detection": {
+        "loop": 6,
+        "stagnation": 54
+      },
+      "first_detection_step": 54,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop",
+        "stagnation"
+      ],
+      "detection_latency": 57,
+      "episode_id": "stagnation-04",
+      "expected_trigger": "stagnation",
+      "first_detection": {
+        "loop": 8,
+        "stagnation": 57
+      },
+      "first_detection_step": 57,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop",
+        "stagnation"
+      ],
+      "detection_latency": 59,
+      "episode_id": "stagnation-05",
+      "expected_trigger": "stagnation",
+      "first_detection": {
+        "loop": 9,
+        "stagnation": 59
+      },
+      "first_detection_step": 59,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop",
+        "stagnation"
+      ],
+      "detection_latency": 54,
+      "episode_id": "stagnation-06",
+      "expected_trigger": "stagnation",
+      "first_detection": {
+        "loop": 7,
+        "stagnation": 54
+      },
+      "first_detection_step": 54,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop",
+        "stagnation"
+      ],
+      "detection_latency": 55,
+      "episode_id": "stagnation-07",
+      "expected_trigger": "stagnation",
+      "first_detection": {
+        "loop": 8,
+        "stagnation": 55
+      },
+      "first_detection_step": 55,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "loop",
+        "stagnation"
+      ],
+      "detection_latency": 60,
+      "episode_id": "stagnation-08",
+      "expected_trigger": "stagnation",
+      "first_detection": {
+        "loop": 6,
+        "stagnation": 60
+      },
+      "first_detection_step": 60,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "cycle",
+        "stagnation"
+      ],
+      "detection_latency": 56,
+      "episode_id": "stagnation-09",
+      "expected_trigger": "stagnation",
+      "first_detection": {
+        "cycle": 3,
+        "stagnation": 56
+      },
+      "first_detection_step": 56,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "side_effect_duplicate"
+      ],
+      "detection_latency": 2,
+      "episode_id": "side_effect_duplicate-00",
+      "expected_trigger": "side_effect_duplicate",
+      "first_detection": {
+        "side_effect_duplicate": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 3
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "side_effect_duplicate"
+      ],
+      "detection_latency": 2,
+      "episode_id": "side_effect_duplicate-01",
+      "expected_trigger": "side_effect_duplicate",
+      "first_detection": {
+        "side_effect_duplicate": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 3
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "side_effect_duplicate"
+      ],
+      "detection_latency": 2,
+      "episode_id": "side_effect_duplicate-02",
+      "expected_trigger": "side_effect_duplicate",
+      "first_detection": {
+        "side_effect_duplicate": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 3
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "side_effect_duplicate"
+      ],
+      "detection_latency": 2,
+      "episode_id": "side_effect_duplicate-03",
+      "expected_trigger": "side_effect_duplicate",
+      "first_detection": {
+        "side_effect_duplicate": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 3
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "side_effect_duplicate"
+      ],
+      "detection_latency": 2,
+      "episode_id": "side_effect_duplicate-04",
+      "expected_trigger": "side_effect_duplicate",
+      "first_detection": {
+        "side_effect_duplicate": 3
+      },
+      "first_detection_step": 3,
+      "onset_step": 1
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "side_effect_duplicate"
+      ],
+      "detection_latency": 5,
+      "episode_id": "side_effect_duplicate-05",
+      "expected_trigger": "side_effect_duplicate",
+      "first_detection": {
+        "side_effect_duplicate": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 4
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "side_effect_duplicate"
+      ],
+      "detection_latency": 3,
+      "episode_id": "side_effect_duplicate-06",
+      "expected_trigger": "side_effect_duplicate",
+      "first_detection": {
+        "side_effect_duplicate": 4
+      },
+      "first_detection_step": 4,
+      "onset_step": 1
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "side_effect_duplicate"
+      ],
+      "detection_latency": 5,
+      "episode_id": "side_effect_duplicate-07",
+      "expected_trigger": "side_effect_duplicate",
+      "first_detection": {
+        "side_effect_duplicate": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 4
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "side_effect_duplicate"
+      ],
+      "detection_latency": 2,
+      "episode_id": "side_effect_duplicate-08",
+      "expected_trigger": "side_effect_duplicate",
+      "first_detection": {
+        "side_effect_duplicate": 6
+      },
+      "first_detection_step": 6,
+      "onset_step": 4
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "side_effect_duplicate"
+      ],
+      "detection_latency": 5,
+      "episode_id": "side_effect_duplicate-09",
+      "expected_trigger": "side_effect_duplicate",
+      "first_detection": {
+        "side_effect_duplicate": 7
+      },
+      "first_detection_step": 7,
+      "onset_step": 2
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "governance_decay"
+      ],
+      "detection_latency": 3,
+      "episode_id": "governance_decay-00",
+      "expected_trigger": "governance_decay",
+      "first_detection": {
+        "governance_decay": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 2
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "governance_decay"
+      ],
+      "detection_latency": 3,
+      "episode_id": "governance_decay-01",
+      "expected_trigger": "governance_decay",
+      "first_detection": {
+        "governance_decay": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 2
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "governance_decay"
+      ],
+      "detection_latency": 3,
+      "episode_id": "governance_decay-02",
+      "expected_trigger": "governance_decay",
+      "first_detection": {
+        "governance_decay": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 2
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "governance_decay"
+      ],
+      "detection_latency": 3,
+      "episode_id": "governance_decay-03",
+      "expected_trigger": "governance_decay",
+      "first_detection": {
+        "governance_decay": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 2
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "governance_decay"
+      ],
+      "detection_latency": 3,
+      "episode_id": "governance_decay-04",
+      "expected_trigger": "governance_decay",
+      "first_detection": {
+        "governance_decay": 7
+      },
+      "first_detection_step": 7,
+      "onset_step": 4
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "governance_decay"
+      ],
+      "detection_latency": 3,
+      "episode_id": "governance_decay-05",
+      "expected_trigger": "governance_decay",
+      "first_detection": {
+        "governance_decay": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 2
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "governance_decay"
+      ],
+      "detection_latency": 3,
+      "episode_id": "governance_decay-06",
+      "expected_trigger": "governance_decay",
+      "first_detection": {
+        "governance_decay": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 2
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "governance_decay"
+      ],
+      "detection_latency": 3,
+      "episode_id": "governance_decay-07",
+      "expected_trigger": "governance_decay",
+      "first_detection": {
+        "governance_decay": 4
+      },
+      "first_detection_step": 4,
+      "onset_step": 1
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "governance_decay"
+      ],
+      "detection_latency": 3,
+      "episode_id": "governance_decay-08",
+      "expected_trigger": "governance_decay",
+      "first_detection": {
+        "governance_decay": 6
+      },
+      "first_detection_step": 6,
+      "onset_step": 3
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "governance_decay"
+      ],
+      "detection_latency": 3,
+      "episode_id": "governance_decay-09",
+      "expected_trigger": "governance_decay",
+      "first_detection": {
+        "governance_decay": 8
+      },
+      "first_detection_step": 8,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "cycle"
+      ],
+      "detection_latency": 11,
+      "episode_id": "cycle-00",
+      "expected_trigger": "cycle",
+      "first_detection": {
+        "cycle": 11
+      },
+      "first_detection_step": 11,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "cycle"
+      ],
+      "detection_latency": 11,
+      "episode_id": "cycle-01",
+      "expected_trigger": "cycle",
+      "first_detection": {
+        "cycle": 11
+      },
+      "first_detection_step": 11,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "cycle"
+      ],
+      "detection_latency": 11,
+      "episode_id": "cycle-02",
+      "expected_trigger": "cycle",
+      "first_detection": {
+        "cycle": 11
+      },
+      "first_detection_step": 11,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "cycle"
+      ],
+      "detection_latency": 11,
+      "episode_id": "cycle-03",
+      "expected_trigger": "cycle",
+      "first_detection": {
+        "cycle": 11
+      },
+      "first_detection_step": 11,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "cycle"
+      ],
+      "detection_latency": 9,
+      "episode_id": "cycle-04",
+      "expected_trigger": "cycle",
+      "first_detection": {
+        "cycle": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "cycle"
+      ],
+      "detection_latency": 11,
+      "episode_id": "cycle-05",
+      "expected_trigger": "cycle",
+      "first_detection": {
+        "cycle": 11
+      },
+      "first_detection_step": 11,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "cycle"
+      ],
+      "detection_latency": 5,
+      "episode_id": "cycle-06",
+      "expected_trigger": "cycle",
+      "first_detection": {
+        "cycle": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "cycle"
+      ],
+      "detection_latency": 11,
+      "episode_id": "cycle-07",
+      "expected_trigger": "cycle",
+      "first_detection": {
+        "cycle": 11
+      },
+      "first_detection_step": 11,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "cycle"
+      ],
+      "detection_latency": 9,
+      "episode_id": "cycle-08",
+      "expected_trigger": "cycle",
+      "first_detection": {
+        "cycle": 9
+      },
+      "first_detection_step": 9,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "cycle"
+      ],
+      "detection_latency": 11,
+      "episode_id": "cycle-09",
+      "expected_trigger": "cycle",
+      "first_detection": {
+        "cycle": 11
+      },
+      "first_detection_step": 11,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_low",
+        "stall"
+      ],
+      "detection_latency": 24,
+      "episode_id": "stall-00",
+      "expected_trigger": "stall",
+      "first_detection": {
+        "meltdown_low": 20,
+        "stall": 26
+      },
+      "first_detection_step": 26,
+      "onset_step": 2
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_low",
+        "stall"
+      ],
+      "detection_latency": 24,
+      "episode_id": "stall-01",
+      "expected_trigger": "stall",
+      "first_detection": {
+        "meltdown_low": 20,
+        "stall": 26
+      },
+      "first_detection_step": 26,
+      "onset_step": 2
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_low",
+        "stall"
+      ],
+      "detection_latency": 24,
+      "episode_id": "stall-02",
+      "expected_trigger": "stall",
+      "first_detection": {
+        "meltdown_low": 20,
+        "stall": 26
+      },
+      "first_detection_step": 26,
+      "onset_step": 2
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_low",
+        "stall"
+      ],
+      "detection_latency": 24,
+      "episode_id": "stall-03",
+      "expected_trigger": "stall",
+      "first_detection": {
+        "meltdown_low": 20,
+        "stall": 26
+      },
+      "first_detection_step": 26,
+      "onset_step": 2
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_low",
+        "stall"
+      ],
+      "detection_latency": 24,
+      "episode_id": "stall-04",
+      "expected_trigger": "stall",
+      "first_detection": {
+        "meltdown_low": 21,
+        "stall": 27
+      },
+      "first_detection_step": 27,
+      "onset_step": 3
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_low",
+        "stall"
+      ],
+      "detection_latency": 24,
+      "episode_id": "stall-05",
+      "expected_trigger": "stall",
+      "first_detection": {
+        "meltdown_low": 22,
+        "stall": 28
+      },
+      "first_detection_step": 28,
+      "onset_step": 4
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_low",
+        "stall"
+      ],
+      "detection_latency": 24,
+      "episode_id": "stall-06",
+      "expected_trigger": "stall",
+      "first_detection": {
+        "meltdown_low": 23,
+        "stall": 29
+      },
+      "first_detection_step": 29,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_low",
+        "stall"
+      ],
+      "detection_latency": 24,
+      "episode_id": "stall-07",
+      "expected_trigger": "stall",
+      "first_detection": {
+        "meltdown_low": 21,
+        "stall": 27
+      },
+      "first_detection_step": 27,
+      "onset_step": 3
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_low",
+        "stall"
+      ],
+      "detection_latency": 24,
+      "episode_id": "stall-08",
+      "expected_trigger": "stall",
+      "first_detection": {
+        "meltdown_low": 19,
+        "stall": 25
+      },
+      "first_detection_step": 25,
+      "onset_step": 1
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "meltdown_low",
+        "stall"
+      ],
+      "detection_latency": 24,
+      "episode_id": "stall-09",
+      "expected_trigger": "stall",
+      "first_detection": {
+        "meltdown_low": 22,
+        "stall": 28
+      },
+      "first_detection_step": 28,
+      "onset_step": 4
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "idle_gap"
+      ],
+      "detection_latency": 0,
+      "episode_id": "idle_gap-00",
+      "expected_trigger": "idle_gap",
+      "first_detection": {
+        "idle_gap": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "idle_gap"
+      ],
+      "detection_latency": 0,
+      "episode_id": "idle_gap-01",
+      "expected_trigger": "idle_gap",
+      "first_detection": {
+        "idle_gap": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "idle_gap"
+      ],
+      "detection_latency": 0,
+      "episode_id": "idle_gap-02",
+      "expected_trigger": "idle_gap",
+      "first_detection": {
+        "idle_gap": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "idle_gap"
+      ],
+      "detection_latency": 0,
+      "episode_id": "idle_gap-03",
+      "expected_trigger": "idle_gap",
+      "first_detection": {
+        "idle_gap": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "idle_gap"
+      ],
+      "detection_latency": 0,
+      "episode_id": "idle_gap-04",
+      "expected_trigger": "idle_gap",
+      "first_detection": {
+        "idle_gap": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "idle_gap"
+      ],
+      "detection_latency": 0,
+      "episode_id": "idle_gap-05",
+      "expected_trigger": "idle_gap",
+      "first_detection": {
+        "idle_gap": 4
+      },
+      "first_detection_step": 4,
+      "onset_step": 4
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "idle_gap"
+      ],
+      "detection_latency": 0,
+      "episode_id": "idle_gap-06",
+      "expected_trigger": "idle_gap",
+      "first_detection": {
+        "idle_gap": 4
+      },
+      "first_detection_step": 4,
+      "onset_step": 4
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "idle_gap"
+      ],
+      "detection_latency": 0,
+      "episode_id": "idle_gap-07",
+      "expected_trigger": "idle_gap",
+      "first_detection": {
+        "idle_gap": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "idle_gap"
+      ],
+      "detection_latency": 0,
+      "episode_id": "idle_gap-08",
+      "expected_trigger": "idle_gap",
+      "first_detection": {
+        "idle_gap": 6
+      },
+      "first_detection_step": 6,
+      "onset_step": 6
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "idle_gap"
+      ],
+      "detection_latency": 0,
+      "episode_id": "idle_gap-09",
+      "expected_trigger": "idle_gap",
+      "first_detection": {
+        "idle_gap": 5
+      },
+      "first_detection_step": 5,
+      "onset_step": 5
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "wall_clock_budget"
+      ],
+      "detection_latency": 64,
+      "episode_id": "wall_clock_budget-00",
+      "expected_trigger": "wall_clock_budget",
+      "first_detection": {
+        "wall_clock_budget": 64
+      },
+      "first_detection_step": 64,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "wall_clock_budget"
+      ],
+      "detection_latency": 64,
+      "episode_id": "wall_clock_budget-01",
+      "expected_trigger": "wall_clock_budget",
+      "first_detection": {
+        "wall_clock_budget": 64
+      },
+      "first_detection_step": 64,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "wall_clock_budget"
+      ],
+      "detection_latency": 64,
+      "episode_id": "wall_clock_budget-02",
+      "expected_trigger": "wall_clock_budget",
+      "first_detection": {
+        "wall_clock_budget": 64
+      },
+      "first_detection_step": 64,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "wall_clock_budget"
+      ],
+      "detection_latency": 64,
+      "episode_id": "wall_clock_budget-03",
+      "expected_trigger": "wall_clock_budget",
+      "first_detection": {
+        "wall_clock_budget": 64
+      },
+      "first_detection_step": 64,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "wall_clock_budget"
+      ],
+      "detection_latency": 48,
+      "episode_id": "wall_clock_budget-04",
+      "expected_trigger": "wall_clock_budget",
+      "first_detection": {
+        "wall_clock_budget": 48
+      },
+      "first_detection_step": 48,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "wall_clock_budget"
+      ],
+      "detection_latency": 48,
+      "episode_id": "wall_clock_budget-05",
+      "expected_trigger": "wall_clock_budget",
+      "first_detection": {
+        "wall_clock_budget": 48
+      },
+      "first_detection_step": 48,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "wall_clock_budget"
+      ],
+      "detection_latency": 64,
+      "episode_id": "wall_clock_budget-06",
+      "expected_trigger": "wall_clock_budget",
+      "first_detection": {
+        "wall_clock_budget": 64
+      },
+      "first_detection_step": 64,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "wall_clock_budget"
+      ],
+      "detection_latency": 54,
+      "episode_id": "wall_clock_budget-07",
+      "expected_trigger": "wall_clock_budget",
+      "first_detection": {
+        "wall_clock_budget": 54
+      },
+      "first_detection_step": 54,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "wall_clock_budget"
+      ],
+      "detection_latency": 80,
+      "episode_id": "wall_clock_budget-08",
+      "expected_trigger": "wall_clock_budget",
+      "first_detection": {
+        "wall_clock_budget": 80
+      },
+      "first_detection_step": 80,
+      "onset_step": 0
+    },
+    {
+      "classification": "TP",
+      "detected_triggers": [
+        "wall_clock_budget"
+      ],
+      "detection_latency": 54,
+      "episode_id": "wall_clock_budget-09",
+      "expected_trigger": "wall_clock_budget",
+      "first_detection": {
+        "wall_clock_budget": 54
+      },
+      "first_detection_step": 54,
+      "onset_step": 0
+    }
+  ],
+  "episodes": {
+    "healthy": 60,
+    "labeled": 170
+  },
+  "healthy_controls_fired": 0,
+  "healthy_false_positive_rate": 0.0,
+  "macro_f1": 0.959335,
+  "macro_precision": 0.937377,
+  "macro_recall": 1.0,
+  "metadata": {
+    "commit_sha": "cd393f14929b7e001b6ecf58417ec28d2bc424b0",
+    "evaluation_schema": "snagline-detection-accuracy/v2",
+    "evaluation_stage": 4,
+    "fixture_count": 230,
+    "fixture_directory": "benchmarks\\fixtures",
+    "healthy_count": 60,
+    "labeled_count": 170,
+    "platform": "Windows-11-10.0.26300-SP0",
+    "python_implementation": "CPython",
+    "python_version": "3.13.1",
+    "seeds": {
+      "persisted_in_fixtures": true,
+      "scheme": "random.Random(f\"{episode_id}/seed\") per episode in benchmarks/fixtures/generate_fixtures.py",
+      "scope": "all 170 labeled records and healthy-41..59; omitted on the 41 legacy controls to keep their bytes unchanged"
+    },
+    "step_index_convention": "zero-based"
+  },
+  "per_trigger": {
+    "budget_breach": {
+      "detected": 10,
+      "episodes": 230,
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 0,
+      "mean_latency": 0.0,
+      "median_latency": 0.0,
+      "min_latency": 0,
+      "p95_latency": 0.0,
+      "p95_meaningful": true,
+      "precision": 1.0,
+      "recall": 1.0,
+      "specificity": 1.0,
+      "tn": 220,
+      "tp": 10,
+      "with_onset": 10
+    },
+    "cycle": {
+      "detected": 11,
+      "episodes": 230,
+      "f1": 0.952381,
+      "fn": 0,
+      "fp": 1,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 11,
+      "mean_latency": 10.0,
+      "median_latency": 11.0,
+      "min_latency": 5,
+      "p95_latency": 11.0,
+      "p95_meaningful": true,
+      "precision": 0.909091,
+      "recall": 1.0,
+      "specificity": 0.995455,
+      "tn": 219,
+      "tp": 10,
+      "with_onset": 10
+    },
+    "error_cascade": {
+      "detected": 10,
+      "episodes": 230,
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 2,
+      "mean_latency": 2.0,
+      "median_latency": 2.0,
+      "min_latency": 2,
+      "p95_latency": 2.0,
+      "p95_meaningful": true,
+      "precision": 1.0,
+      "recall": 1.0,
+      "specificity": 1.0,
+      "tn": 220,
+      "tp": 10,
+      "with_onset": 10
+    },
+    "goal_drift": {
+      "detected": 10,
+      "episodes": 230,
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 9,
+      "mean_latency": 4.5,
+      "median_latency": 4.5,
+      "min_latency": 0,
+      "p95_latency": 9.0,
+      "p95_meaningful": true,
+      "precision": 1.0,
+      "recall": 1.0,
+      "specificity": 1.0,
+      "tn": 220,
+      "tp": 10,
+      "with_onset": 10
+    },
+    "governance_decay": {
+      "detected": 10,
+      "episodes": 230,
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 3,
+      "mean_latency": 3.0,
+      "median_latency": 3.0,
+      "min_latency": 3,
+      "p95_latency": 3.0,
+      "p95_meaningful": true,
+      "precision": 1.0,
+      "recall": 1.0,
+      "specificity": 1.0,
+      "tn": 220,
+      "tp": 10,
+      "with_onset": 10
+    },
+    "idle_gap": {
+      "detected": 10,
+      "episodes": 230,
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 0,
+      "mean_latency": 0.0,
+      "median_latency": 0.0,
+      "min_latency": 0,
+      "p95_latency": 0.0,
+      "p95_meaningful": true,
+      "precision": 1.0,
+      "recall": 1.0,
+      "specificity": 1.0,
+      "tn": 220,
+      "tp": 10,
+      "with_onset": 10
+    },
+    "latency_anomaly": {
+      "detected": 10,
+      "episodes": 230,
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 0,
+      "mean_latency": 0.0,
+      "median_latency": 0.0,
+      "min_latency": 0,
+      "p95_latency": 0.0,
+      "p95_meaningful": true,
+      "precision": 1.0,
+      "recall": 1.0,
+      "specificity": 1.0,
+      "tn": 220,
+      "tp": 10,
+      "with_onset": 10
+    },
+    "loop": {
+      "detected": 19,
+      "episodes": 230,
+      "f1": 0.689655,
+      "fn": 0,
+      "fp": 9,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 2,
+      "mean_latency": 2.0,
+      "median_latency": 2.0,
+      "min_latency": 2,
+      "p95_latency": 2.0,
+      "p95_meaningful": true,
+      "precision": 0.526316,
+      "recall": 1.0,
+      "specificity": 0.959091,
+      "tn": 211,
+      "tp": 10,
+      "with_onset": 10
+    },
+    "meltdown_high": {
+      "detected": 10,
+      "episodes": 230,
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 19,
+      "mean_latency": 19.0,
+      "median_latency": 19.0,
+      "min_latency": 19,
+      "p95_latency": 19.0,
+      "p95_meaningful": true,
+      "precision": 1.0,
+      "recall": 1.0,
+      "specificity": 1.0,
+      "tn": 220,
+      "tp": 10,
+      "with_onset": 10
+    },
+    "meltdown_low": {
+      "detected": 20,
+      "episodes": 230,
+      "f1": 0.666667,
+      "fn": 0,
+      "fp": 10,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 19,
+      "mean_latency": 19.0,
+      "median_latency": 19.0,
+      "min_latency": 19,
+      "p95_latency": 19.0,
+      "p95_meaningful": true,
+      "precision": 0.5,
+      "recall": 1.0,
+      "specificity": 0.954545,
+      "tn": 210,
+      "tp": 10,
+      "with_onset": 10
+    },
+    "ml_ensemble": {
+      "detected": 10,
+      "episodes": 230,
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 2,
+      "mean_latency": 1.4,
+      "median_latency": 2.0,
+      "min_latency": 0,
+      "p95_latency": 2.0,
+      "p95_meaningful": true,
+      "precision": 1.0,
+      "recall": 1.0,
+      "specificity": 1.0,
+      "tn": 220,
+      "tp": 10,
+      "with_onset": 10
+    },
+    "side_effect_duplicate": {
+      "detected": 10,
+      "episodes": 230,
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 5,
+      "mean_latency": 3.0,
+      "median_latency": 2.0,
+      "min_latency": 2,
+      "p95_latency": 5.0,
+      "p95_meaningful": true,
+      "precision": 1.0,
+      "recall": 1.0,
+      "specificity": 1.0,
+      "tn": 220,
+      "tp": 10,
+      "with_onset": 10
+    },
+    "silent_abort": {
+      "detected": 10,
+      "episodes": 230,
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 0,
+      "mean_latency": 0.0,
+      "median_latency": 0.0,
+      "min_latency": 0,
+      "p95_latency": 0.0,
+      "p95_meaningful": true,
+      "precision": 1.0,
+      "recall": 1.0,
+      "specificity": 1.0,
+      "tn": 220,
+      "tp": 10,
+      "with_onset": 10
+    },
+    "stagnation": {
+      "detected": 10,
+      "episodes": 230,
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 62,
+      "mean_latency": 56.8,
+      "median_latency": 56.0,
+      "min_latency": 54,
+      "p95_latency": 62.0,
+      "p95_meaningful": true,
+      "precision": 1.0,
+      "recall": 1.0,
+      "specificity": 1.0,
+      "tn": 220,
+      "tp": 10,
+      "with_onset": 10
+    },
+    "stall": {
+      "detected": 10,
+      "episodes": 230,
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 24,
+      "mean_latency": 24.0,
+      "median_latency": 24.0,
+      "min_latency": 24,
+      "p95_latency": 24.0,
+      "p95_meaningful": true,
+      "precision": 1.0,
+      "recall": 1.0,
+      "specificity": 1.0,
+      "tn": 220,
+      "tp": 10,
+      "with_onset": 10
+    },
+    "token_runaway": {
+      "detected": 10,
+      "episodes": 230,
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 0,
+      "mean_latency": 0.0,
+      "median_latency": 0.0,
+      "min_latency": 0,
+      "p95_latency": 0.0,
+      "p95_meaningful": true,
+      "precision": 1.0,
+      "recall": 1.0,
+      "specificity": 1.0,
+      "tn": 220,
+      "tp": 10,
+      "with_onset": 10
+    },
+    "wall_clock_budget": {
+      "detected": 10,
+      "episodes": 230,
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "labeled": 10,
+      "latency_samples": 10,
+      "max_latency": 80,
+      "mean_latency": 60.4,
+      "median_latency": 64.0,
+      "min_latency": 48,
+      "p95_latency": 80.0,
+      "p95_meaningful": true,
+      "precision": 1.0,
+      "recall": 1.0,
+      "specificity": 1.0,
+      "tn": 220,
+      "tp": 10,
+      "with_onset": 10
+    }
+  }
+}
