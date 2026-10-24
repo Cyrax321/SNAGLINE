@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- A raising rule no longer aborts `Policy.decide()`: the failure is recorded and the
+  remaining rules still run, so a buggy custom rule placed before an explicit
+  `deny_tools`/`deny_command_glob` cannot erase that deny under the fail-open
+  default (#653). A configured `rule_error_decision` now contributes to the
+  strictest-wins selection instead of replacing it, and `matched_rules` still
+  reports the rules that had an opinion.
 - `EsnCusumDetector` (the `snagline[ml]` extra) now participates in
   `Monitor.snapshot()`/`restore()`. It had no `dump_state`/`load_state`, and
   `MLOrchestrator.dump_state` reaches its bases with a `getattr` guard, so the

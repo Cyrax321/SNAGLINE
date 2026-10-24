@@ -358,8 +358,11 @@ class Policy:
     Fail-open by default, and that default is the safe one to ship:
 
     * ``default_decision="allow"`` -- no rule matched, so allow.
-    * ``rule_error_decision=None`` -- a rule raised, so behave as if nothing
-      matched. A crashing rule must not be able to wedge the host.
+    * ``rule_error_decision=None`` -- a rule raised, so it contributes no
+      opinion and the other rules still decide. A crashing rule must not be
+      able to wedge the host, and it must not erase an explicit deny written
+      after it either. Set ``rule_error_decision`` to make the failure itself
+      contribute a decision to the strictest-wins selection.
     * ``unknown_tool_decision=None`` -- a tool this module does not know was
       requested, so behave as if nothing matched.
 
@@ -396,26 +399,41 @@ class Policy:
             # knowledge than our own ignorance of the tool set.
 
         opinions: list[tuple[Decision, RuleVerdict]] = []
+        errors: list[str] = []
         for index, rule in enumerate(self.rules):
             try:
                 verdict = rule(request)
             except Exception as exc:  # noqa: BLE001 - a rule must not wedge the host
-                fallback = (
-                    self.rule_error_decision
-                    if self.rule_error_decision is not None
-                    else self.default_decision
-                )
-                return DecisionResult(
-                    fallback,
-                    f"rule {index} raised {type(exc).__name__}: {exc}",
-                    (),
-                )
+                # A crashing rule is one rule without an opinion, not the end of
+                # the evaluation: returning here discarded every later rule, so
+                # a buggy custom rule placed first erased the explicit denies
+                # written after it under the fail-open default.
+                error = f"rule {index} raised {type(exc).__name__}: {exc}"
+                errors.append(error)
+                if self.rule_error_decision is not None:
+                    # A configured rule_error_decision is what the failure
+                    # contributes to the strictest-wins selection, exactly like
+                    # any other verdict -- not an abort switch.
+                    opinions.append(
+                        (
+                            self.rule_error_decision,
+                            RuleVerdict("rule_error", self.rule_error_decision, error),
+                        )
+                    )
+                continue
             if verdict is not None and verdict.decision is not None:
                 # Paired with the narrowed decision so the strictness sort
                 # below never has to re-narrow an Optional field.
                 opinions.append((verdict.decision, verdict))
 
         if not opinions:
+            if errors:
+                # Nothing survived: the failing rule(s) are the whole story.
+                return DecisionResult(
+                    self.default_decision,
+                    "; ".join(errors),
+                    (),
+                )
             # Name the default in the reason. "no rule matched" reads like a
             # bug to an operator staring at a deny they did not write; "no rule
             # matched; policy default_decision is 'deny'" tells them this is an
