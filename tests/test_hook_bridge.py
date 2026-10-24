@@ -313,6 +313,42 @@ def test_hook_cli_never_fails_the_host() -> None:
     assert r3.returncode == 0  # unmapped events are silently dropped
 
 
+def test_hook_cli_malformed_payload_diagnostics() -> None:
+    # Issue #620: missing required StepEvent fields named explicitly, not raw __init__()
+    r_missing = _run(["hook"], json.dumps({"tool_name": "T"}))
+    assert r_missing.returncode == 0
+    assert "__init__()" not in r_missing.stderr
+    assert "missing StepEvent fields:" in r_missing.stderr
+    assert "'action_signature'" in r_missing.stderr
+    assert "'action_type'" in r_missing.stderr
+    assert "'episode_id'" in r_missing.stderr
+    assert "'step_id'" in r_missing.stderr
+    assert "'timestamp'" in r_missing.stderr
+
+    # Unknown keyword argument reported as unknown field
+    canonical = _canonical_compaction("step-1")
+    canonical["unknown_foo"] = "bar"
+    r_unknown = _run(["hook"], json.dumps(canonical))
+    assert r_unknown.returncode == 0
+    assert "__init__()" not in r_unknown.stderr
+    assert "unknown StepEvent fields: ['unknown_foo']" in r_unknown.stderr
+
+    # Wrong-typed hook_event_name produces diagnostic instead of being silently dropped
+    r_wrong_type = _run(["hook"], json.dumps({"hook_event_name": 123}))
+    assert r_wrong_type.returncode == 0
+    assert "hook_event_name must be a string" in r_wrong_type.stderr
+
+    # Valid unmapped lifecycle event stays completely quiet
+    r_lifecycle = _run(["hook"], json.dumps({"hook_event_name": "SessionStart"}))
+    assert r_lifecycle.returncode == 0
+    assert r_lifecycle.stderr == ""
+
+    # Non-dict JSON payload
+    r_array = _run(["hook"], "[]")
+    assert r_array.returncode == 0
+    assert "payload must be a JSON object" in r_array.stderr
+
+
 # --- issue #226: the bridge must not drop side_effect / metadata --------------
 
 _PIN_A = "448a0c330ba83452956a4b294c1af26dc0def64cffbec53e8e6c99118655dbd1"
