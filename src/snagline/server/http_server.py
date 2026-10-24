@@ -630,7 +630,12 @@ def make_handler(
             # equality semantics are unchanged.
             token_b = token.encode()
             authz = self.headers.get("Authorization", "")
-            if authz.startswith("Bearer "):
+            # RFC 7235 §2.1: the auth-scheme token is case-insensitive, so
+            # "bearer" and "BEARER" are the same scheme as "Bearer". A
+            # case-sensitive prefix test silently 401'd clients that
+            # normalized the scheme to lowercase while sending the right
+            # token (issue #667).
+            if authz[:7].casefold() == "bearer ":
                 return hmac.compare_digest(
                     authz[len("Bearer ") :].strip().encode(), token_b
                 )
@@ -1289,7 +1294,11 @@ def make_handler(
 
         def _method_not_allowed(self) -> None:
             """Answer a route that exists but does not accept this method."""
-            self._drain_body()
+            if not self._drain_body():
+                # _parse_content_length already answered a malformed
+                # Content-Length with 400; writing again would put a second
+                # status line on the same connection (issue #664).
+                return
             path = urlsplit(self.path).path
             # Same auth-first ordering as the GET path: /health stays open, and
             # an unauthenticated caller gets the same answer for every path so
@@ -1305,25 +1314,41 @@ def make_handler(
             else:
                 self._respond(404, {"error": "not found"})
 
-        def _drain_body(self) -> None:
+        def _drain_body(self) -> bool:
             """Read and discard a declared request body before answering.
 
             Used on the paths that do not read a body themselves: leaving it
             unread makes the peer see EPIPE/reset instead of the status line
             (the same hazard the 401/413 paths already drain for, #121).
+
+            Returns False when the request was *already answered* -- a
+            malformed Content-Length gets a 400 from
+            ``_parse_content_length`` -- so the caller must not write another
+            response on the connection.
             """
             declared = self._parse_content_length()
-            if not declared:
-                # None: a malformed Content-Length was already answered 400.
-                # 0: no body declared.
-                return
-            self._discard_overcap_body(declared)
+            if declared is None:
+                return False
+            if declared:
+                # 0: no body declared, nothing to drain.
+                self._discard_overcap_body(declared)
+            return True
 
     _Handler.snagline_monitor = monitor
     _Handler.snagline_tracker = tracker
+    if max_risks < 0:
+        # A negative deque maxlen means *unbounded*, so the cap has to be
+        # refused rather than clamped; 0 is honoured as "retain nothing"
+        # instead of the old max(1, max_risks) clamp, which turned a request
+        # for zero retention into a deque of one and answered GET /risks
+        # with a risk the operator explicitly suppressed (issue #668).
+        raise ValueError(
+            "max_risks must be a non-negative number of retained risks, got "
+            f"{max_risks}; a negative deque maxlen is unbounded"
+        )
     # Bounded: POST /risks is an open-ended ingest point, so retain only the
     # most recent max_risks entries rather than growing without limit.
-    _Handler.snagline_risks = deque(maxlen=max(1, max_risks))
+    _Handler.snagline_risks = deque(maxlen=max_risks)
     # The deque is read on GET /risks and written on POST /risks from different
     # handler threads; both ends serialize on this lock (issue #543).
     _Handler.snagline_risks_lock = threading.Lock()
