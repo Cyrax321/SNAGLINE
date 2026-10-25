@@ -363,7 +363,7 @@ def inspect_payload(
                 )
             )
     elif isinstance(payload, Mapping):
-        for k, v in payload.items():
+        for k, v in list(payload.items()):
             sub_path = f"{path}.{k}" if path else str(k)
             findings.extend(
                 inspect_payload(
@@ -373,7 +373,7 @@ def inspect_payload(
                     extra_rules=extra_rules,
                 )
             )
-    elif isinstance(payload, (list, tuple, set)):
+    elif isinstance(payload, (list, tuple, set, frozenset)):
         for idx, item in enumerate(payload):
             sub_path = f"{path}[{idx}]" if path else f"[{idx}]"
             findings.extend(
@@ -411,7 +411,9 @@ def redact_text(
 
     result = list(text)
     for m in matches:
-        marker = mask.format(rule_id=m.rule_id) if mask else f"[REDACTED:{m.rule_id}]"
+        marker = (
+            mask.replace("{rule_id}", m.rule_id) if mask else f"[REDACTED:{m.rule_id}]"
+        )
         result[m.start : m.end] = list(marker)
 
     return "".join(result)
@@ -434,6 +436,10 @@ def redact_payload(
         return tuple(redact_payload(item, cfg, mask=mask) for item in payload)
     if isinstance(payload, list):
         return [redact_payload(item, cfg, mask=mask) for item in payload]
+    if isinstance(payload, frozenset):
+        return frozenset(redact_payload(item, cfg, mask=mask) for item in payload)
+    if isinstance(payload, set):
+        return {redact_payload(item, cfg, mask=mask) for item in payload}
     return payload
 
 
@@ -479,6 +485,15 @@ def as_authorize_rule(
         if request.action not in actions:
             return None
 
+        if request.resource and (
+            request.resource.endswith("...<truncated>") or len(request.resource) > 4096
+        ):
+            return RuleVerdict(
+                rule_id="dlp",
+                decision=cfg.decision,
+                reason="resource exceeds maximum length or is truncated",
+            )
+
         # Inspect tool_input as payload; also inspect resource if present
         findings: list[DlpFinding] = []
         if request.tool_input:
@@ -490,7 +505,7 @@ def as_authorize_rule(
         if not hits:
             return None
 
-        top = hits[0]
+        top = max(hits, key=lambda f: _SEVERITY_RANK[f.severity])
         rule_ids = ",".join(sorted({h.rule_id for h in hits}))
         paths = ",".join(sorted({h.path for h in hits if h.path}))
         return RuleVerdict(

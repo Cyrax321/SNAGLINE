@@ -451,3 +451,64 @@ def test_custom_extra_rule_scan() -> None:
         extra_rules=(("custom_badge", detect_custom),),
     )
     assert any(h.rule_id == "custom_badge" for h in hits)
+
+
+def test_as_authorize_rule_reports_highest_severity() -> None:
+    rule = as_authorize_rule()
+    # Phone number is info, SSN is critical
+    req = ToolRequest(
+        tool_name="HttpEgress",
+        action="network",
+        resource="https://external.api/v1",
+        tool_input={
+            "phone": "555-123-4567",
+            "ssn": "123-45-6789",
+        },
+    )
+    verdict = rule(req)
+    assert verdict is not None
+    assert "severity=critical" in verdict.reason
+
+
+def test_as_authorize_rule_rejects_truncated_resource() -> None:
+    rule = as_authorize_rule()
+    req_trunc = ToolRequest(
+        tool_name="HttpEgress",
+        action="network",
+        resource="https://external.api/v1/data?query=params...<truncated>",
+    )
+    verdict = rule(req_trunc)
+    assert verdict is not None
+    assert verdict.decision == "deny"
+    assert "truncated" in verdict.reason
+
+
+def test_redact_text_literal_braces_in_mask() -> None:
+    text = "User SSN is 123-45-6789"
+    redacted = redact_text(text, mask="{CUSTOM_TAG}:{rule_id}")
+    assert redacted == "User SSN is {CUSTOM_TAG}:us_ssn"
+
+
+def test_redact_payload_nested_containers() -> None:
+    data = {
+        "user": "alice",
+        "nested_set": {"123-45-6789", "benign"},
+        "nested_frozenset": frozenset({"123-45-6789"}),
+        "nested_tuple": ("safe", ["123-45-6789"]),
+    }
+    redacted = redact_payload(data)
+    assert redacted["user"] == "alice"
+    assert "[REDACTED:us_ssn]" in redacted["nested_set"]
+    assert "[REDACTED:us_ssn]" in redacted["nested_frozenset"]
+    assert redacted["nested_tuple"][1][0] == "[REDACTED:us_ssn]"
+
+
+def test_inspect_payload_frozenset_and_set() -> None:
+    payload = {
+        "set_values": {"123-45-6789"},
+        "frozenset_values": frozenset({"4111-1111-1111-1111"}),
+    }
+    findings = inspect_payload(payload)
+    rules = {f.rule_id for f in findings}
+    assert "us_ssn" in rules
+    assert "credit_card" in rules
