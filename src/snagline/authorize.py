@@ -789,6 +789,8 @@ def _rule_from_dict(raw: Any, index: int) -> Rule:
         return _shell_threats_rule_from_dict(raw, index)
     if kind == "path_security":
         return _path_security_rule_from_dict(raw, index)
+    if kind == "secret_exposure":
+        return _secret_exposure_rule_from_dict(raw, index)
     if kind == "agent_allowlists":
         allowed_keys = {"type", "allowlists"}
         unknown_keys = set(raw) - allowed_keys
@@ -820,7 +822,7 @@ def _rule_from_dict(raw: Any, index: int) -> Rule:
     if kind not in builders:
         raise PolicyError(
             f"rules[{index}].type={kind!r} is not a known rule type; "
-            f"expected one of {sorted([*builders, 'shell_threats', 'path_security', 'agent_allowlists'])}"
+            f"expected one of {sorted([*builders, 'shell_threats', 'path_security', 'secret_exposure', 'agent_allowlists'])}"
         )
     key = "patterns" if kind.startswith("deny_") and kind != "deny_tools" else "tools"
     allowed = {"type", key}
@@ -1029,6 +1031,88 @@ def _path_security_rule_from_dict(raw: Mapping[str, Any], index: int) -> Rule:
         denied_paths=tuple(denied_paths),
         denied_patterns=tuple(denied_patterns),
         base_dir=base_dir,
+        enabled_rules=enabled_set,
+        disabled_rules=frozenset(disabled),
+        severity_overrides=overrides,
+        min_severity=min_severity,
+        decision=decision,
+    )
+    return as_authorize_rule(cfg)
+
+
+def _secret_exposure_rule_from_dict(raw: Mapping[str, Any], index: int) -> Rule:
+    """Build a secret-exposure authorize rule from a declarative policy entry.
+
+    Schema::
+
+        {"type": "secret_exposure", "decision": "deny", "min_severity": "warning",
+         "disabled_rules": ["generic_credential_assignment"]}
+
+    Optional keys only; defaults match :class:`snagline.secret_security.SecretSecurityConfig`.
+    """
+    from snagline.secret_security import (
+        BUILTIN_RULE_IDS,
+        SecretSecurityConfig,
+        as_authorize_rule,
+    )
+
+    allowed = {
+        "type",
+        "decision",
+        "min_severity",
+        "disabled_rules",
+        "enabled_rules",
+        "severity_overrides",
+    }
+    unknown = set(raw) - allowed
+    if unknown:
+        paths = ", ".join(f"rules[{index}].{k}" for k in sorted(unknown))
+        raise PolicyError(
+            f"unknown rule keys {paths}; expected one of {sorted(allowed)}"
+        )
+
+    decision = raw.get("decision", "deny")
+    if decision not in ("ask", "deny"):
+        raise PolicyError(
+            f"rules[{index}].decision={decision!r} must be 'ask' or 'deny'"
+        )
+    min_severity = raw.get("min_severity", "warning")
+    if min_severity not in ("info", "warning", "critical"):
+        raise PolicyError(
+            f"rules[{index}].min_severity={min_severity!r} must be "
+            f"one of info|warning|critical"
+        )
+
+    disabled = raw.get("disabled_rules", [])
+    if not isinstance(disabled, list) or not all(isinstance(v, str) for v in disabled):
+        raise PolicyError(f"rules[{index}].disabled_rules must be a list of strings")
+
+    enabled = raw.get("enabled_rules")
+    enabled_set: frozenset[str] | None
+    if enabled is None:
+        enabled_set = None
+    elif isinstance(enabled, list) and all(isinstance(v, str) for v in enabled):
+        unknown_rules = set(enabled) - BUILTIN_RULE_IDS
+        if unknown_rules:
+            raise PolicyError(
+                f"rules[{index}].enabled_rules has unknown ids {sorted(unknown_rules)}"
+            )
+        enabled_set = frozenset(enabled)
+    else:
+        raise PolicyError(f"rules[{index}].enabled_rules must be a list of strings")
+
+    overrides_raw = raw.get("severity_overrides", {})
+    if not isinstance(overrides_raw, Mapping):
+        raise PolicyError(f"rules[{index}].severity_overrides must be an object")
+    overrides: dict[str, Any] = {}
+    for key, value in overrides_raw.items():
+        if value not in ("info", "warning", "critical"):
+            raise PolicyError(
+                f"rules[{index}].severity_overrides[{key!r}]={value!r} is not a severity"
+            )
+        overrides[str(key)] = value
+
+    cfg = SecretSecurityConfig(
         enabled_rules=enabled_set,
         disabled_rules=frozenset(disabled),
         severity_overrides=overrides,
