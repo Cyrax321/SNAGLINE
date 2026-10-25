@@ -21,12 +21,13 @@ This module is that policy engine, kept deliberately outside the core:
   strictness, because an unused gate that breaks the host is worse than no
   gate. Opting in is explicit and per-policy, never global.
 
-What it deliberately does NOT do, so the boundary is not misread: it does not
-inspect content for secrets or PII, does not score risk, and does not persist
-an audit trail. A policy is a set of rules over *which tool is being called on
-what resource*; adding detection heuristics to it would blur the line between
-the monitor and the firewall, and would put content handling code on a path
-that runs before a user has approved anything.
+By default, the core policy engine evaluates structural rules over which tool
+is called on what resource. When specialized security rules (such as
+``path_security``, ``secret_exposure``, or ``dlp``) are explicitly added to a
+policy, those rules inspect ``request.resource`` and retained parameters in
+``request.tool_input`` for specific high-risk patterns (such as directory
+traversals or exposed credentials) before authorizing execution, while maintaining
+the zero-content-retention privacy invariant.
 """
 
 from __future__ import annotations

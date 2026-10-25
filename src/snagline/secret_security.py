@@ -139,13 +139,19 @@ _PATTERNS: tuple[tuple[str, SecretSeverity, str, re.Pattern[str]], ...] = (
         "openai_api_key",
         "critical",
         "OpenAI API Key",
-        re.compile(r"\b(sk-[a-zA-Z0-9_-]{20,})\b"),
+        re.compile(r"\b(sk-(?!ant-)[a-zA-Z0-9_-]{20,})\b"),
     ),
     (
         "anthropic_api_key",
         "critical",
         "Anthropic API Key",
         re.compile(r"\b(sk-ant-[a-zA-Z0-9_-]{20,})\b"),
+    ),
+    (
+        "stripe_secret_key",
+        "critical",
+        "Stripe Secret Key",
+        re.compile(r"\b(sk_live_[0-9a-zA-Z]{24,})\b"),
     ),
     (
         "google_api_key",
@@ -170,6 +176,14 @@ _PATTERNS: tuple[tuple[str, SecretSeverity, str, re.Pattern[str]], ...] = (
         ),
     ),
     (
+        "database_connection_uri",
+        "critical",
+        "Database Connection URI with Credentials",
+        re.compile(
+            r"\b(?:postgres|postgresql|mysql|mongodb|redis)://[^:\s/@]+:[^@\s/]+@\S+"
+        ),
+    ),
+    (
         "uri_basic_auth",
         "critical",
         "URI Basic Auth Credentials",
@@ -180,7 +194,7 @@ _PATTERNS: tuple[tuple[str, SecretSeverity, str, re.Pattern[str]], ...] = (
         "warning",
         "Generic Password or API Key Assignment",
         re.compile(
-            r"(?i)\b(?:password|passwd|secret|api_?key|auth_?token)\s*[:=]\s*['\"]([^'\"]{6,})['\"]"
+            r"(?i)(?<![a-zA-Z0-9])(?:[a-zA-Z0-9_-]*?(?:password|passwd|secret|api_?key|auth_?token))\s*[:=]\s*['\"]([^'\"]{6,})['\"]"
         ),
     ),
 )
@@ -223,6 +237,10 @@ def _scan_matches(
         if rule_id in cfg.disabled_rules:
             continue
         for hit in fn(text):
+            if cfg.enabled_rules is not None and hit.rule_id not in cfg.enabled_rules:
+                continue
+            if hit.rule_id in cfg.disabled_rules:
+                continue
             sev = cfg.severity_overrides.get(hit.rule_id, hit.severity)
             matches.append(
                 SecretMatch(
@@ -310,10 +328,18 @@ def inspect_tool_input(
         if isinstance(val, str):
             findings.extend(inspect_text(val, cfg, extra_rules=extra_rules))
         elif isinstance(val, Mapping):
-            for v in val.values():
+            try:
+                items = list(val.values())
+            except (RuntimeError, TypeError):
+                items = []
+            for v in items:
                 _walk(v)
-        elif isinstance(val, (list, tuple, set)):
-            for item in val:
+        elif isinstance(val, (list, tuple, set, frozenset)):
+            try:
+                items = list(val)
+            except (RuntimeError, TypeError):
+                items = []
+            for item in items:
                 _walk(item)
 
     _walk(tool_input)
@@ -386,13 +412,29 @@ def redact_secrets(
     result = text
     for m in reversed(merged):
         replacement = (
-            mask.format(rule_id=m.rule_id)
+            mask.replace("{rule_id}", m.rule_id)
             if mask is not None
             else f"[REDACTED:{m.rule_id}]"
         )
         result = result[: m.start] + replacement + result[m.end :]
 
     return result
+
+
+def _redact_value(val: Any, mask: str | None, cfg: SecretSecurityConfig) -> Any:
+    if isinstance(val, str):
+        return redact_secrets(val, mask, cfg)
+    if isinstance(val, Mapping):
+        return {k: _redact_value(v, mask, cfg) for k, v in val.items()}
+    if isinstance(val, list):
+        return [_redact_value(item, mask, cfg) for item in val]
+    if isinstance(val, tuple):
+        return tuple(_redact_value(item, mask, cfg) for item in val)
+    if isinstance(val, set):
+        return {_redact_value(item, mask, cfg) for item in val}
+    if isinstance(val, frozenset):
+        return frozenset(_redact_value(item, mask, cfg) for item in val)
+    return val
 
 
 def redact_mapping(
@@ -405,39 +447,7 @@ def redact_mapping(
         return {}
 
     cfg = config or SecretSecurityConfig()
-    result: dict[str, Any] = {}
-
-    for k, v in mapping.items():
-        if isinstance(v, str):
-            result[k] = redact_secrets(v, mask, cfg)
-        elif isinstance(v, Mapping):
-            result[k] = redact_mapping(v, mask, cfg)
-        elif isinstance(v, list):
-            result[k] = [
-                redact_secrets(item, mask, cfg)
-                if isinstance(item, str)
-                else (
-                    redact_mapping(item, mask, cfg)
-                    if isinstance(item, Mapping)
-                    else item
-                )
-                for item in v
-            ]
-        elif isinstance(v, tuple):
-            result[k] = tuple(
-                redact_secrets(item, mask, cfg)
-                if isinstance(item, str)
-                else (
-                    redact_mapping(item, mask, cfg)
-                    if isinstance(item, Mapping)
-                    else item
-                )
-                for item in v
-            )
-        else:
-            result[k] = v
-
-    return result
+    return {k: _redact_value(v, mask, cfg) for k, v in mapping.items()}
 
 
 def strongest_severity(
@@ -473,6 +483,15 @@ def as_authorize_rule(config: SecretSecurityConfig | None = None):
     cfg = config or SecretSecurityConfig()
 
     def _rule(request: ToolRequest) -> RuleVerdict | None:
+        if request.resource and (
+            request.resource.endswith("...<truncated>") or len(request.resource) > 4096
+        ):
+            return RuleVerdict(
+                rule_id="secret_exposure",
+                decision=cfg.decision,
+                reason="resource exceeds maximum length or is truncated",
+            )
+
         hits: list[SecretFinding] = []
         if request.resource:
             hits.extend(inspect_text(request.resource, cfg))
@@ -483,7 +502,7 @@ def as_authorize_rule(config: SecretSecurityConfig | None = None):
         if not filtered:
             return None
 
-        top = filtered[0]
+        top = max(filtered, key=lambda f: _SEVERITY_RANK[f.severity])
         ids = ",".join(sorted({h.rule_id for h in filtered}))
         return RuleVerdict(
             rule_id="secret_exposure",

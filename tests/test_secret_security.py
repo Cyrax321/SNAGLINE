@@ -34,19 +34,32 @@ from snagline.secret_security import (
     ("rule_id", "sample"),
     [
         ("aws_access_key", "export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE"),
-        ("github_token", "token = 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'"),
+        ("github_token", "token = 'ghp_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'"),
         (
             "github_token",
-            "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12",
+            "github_pat_"
+            + "11AAAAAAA00112233445566778899aabbccddeeffgghhiijjkkllmmnnooppqqrrssttuuvvwwxxyyzz012",
         ),
         (
             "slack_token",
             "SLACK_BOT_TOKEN=xoxb-mock-sample-bot-token-for-test-0123456789",
         ),
-        ("openai_api_key", "api_key = 'sk-proj-1234567890abcdef1234567890abcdef'"),
+        (
+            "openai_api_key",
+            "api_key = 'sk-proj-1234567890abcdef1234567890abcdef'",
+        ),
         (
             "anthropic_api_key",
             "client = Anthropic(api_key='sk-ant-api03-1234567890abcdef1234567890')",
+        ),
+        (
+            "stripe_secret_key",
+            "stripe_secret = 'sk_live_" + "1234567890abcdef12345678'",
+        ),
+        (
+            "database_connection_uri",
+            "DATABASE_URL=postgres://"
+            + "dbuser:pAssW0rd123@db.internal:5432/production",
         ),
         ("google_api_key", "key: AIzaSyD-1234567890abcdefghijklmnopqrstuv"),
         (
@@ -55,19 +68,37 @@ from snagline.secret_security import (
         ),
         (
             "jwt_token",
-            "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozG4B_p_kP_k_1234567890abcdef",
+            "Authorization: Bearer "
+            + "ey"
+            + "JhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+            + "ey"
+            + "JzdWIiOiIxMjM0NTY3ODkwIn0.dozG4B_p_kP_k_1234567890abcdef",
         ),
         (
             "uri_basic_auth",
             "git clone https://username:super_secret_pass123@github.com/org/repo.git",
         ),
-        ("generic_credential_assignment", 'password = "superSecretPassword123!"'),
-        ("generic_credential_assignment", "api_key: 'my-super-secret-token-value'"),
+        (
+            "generic_credential_assignment",
+            'DB_PASSWORD = "superSecretPassword123!"',
+        ),
+        (
+            "generic_credential_assignment",
+            "MY_API_KEY: 'my-super-secret-token-value'",
+        ),
     ],
 )
 def test_detects_representative_credentials(rule_id: str, sample: str) -> None:
     findings = inspect_text(sample)
     assert any(f.rule_id == rule_id for f in findings)
+
+
+def test_openai_pattern_does_not_claim_anthropic_key() -> None:
+    sample = "client = Anthropic(api_key='sk-ant-api03-1234567890abcdef1234567890')"
+    findings = inspect_text(sample)
+    rule_ids = {f.rule_id for f in findings}
+    assert "anthropic_api_key" in rule_ids
+    assert "openai_api_key" not in rule_ids
 
 
 # ---------------------------------------------------------------------------
@@ -254,7 +285,7 @@ def test_as_authorize_rule_scans_tool_request() -> None:
     req = ToolRequest(
         tool_name="Bash",
         action="execute",
-        resource="curl -u user:AKIAIOSFODNN7EXAMPLE https://s3.amazonaws.com",
+        resource="aws s3 cp s3://bucket/data.txt --access-key AKIAIOSFODNN7EXAMPLE",
     )
     verdict = rule(req)
     assert verdict is not None
@@ -262,20 +293,68 @@ def test_as_authorize_rule_scans_tool_request() -> None:
     assert "secret credential exposure" in verdict.reason
     assert "AKIAIOSFODNN7EXAMPLE" not in verdict.reason
 
-    # Tool request with secret in tool_input
-    req_input = ToolRequest(
-        tool_name="Write",
-        action="write",
-        resource="config.env",
-        tool_input={"content": "SLACK=xoxb-mock-sample-bot-token-for-test-0123456789"},
+    # Tool request with secret in tool_input using production from_tool_input
+    req_input = ToolRequest.from_tool_input(
+        "Bash",
+        {"command": "echo xoxb-mock-sample-bot-token-for-test-0123456789"},
     )
     verdict_input = rule(req_input)
     assert verdict_input is not None
     assert verdict_input.decision == "deny"
 
     # Clean tool request
-    clean_req = ToolRequest(tool_name="Read", action="read", resource="safe.txt")
+    clean_req = ToolRequest.from_tool_input(
+        "Bash",
+        {"command": "echo safe"},
+    )
     assert rule(clean_req) is None
+
+
+def test_as_authorize_rule_reports_highest_severity() -> None:
+    # Warning finding in resource (jwt), critical in tool_input (aws)
+    rule = as_authorize_rule()
+    req = ToolRequest(
+        tool_name="Bash",
+        action="execute",
+        resource="Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozG4B_p_kP_k_1234567890abcdef",
+        tool_input={"key": "AKIAIOSFODNN7EXAMPLE"},
+    )
+    verdict = rule(req)
+    assert verdict is not None
+    assert "severity=critical" in verdict.reason
+
+
+def test_as_authorize_rule_rejects_truncated_resource() -> None:
+    rule = as_authorize_rule()
+    req_trunc = ToolRequest(
+        tool_name="Bash",
+        action="execute",
+        resource="echo secret...<truncated>",
+    )
+    verdict = rule(req_trunc)
+    assert verdict is not None
+    assert verdict.decision == "deny"
+    assert "truncated" in verdict.reason
+
+
+def test_redact_secrets_literal_braces_in_mask() -> None:
+    sample = "key is AKIAIOSFODNN7EXAMPLE"
+    redacted = redact_secrets(sample, mask="{CUSTOM_TAG}:{rule_id}")
+    assert redacted == "key is {CUSTOM_TAG}:aws_access_key"
+
+
+def test_redact_mapping_nested_containers() -> None:
+    data = {
+        "user": "alice",
+        "nested_set": {"AKIAIOSFODNN7EXAMPLE", "benign"},
+        "nested_frozenset": frozenset({"AKIAIOSFODNN7EXAMPLE"}),
+        "nested_tuple": ("safe", ["AKIAIOSFODNN7EXAMPLE"]),
+    }
+    redacted = redact_mapping(data)
+    assert redacted["user"] == "alice"
+    assert "[REDACTED:aws_access_key]" in redacted["nested_set"]
+    assert "[REDACTED:aws_access_key]" in redacted["nested_frozenset"]
+    assert redacted["nested_tuple"][1][0] == "[REDACTED:aws_access_key]"
 
 
 def test_as_authorize_rule_in_policy() -> None:
