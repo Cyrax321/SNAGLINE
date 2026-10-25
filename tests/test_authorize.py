@@ -820,3 +820,59 @@ def test_fail_closed_profile_explicit_default_decision_respected() -> None:
     # Unnamed error/unknown decisions remain fail-closed
     assert pol.rule_error_decision == "deny"
     assert pol.unknown_tool_decision == "deny"
+
+
+def test_path_security_rule_from_dict_validation() -> None:
+    pol = policy_from_dict(
+        {
+            "rules": [
+                {
+                    "type": "path_security",
+                    "decision": "deny",
+                    "min_severity": "critical",
+                    "allowed_roots": ["/workspace"],
+                    "denied_paths": ["/workspace/confidential"],
+                    "denied_patterns": ["*.pem"],
+                    "base_dir": "/workspace",
+                    "disabled_rules": ["path_traversal"],
+                    "enabled_rules": ["sensitive_locations"],
+                    "severity_overrides": {"sensitive_locations": "critical"},
+                }
+            ]
+        }
+    )
+    assert len(pol.rules) == 1
+
+    with pytest.raises(PolicyError, match="must be one of info|warning|critical"):
+        policy_from_dict(
+            {"rules": [{"type": "path_security", "min_severity": "super_critical"}]}
+        )
+
+    with pytest.raises(PolicyError, match="denied_paths must be a list of strings"):
+        policy_from_dict({"rules": [{"type": "path_security", "denied_paths": "str"}]})
+
+    with pytest.raises(PolicyError, match="denied_patterns must be a list of strings"):
+        policy_from_dict({"rules": [{"type": "path_security", "denied_patterns": 123}]})
+
+    with pytest.raises(PolicyError, match="base_dir must be a string"):
+        policy_from_dict({"rules": [{"type": "path_security", "base_dir": 123}]})
+
+    with pytest.raises(PolicyError, match="disabled_rules must be a list of strings"):
+        policy_from_dict({"rules": [{"type": "path_security", "disabled_rules": 123}]})
+
+    with pytest.raises(PolicyError, match="severity_overrides must be an object"):
+        policy_from_dict(
+            {"rules": [{"type": "path_security", "severity_overrides": "invalid"}]}
+        )
+
+    with pytest.raises(PolicyError, match="is not a severity"):
+        policy_from_dict(
+            {
+                "rules": [
+                    {
+                        "type": "path_security",
+                        "severity_overrides": {"path_traversal": "extreme"},
+                    }
+                ]
+            }
+        )

@@ -787,6 +787,8 @@ def _rule_from_dict(raw: Any, index: int) -> Rule:
     # shell_threats entry still gets a precise schema error.
     if kind == "shell_threats":
         return _shell_threats_rule_from_dict(raw, index)
+    if kind == "path_security":
+        return _path_security_rule_from_dict(raw, index)
     if kind == "agent_allowlists":
         allowed_keys = {"type", "allowlists"}
         unknown_keys = set(raw) - allowed_keys
@@ -818,7 +820,7 @@ def _rule_from_dict(raw: Any, index: int) -> Rule:
     if kind not in builders:
         raise PolicyError(
             f"rules[{index}].type={kind!r} is not a known rule type; "
-            f"expected one of {sorted([*builders, 'shell_threats', 'agent_allowlists'])}"
+            f"expected one of {sorted([*builders, 'shell_threats', 'path_security', 'agent_allowlists'])}"
         )
     key = "patterns" if kind.startswith("deny_") and kind != "deny_tools" else "tools"
     allowed = {"type", key}
@@ -910,6 +912,123 @@ def _shell_threats_rule_from_dict(raw: Mapping[str, Any], index: int) -> Rule:
             )
         overrides[str(key)] = value
     cfg = ShellThreatConfig(
+        enabled_rules=enabled_set,
+        disabled_rules=frozenset(disabled),
+        severity_overrides=overrides,
+        min_severity=min_severity,
+        decision=decision,
+    )
+    return as_authorize_rule(cfg)
+
+
+def _path_security_rule_from_dict(raw: Mapping[str, Any], index: int) -> Rule:
+    """Build a path-security authorize rule from a declarative policy entry.
+
+    Schema::
+
+        {"type": "path_security", "decision": "deny", "min_severity": "warning",
+         "allowed_roots": ["/workspace"], "denied_paths": ["/workspace/secret"]}
+
+    Optional keys only; defaults match :class:`snagline.path_security.PathSecurityConfig`.
+    """
+    from snagline.path_security import (
+        BUILTIN_RULE_IDS,
+        PathSecurityConfig,
+        as_authorize_rule,
+    )
+
+    allowed = {
+        "type",
+        "decision",
+        "min_severity",
+        "allowed_roots",
+        "denied_paths",
+        "denied_patterns",
+        "base_dir",
+        "disabled_rules",
+        "enabled_rules",
+        "severity_overrides",
+    }
+    unknown = set(raw) - allowed
+    if unknown:
+        paths = ", ".join(f"rules[{index}].{k}" for k in sorted(unknown))
+        raise PolicyError(
+            f"unknown rule keys {paths}; expected one of {sorted(allowed)}"
+        )
+
+    decision = raw.get("decision", "deny")
+    if decision not in ("ask", "deny"):
+        raise PolicyError(
+            f"rules[{index}].decision={decision!r} must be 'ask' or 'deny'"
+        )
+    min_severity = raw.get("min_severity", "warning")
+    if min_severity not in ("info", "warning", "critical"):
+        raise PolicyError(
+            f"rules[{index}].min_severity={min_severity!r} must be "
+            f"one of info|warning|critical"
+        )
+
+    allowed_roots = raw.get("allowed_roots")
+    allowed_roots_tuple: tuple[str, ...] | None
+    if allowed_roots is None:
+        allowed_roots_tuple = None
+    elif isinstance(allowed_roots, list) and all(
+        isinstance(v, str) for v in allowed_roots
+    ):
+        allowed_roots_tuple = tuple(allowed_roots)
+    else:
+        raise PolicyError(f"rules[{index}].allowed_roots must be a list of strings")
+
+    denied_paths = raw.get("denied_paths", [])
+    if not isinstance(denied_paths, list) or not all(
+        isinstance(v, str) for v in denied_paths
+    ):
+        raise PolicyError(f"rules[{index}].denied_paths must be a list of strings")
+
+    denied_patterns = raw.get("denied_patterns", [])
+    if not isinstance(denied_patterns, list) or not all(
+        isinstance(v, str) for v in denied_patterns
+    ):
+        raise PolicyError(f"rules[{index}].denied_patterns must be a list of strings")
+
+    base_dir = raw.get("base_dir")
+    if base_dir is not None and not isinstance(base_dir, str):
+        raise PolicyError(f"rules[{index}].base_dir must be a string")
+
+    disabled = raw.get("disabled_rules", [])
+    if not isinstance(disabled, list) or not all(isinstance(v, str) for v in disabled):
+        raise PolicyError(f"rules[{index}].disabled_rules must be a list of strings")
+
+    enabled = raw.get("enabled_rules")
+    enabled_set: frozenset[str] | None
+    if enabled is None:
+        enabled_set = None
+    elif isinstance(enabled, list) and all(isinstance(v, str) for v in enabled):
+        unknown_rules = set(enabled) - BUILTIN_RULE_IDS
+        if unknown_rules:
+            raise PolicyError(
+                f"rules[{index}].enabled_rules has unknown ids {sorted(unknown_rules)}"
+            )
+        enabled_set = frozenset(enabled)
+    else:
+        raise PolicyError(f"rules[{index}].enabled_rules must be a list of strings")
+
+    overrides_raw = raw.get("severity_overrides", {})
+    if not isinstance(overrides_raw, Mapping):
+        raise PolicyError(f"rules[{index}].severity_overrides must be an object")
+    overrides: dict[str, Any] = {}
+    for key, value in overrides_raw.items():
+        if value not in ("info", "warning", "critical"):
+            raise PolicyError(
+                f"rules[{index}].severity_overrides[{key!r}]={value!r} is not a severity"
+            )
+        overrides[str(key)] = value
+
+    cfg = PathSecurityConfig(
+        allowed_roots=allowed_roots_tuple,
+        denied_paths=tuple(denied_paths),
+        denied_patterns=tuple(denied_patterns),
+        base_dir=base_dir,
         enabled_rules=enabled_set,
         disabled_rules=frozenset(disabled),
         severity_overrides=overrides,
