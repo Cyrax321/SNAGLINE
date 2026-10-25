@@ -809,3 +809,14 @@ def test_monitor_pipeline_remains_fail_open_independent_of_authorize() -> None:
     )
     m.ingest(event)
     assert m.metrics()["events_ingested"] == 1
+
+
+def test_fail_closed_profile_explicit_default_decision_respected() -> None:
+    """When default_decision is explicitly provided with fail_closed, it is respected."""
+    pol = Policy(profile="fail_closed", default_decision="allow")
+    assert pol.default_decision == "allow"
+    res = pol.decide(ToolRequest(tool_name="Read", action="read", resource="safe.txt"))
+    assert res.decision == "allow"
+    # Unnamed error/unknown decisions remain fail-closed
+    assert pol.rule_error_decision == "deny"
+    assert pol.unknown_tool_decision == "deny"

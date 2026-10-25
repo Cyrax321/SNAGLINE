@@ -458,6 +458,9 @@ class DecisionResult:
         return self.allowed
 
 
+_DEFAULT_UNSET: Any = object()
+
+
 @dataclass(frozen=True, slots=True)
 class Policy:
     """A set of rules plus what to do when they have no opinion.
@@ -488,13 +491,25 @@ class Policy:
     """
 
     rules: tuple[Rule, ...] = ()
-    default_decision: Decision = DEFAULT_DECISION
+    default_decision: Decision = _DEFAULT_UNSET
     rule_error_decision: Decision | None = None
     unknown_tool_decision: Decision | None = None
     profile: str | None = None
 
     def __post_init__(self) -> None:
-        if self.default_decision not in DECISIONS:
+        if self.profile is not None and self.profile not in VALID_PROFILES:
+            raise ValueError(
+                f"profile={self.profile!r} is not a valid security profile; "
+                f"expected one of {sorted(VALID_PROFILES)}"
+            )
+        if self.default_decision is _DEFAULT_UNSET:
+            resolved_default: Decision = (
+                "deny"
+                if self.profile in (PROFILE_FAIL_CLOSED, "strict")
+                else DEFAULT_DECISION
+            )
+            object.__setattr__(self, "default_decision", resolved_default)
+        elif self.default_decision not in DECISIONS:
             raise ValueError(
                 f"default_decision={self.default_decision!r} is not a valid decision; "
                 f"expected one of {list(DECISIONS)}"
@@ -515,19 +530,11 @@ class Policy:
                 f"unknown_tool_decision={self.unknown_tool_decision!r} is not a valid decision; "
                 f"expected one of {list(DECISIONS)}"
             )
-        if self.profile is not None:
-            if self.profile not in VALID_PROFILES:
-                raise ValueError(
-                    f"profile={self.profile!r} is not a valid security profile; "
-                    f"expected one of {sorted(VALID_PROFILES)}"
-                )
-            if self.profile in (PROFILE_FAIL_CLOSED, "strict"):
-                if self.default_decision == DEFAULT_DECISION:
-                    object.__setattr__(self, "default_decision", "deny")
-                if self.rule_error_decision is None:
-                    object.__setattr__(self, "rule_error_decision", "deny")
-                if self.unknown_tool_decision is None:
-                    object.__setattr__(self, "unknown_tool_decision", "deny")
+        if self.profile in (PROFILE_FAIL_CLOSED, "strict"):
+            if self.rule_error_decision is None:
+                object.__setattr__(self, "rule_error_decision", "deny")
+            if self.unknown_tool_decision is None:
+                object.__setattr__(self, "unknown_tool_decision", "deny")
 
     def decide(self, request: ToolRequest) -> DecisionResult:
         """Evaluate every rule and return the strictest verdict."""
