@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import re
 
 import pytest
@@ -23,6 +24,13 @@ from snagline.secret_security import (
     redact_mapping,
     redact_secrets,
     strongest_severity,
+)
+
+_MOCK_JWT_PAYLOAD = (
+    base64.b64encode(b'{"alg":"HS256","typ":"JWT"}').decode().rstrip("=")
+    + "."
+    + base64.b64encode(b'{"sub":"1234567890"}').decode().rstrip("=")
+    + ".dozG4B_p_kP_k_1234567890abcdef"
 )
 
 # ---------------------------------------------------------------------------
@@ -68,11 +76,7 @@ from snagline.secret_security import (
         ),
         (
             "jwt_token",
-            "Authorization: Bearer "
-            + "ey"
-            + "JhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
-            + "ey"
-            + "JzdWIiOiIxMjM0NTY3ODkwIn0.dozG4B_p_kP_k_1234567890abcdef",
+            f"Authorization: Bearer {_MOCK_JWT_PAYLOAD}",
         ),
         (
             "uri_basic_auth",
@@ -316,7 +320,7 @@ def test_as_authorize_rule_reports_highest_severity() -> None:
     req = ToolRequest(
         tool_name="Bash",
         action="execute",
-        resource="Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozG4B_p_kP_k_1234567890abcdef",
+        resource=f"Authorization: Bearer {_MOCK_JWT_PAYLOAD}",
         tool_input={"key": "AKIAIOSFODNN7EXAMPLE"},
     )
     verdict = rule(req)
