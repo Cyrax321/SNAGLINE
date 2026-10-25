@@ -54,6 +54,7 @@ class DlpMatch:
     raw_value: str
     redacted_value: str
     match_type: str
+    value_signature: str = ""
 
 
 DlpRuleFn = Callable[[str], list[DlpMatch]]
@@ -305,6 +306,7 @@ def scan_text(
                     raw_value=match.raw_value,
                     redacted_value=match.redacted_value,
                     match_type=match.match_type,
+                    value_signature=match.value_signature,
                 )
             matches.append(match)
 
@@ -331,6 +333,7 @@ def scan_text(
                     raw_value="",
                     redacted_value="[REDACTED:secret]",
                     match_type=sf.match_type,
+                    value_signature=sf.secret_signature,
                 )
             )
 
@@ -351,7 +354,11 @@ def inspect_payload(
     if isinstance(payload, str):
         matches = scan_text(payload, cfg, extra_rules=extra_rules)
         for m in matches:
-            sig = make_signature(f"dlp:{m.rule_id}", None, m.raw_value)
+            sig = (
+                m.value_signature
+                if m.value_signature
+                else make_signature(f"dlp:{m.rule_id}", None, m.raw_value)
+            )
             findings.append(
                 DlpFinding(
                     rule_id=m.rule_id,

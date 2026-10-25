@@ -512,3 +512,18 @@ def test_inspect_payload_frozenset_and_set() -> None:
     rules = {f.rule_id for f in findings}
     assert "us_ssn" in rules
     assert "credit_card" in rules
+
+
+def test_secrets_integration_retains_distinct_signatures() -> None:
+    token1 = "ghp_" + "111111111111111111111111111111111111"
+    token2 = "ghp_" + "222222222222222222222222222222222222"
+    payload = {
+        "key1": token1,
+        "key2": token2,
+    }
+    findings = inspect_payload(payload, DlpSecurityConfig(include_secrets=True))
+    secret_findings = [f for f in findings if f.rule_id.startswith("secret:")]
+    assert len(secret_findings) == 2
+    signatures = [f.value_signature for f in secret_findings]
+    assert len(set(signatures)) == 2
+    assert all(len(sig) == 64 for sig in signatures)
