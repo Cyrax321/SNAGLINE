@@ -18,9 +18,11 @@ import json
 import pytest
 
 from snagline.authorize import (
+    PROFILE_FAIL_CLOSED,
     Policy,
     PolicyError,
     ToolRequest,
+    allow_agent_tools,
     allow_tools,
     ask_tools,
     decide,
@@ -30,6 +32,7 @@ from snagline.authorize import (
     policy_from_dict,
     policy_from_file,
     policy_from_sequence,
+    security_policy,
 )
 
 # --- the fail-open guarantee ----------------------------------------------
@@ -590,3 +593,219 @@ def test_duplicate_keys_inside_a_rule_are_rejected(tmp_path) -> None:
     )
     with pytest.raises(PolicyError, match="duplicate key"):
         policy_from_file(str(path))
+
+
+# --- fail-closed security profile and per-agent allowlists (issue #637) ---
+
+
+def test_security_profile_fails_closed_by_default() -> None:
+    p = Policy(profile=PROFILE_FAIL_CLOSED)
+    assert p.default_decision == "deny"
+    assert p.rule_error_decision == "deny"
+    assert p.unknown_tool_decision == "deny"
+
+    # Unmatched known tool request denies
+    verdict = p.decide(ToolRequest.from_tool_input("Read", {"file_path": "/tmp/test"}))
+    assert verdict.decision == "deny"
+    assert not verdict.allowed
+    assert "no rule matched; policy default_decision is 'deny'" in verdict.reason
+
+
+def test_security_profile_denies_unknown_tools() -> None:
+    p = Policy(profile=PROFILE_FAIL_CLOSED)
+    verdict = p.decide(ToolRequest.from_tool_input("CompletelyUnknownTool", {}))
+    assert verdict.decision == "deny"
+    assert not verdict.allowed
+    assert "tool 'CompletelyUnknownTool' is unknown" in verdict.reason
+
+
+def test_security_profile_denies_on_rule_error() -> None:
+    def crashing_rule(req: ToolRequest):
+        raise RuntimeError("evaluation error")
+
+    p = Policy(profile=PROFILE_FAIL_CLOSED, rules=(crashing_rule,))
+    verdict = p.decide(ToolRequest.from_tool_input("Read", {"file_path": "/safe"}))
+    assert verdict.decision == "deny"
+    assert not verdict.allowed
+    assert "rule 0 raised RuntimeError: evaluation error" in verdict.reason
+
+
+def test_security_policy_helper_factory() -> None:
+    p = security_policy(
+        allowed_tools=["Read", "Grep"],
+        rules=(deny_resource_glob("*.pem"),),
+    )
+    assert p.profile == PROFILE_FAIL_CLOSED
+    assert p.default_decision == "deny"
+    assert p.rule_error_decision == "deny"
+    assert p.unknown_tool_decision == "deny"
+
+    # Allowed tool on non-denied resource allows
+    assert p.decide(
+        ToolRequest.from_tool_input("Read", {"file_path": "/tmp/data.txt"})
+    ).allowed
+    # Allowed tool on denied resource denies
+    assert not p.decide(
+        ToolRequest.from_tool_input("Read", {"file_path": "/tmp/secret.pem"})
+    ).allowed
+    # Unallowed tool denies
+    assert not p.decide(
+        ToolRequest.from_tool_input("Bash", {"command": "echo 1"})
+    ).allowed
+
+
+def test_per_agent_allowlists_in_code() -> None:
+    rule = allow_agent_tools(
+        {
+            "researcher": ["Read", "WebSearch", "Grep"],
+            "engineer": ["Read", "Write", "Bash"],
+        }
+    )
+    p = Policy(rules=(rule,), default_decision="deny")
+
+    # Researcher running Read -> allowed
+    req_r_read = ToolRequest.from_tool_input(
+        "Read", {"file_path": "/a"}, agent_id="researcher"
+    )
+    assert p.decide(req_r_read).allowed
+
+    # Researcher running Bash -> denied
+    req_r_bash = ToolRequest.from_tool_input(
+        "Bash", {"command": "ls"}, agent_id="researcher"
+    )
+    res_r_bash = p.decide(req_r_bash)
+    assert not res_r_bash.allowed
+    assert "tool 'Bash' is not allowed for agent 'researcher'" in res_r_bash.reason
+
+    # Engineer running Bash -> allowed
+    req_e_bash = ToolRequest.from_tool_input(
+        "Bash", {"command": "ls"}, agent_id="engineer"
+    )
+    assert p.decide(req_e_bash).allowed
+
+    # Unconfigured agent running Read -> denied
+    req_guest = ToolRequest.from_tool_input(
+        "Read", {"file_path": "/a"}, agent_id="guest"
+    )
+    res_guest = p.decide(req_guest)
+    assert not res_guest.allowed
+    assert "agent 'guest' has no configured tool allowlist" in res_guest.reason
+
+    # Request without agent_id passes through to default
+    req_no_agent = ToolRequest.from_tool_input("Read", {"file_path": "/a"})
+    res_no_agent = p.decide(req_no_agent)
+    assert not res_no_agent.allowed
+    assert "no rule matched" in res_no_agent.reason
+
+
+def test_agent_id_parsed_from_tool_input_dict() -> None:
+    req = ToolRequest.from_tool_input(
+        "Read",
+        {"agent_id": "bot_42", "file_path": "/etc/hosts"},
+    )
+    assert req.agent_id == "bot_42"
+    assert req.resource == "/etc/hosts"
+    plain_req = ToolRequest.from_tool_input("Read", {"file_path": "/etc/hosts"})
+    assert req.signature != plain_req.signature
+    assert len(req.signature) == 64
+
+
+def test_declarative_security_profile_and_agent_allowlists() -> None:
+    doc = {
+        "profile": "fail_closed",
+        "agent_allowlists": {"auditor": ["Read", "Glob"]},
+        "rules": [{"type": "deny_resource", "patterns": ["/etc/*"]}],
+    }
+    p = policy_from_dict(doc)
+    assert p.profile == "fail_closed"
+    assert p.default_decision == "deny"
+    assert p.unknown_tool_decision == "deny"
+    assert p.rule_error_decision == "deny"
+
+    # Auditor accessing /tmp/foo -> allowed
+    assert p.decide(
+        ToolRequest.from_tool_input(
+            "Read", {"file_path": "/tmp/foo"}, agent_id="auditor"
+        )
+    ).allowed
+    # Auditor accessing /etc/shadow -> denied (deny_resource wins over allow)
+    assert not p.decide(
+        ToolRequest.from_tool_input(
+            "Read", {"file_path": "/etc/shadow"}, agent_id="auditor"
+        )
+    ).allowed
+    # Auditor running Write -> denied
+    assert not p.decide(
+        ToolRequest.from_tool_input(
+            "Write", {"file_path": "/tmp/foo"}, agent_id="auditor"
+        )
+    ).allowed
+
+
+def test_declarative_rule_type_agent_allowlists() -> None:
+    doc = {
+        "rules": [
+            {
+                "type": "agent_allowlists",
+                "allowlists": {"tester": ["Read"]},
+            }
+        ],
+        "default_decision": "deny",
+    }
+    p = policy_from_dict(doc)
+    assert p.decide(ToolRequest.from_tool_input("Read", {}, agent_id="tester")).allowed
+    assert not p.decide(
+        ToolRequest.from_tool_input("Bash", {}, agent_id="tester")
+    ).allowed
+
+
+def test_invalid_security_profile_and_allowlists_fail_at_load_time() -> None:
+    # Invalid profile name
+    with pytest.raises(PolicyError, match="is not a valid security profile"):
+        policy_from_dict({"profile": "bogus"})
+
+    # Profile cannot be null
+    with pytest.raises(PolicyError, match="profile is null"):
+        policy_from_dict({"profile": None})
+
+    # agent_allowlists must be an object
+    with pytest.raises(PolicyError, match="agent_allowlists must be an object"):
+        policy_from_dict({"agent_allowlists": ["Read"]})
+
+    # agent_allowlists cannot be null
+    with pytest.raises(PolicyError, match="agent_allowlists is null"):
+        policy_from_dict({"agent_allowlists": None})
+
+    # Invalid agent id
+    with pytest.raises(PolicyError, match="agent_id '' must be a non-empty string"):
+        policy_from_dict({"agent_allowlists": {"": ["Read"]}})
+
+    # Invalid tools type
+    with pytest.raises(PolicyError, match="tools for agent 'bot' must be a list"):
+        policy_from_dict({"agent_allowlists": {"bot": "Read"}})
+
+    # Empty rule allowlists
+    with pytest.raises(PolicyError, match=r"rules\[0\]\.allowlists is missing"):
+        policy_from_dict({"rules": [{"type": "agent_allowlists"}]})
+
+    # Policy construction invalid profile
+    with pytest.raises(ValueError, match="is not a valid security profile"):
+        Policy(profile="invalid")
+
+
+def test_monitor_pipeline_remains_fail_open_independent_of_authorize() -> None:
+    """The monitoring pipeline never imports or enforces authorize policies."""
+    from snagline import Monitor, StepEvent
+
+    m = Monitor.default()
+    # Sending unexpected step event never raises or fails closed
+    event = StepEvent(
+        step_id="step_1",
+        episode_id="ep_1",
+        timestamp=1000.0,
+        action_type="tool_call",
+        action_signature="sig_test",
+        tool_name="UnknownTool",
+    )
+    m.ingest(event)
+    assert m.metrics()["events_ingested"] == 1

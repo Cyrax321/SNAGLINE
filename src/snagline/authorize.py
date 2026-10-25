@@ -50,6 +50,11 @@ DECISIONS: tuple[Decision, ...] = ("allow", "ask", "deny")
 #: the intent is greppable rather than buried at the constructor default.
 DEFAULT_DECISION: Decision = "allow"
 
+#: Predefined security profiles.
+PROFILE_FAIL_CLOSED = "fail_closed"
+PROFILE_PERMISSIVE = "permissive"
+VALID_PROFILES = frozenset({PROFILE_FAIL_CLOSED, PROFILE_PERMISSIVE, "strict"})
+
 #: tool_name -> the key in ``tool_input`` holding the thing being acted on.
 #: tool_name -> (resource keys, first match wins, action).
 #:
@@ -118,13 +123,15 @@ class ToolRequest:
     resource: str | None = None
     tool_input: Mapping[str, Any] = field(default_factory=dict)
     episode_id: str | None = None
+    agent_id: str | None = None
 
     @property
     def signature(self) -> str:
-        """One-way digest of (tool, action, resource). Safe to log."""
-        return make_signature(
-            "tool_request", self.tool_name, self.action, self.resource or ""
-        )
+        """One-way digest of (tool, action, resource, agent). Safe to log."""
+        parts = [self.action, self.resource or ""]
+        if self.agent_id:
+            parts.append(self.agent_id)
+        return make_signature("tool_request", self.tool_name, *parts)
 
     @classmethod
     def from_tool_input(
@@ -133,6 +140,7 @@ class ToolRequest:
         tool_input: Mapping[str, Any] | None,
         *,
         episode_id: str | None = None,
+        agent_id: str | None = None,
     ) -> ToolRequest:
         """Build a request from a host's raw ``(tool_name, tool_input)``.
 
@@ -147,6 +155,10 @@ class ToolRequest:
         # ``resource`` while ``tool_input`` was truncated, so the truncation
         # would be trivially bypassed by the very field a policy matches on.
         safe = _redact(data)
+        if agent_id is None:
+            raw_agent = data.get("agent_id")
+            if isinstance(raw_agent, str) and raw_agent.strip():
+                agent_id = raw_agent.strip()
         known = _TOOL_RESOURCES.get(tool_name)
         if known is None:
             return cls(
@@ -155,6 +167,7 @@ class ToolRequest:
                 resource=_first_str(safe, ("url", "path", "file_path", "command")),
                 tool_input=safe,
                 episode_id=episode_id,
+                agent_id=agent_id,
             )
         keys, action = known
         return cls(
@@ -163,6 +176,7 @@ class ToolRequest:
             resource=_first_str(safe, keys),
             tool_input=safe,
             episode_id=episode_id,
+            agent_id=agent_id,
         )
 
 
@@ -356,6 +370,65 @@ def deny_command_glob(*patterns: str) -> Rule:
     )
 
 
+def allow_agent_tools(allowlists: Mapping[str, Sequence[str]]) -> Rule:
+    """Authorize tools according to per-agent allowlists.
+
+    Schema: ``{"agent_name": ["ToolA", "ToolB"]}``.
+
+    When a request carries an ``agent_id``:
+    * If the agent is in ``allowlists`` and the requested tool is in that
+      agent's allowed tools, returns an 'allow' verdict.
+    * If the agent is in ``allowlists`` but the requested tool is not allowed,
+      returns a 'deny' verdict.
+    * If the agent is not in ``allowlists``, returns a 'deny' verdict (an
+      unconfigured agent cannot execute tools under this rule).
+
+    When a request carries no ``agent_id``:
+    * Returns None (passes through to subsequent rules).
+    """
+    if not isinstance(allowlists, Mapping):
+        raise ValueError(
+            "agent_allowlists must be an object mapping agent_id to tool list"
+        )
+
+    cleaned: dict[str, frozenset[str]] = {}
+    for agent, tools in allowlists.items():
+        if not isinstance(agent, str) or not agent.strip():
+            raise ValueError(f"agent_id {agent!r} must be a non-empty string")
+        if not isinstance(tools, (list, tuple, set, frozenset)) or not all(
+            isinstance(t, str) and t.strip() for t in tools
+        ):
+            raise ValueError(
+                f"tools for agent {agent!r} must be a list of non-empty strings"
+            )
+        cleaned[agent.strip()] = frozenset(t.strip() for t in tools)
+
+    def _rule(request: ToolRequest) -> RuleVerdict | None:
+        agent_id = request.agent_id
+        if agent_id is None:
+            return None
+        allowed = cleaned.get(agent_id)
+        if allowed is None:
+            return RuleVerdict(
+                "agent_allowlists",
+                "deny",
+                f"agent {agent_id!r} has no configured tool allowlist",
+            )
+        if request.tool_name in allowed:
+            return RuleVerdict(
+                "agent_allowlists",
+                "allow",
+                f"tool {request.tool_name!r} is allowed for agent {agent_id!r}",
+            )
+        return RuleVerdict(
+            "agent_allowlists",
+            "deny",
+            f"tool {request.tool_name!r} is not allowed for agent {agent_id!r}",
+        )
+
+    return _rule
+
+
 @dataclass(frozen=True, slots=True)
 class DecisionResult:
     """The outcome of one :func:`decide` call, with the reasoning kept."""
@@ -404,12 +477,57 @@ class Policy:
     which is an allowlist -- anything not named is denied, including every tool
     released after the policy was written. That is the fail-closed mode, and
     it fails closed by design rather than by accident.
+
+    For security-sensitive deployments, the fail-closed security profile
+    ensures:
+    * Unknown tools are denied.
+    * Rule errors fail closed to deny.
+    * Unmatched requests are denied.
+
+        Policy(profile="fail_closed", rules=(allow_tools("Read", "Grep"),))
     """
 
     rules: tuple[Rule, ...] = ()
     default_decision: Decision = DEFAULT_DECISION
     rule_error_decision: Decision | None = None
     unknown_tool_decision: Decision | None = None
+    profile: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.default_decision not in DECISIONS:
+            raise ValueError(
+                f"default_decision={self.default_decision!r} is not a valid decision; "
+                f"expected one of {list(DECISIONS)}"
+            )
+        if (
+            self.rule_error_decision is not None
+            and self.rule_error_decision not in DECISIONS
+        ):
+            raise ValueError(
+                f"rule_error_decision={self.rule_error_decision!r} is not a valid decision; "
+                f"expected one of {list(DECISIONS)}"
+            )
+        if (
+            self.unknown_tool_decision is not None
+            and self.unknown_tool_decision not in DECISIONS
+        ):
+            raise ValueError(
+                f"unknown_tool_decision={self.unknown_tool_decision!r} is not a valid decision; "
+                f"expected one of {list(DECISIONS)}"
+            )
+        if self.profile is not None:
+            if self.profile not in VALID_PROFILES:
+                raise ValueError(
+                    f"profile={self.profile!r} is not a valid security profile; "
+                    f"expected one of {sorted(VALID_PROFILES)}"
+                )
+            if self.profile in (PROFILE_FAIL_CLOSED, "strict"):
+                if self.default_decision == DEFAULT_DECISION:
+                    object.__setattr__(self, "default_decision", "deny")
+                if self.rule_error_decision is None:
+                    object.__setattr__(self, "rule_error_decision", "deny")
+                if self.unknown_tool_decision is None:
+                    object.__setattr__(self, "unknown_tool_decision", "deny")
 
     def decide(self, request: ToolRequest) -> DecisionResult:
         """Evaluate every rule and return the strictest verdict."""
@@ -478,6 +596,39 @@ def decide(request: ToolRequest, policy: Policy) -> DecisionResult:
     return policy.decide(request)
 
 
+def security_policy(
+    rules: Sequence[Rule] = (),
+    *,
+    allowed_tools: Sequence[str] | None = None,
+    agent_allowlists: Mapping[str, Sequence[str]] | None = None,
+    default_decision: Decision = "deny",
+    rule_error_decision: Decision = "deny",
+    unknown_tool_decision: Decision = "deny",
+) -> Policy:
+    """Build a fail-closed security policy.
+
+    In a security policy:
+    * Unconfigured tools are denied (fails closed).
+    * Rule evaluation errors result in deny rather than falling open.
+    * Requests matching no rule are denied by default.
+    * Optional ``allowed_tools`` configures global tool permissions.
+    * Optional ``agent_allowlists`` configures per-agent tool permissions.
+    """
+    built_rules: list[Rule] = []
+    if agent_allowlists is not None:
+        built_rules.append(allow_agent_tools(agent_allowlists))
+    if allowed_tools is not None:
+        built_rules.append(allow_tools(*allowed_tools))
+    built_rules.extend(rules)
+    return Policy(
+        rules=tuple(built_rules),
+        default_decision=default_decision,
+        rule_error_decision=rule_error_decision,
+        unknown_tool_decision=unknown_tool_decision,
+        profile=PROFILE_FAIL_CLOSED,
+    )
+
+
 # --------------------------------------------------------------------------
 # Declarative policy documents
 # --------------------------------------------------------------------------
@@ -500,6 +651,8 @@ _ALLOWED_KEYS = frozenset(
         "default_decision",
         "rule_error_decision",
         "unknown_tool_decision",
+        "profile",
+        "agent_allowlists",
         "description",
     }
 )
@@ -512,7 +665,11 @@ def policy_from_dict(data: Mapping[str, Any]) -> Policy:
     self-documenting)::
 
         {
-          "default_decision": "allow",
+          "profile": "fail_closed",
+          "default_decision": "deny",
+          "agent_allowlists": {
+            "researcher": ["Read", "WebSearch"]
+          },
           "rules": [
             {"type": "deny_tools",     "tools": ["Write", "Edit"]},
             {"type": "allow_tools",    "tools": ["Read", "Grep"]},
@@ -531,6 +688,37 @@ def policy_from_dict(data: Mapping[str, Any]) -> Policy:
         raise PolicyError(
             f"unknown policy keys {sorted(unknown)}; expected {sorted(_ALLOWED_KEYS)}"
         )
+
+    raw_profile: str | None = None
+    if "profile" in data:
+        val = data["profile"]
+        if val is None:
+            raise PolicyError(
+                "profile is null. Omit the key to leave it unset; use one of "
+                f"{sorted(VALID_PROFILES)} to set it explicitly."
+            )
+        if not isinstance(val, str) or val not in VALID_PROFILES:
+            raise PolicyError(
+                f"profile={val!r} is not a valid security profile; "
+                f"expected one of {sorted(VALID_PROFILES)}"
+            )
+        raw_profile = val
+
+    agent_rules: list[Rule] = []
+    if "agent_allowlists" in data:
+        raw_allowlists = data["agent_allowlists"]
+        if raw_allowlists is None:
+            raise PolicyError(
+                "agent_allowlists is null. Omit the key or provide an object mapping agent_id to tool list."
+            )
+        if not isinstance(raw_allowlists, Mapping):
+            raise PolicyError(
+                f"agent_allowlists must be an object; got {type(raw_allowlists).__name__}"
+            )
+        try:
+            agent_rules.append(allow_agent_tools(raw_allowlists))
+        except ValueError as exc:
+            raise PolicyError(str(exc)) from exc
 
     def decision(key: str) -> Decision | None:
         """Read one decision key.
@@ -560,14 +748,26 @@ def policy_from_dict(data: Mapping[str, Any]) -> Policy:
     raw_rules = data.get("rules", [])
     if not isinstance(raw_rules, list):
         raise PolicyError(f"rules must be a list; got {type(raw_rules).__name__}")
-    rules = tuple(_rule_from_dict(raw, i) for i, raw in enumerate(raw_rules))
+    parsed_rules = tuple(_rule_from_dict(raw, i) for i, raw in enumerate(raw_rules))
+    rules = tuple(agent_rules) + parsed_rules
 
-    default = decision("default_decision") or DEFAULT_DECISION
+    default = decision("default_decision")
+    rule_error = decision("rule_error_decision")
+    unknown_tool = decision("unknown_tool_decision")
+
+    if raw_profile in (PROFILE_FAIL_CLOSED, "strict"):
+        default = default or "deny"
+        rule_error = rule_error or "deny"
+        unknown_tool = unknown_tool or "deny"
+    else:
+        default = default or DEFAULT_DECISION
+
     return Policy(
         rules=rules,
         default_decision=default,
-        rule_error_decision=decision("rule_error_decision"),
-        unknown_tool_decision=decision("unknown_tool_decision"),
+        rule_error_decision=rule_error,
+        unknown_tool_decision=unknown_tool,
+        profile=raw_profile,
     )
 
 
@@ -580,6 +780,27 @@ def _rule_from_dict(raw: Any, index: int) -> Rule:
     # shell_threats entry still gets a precise schema error.
     if kind == "shell_threats":
         return _shell_threats_rule_from_dict(raw, index)
+    if kind == "agent_allowlists":
+        allowed_keys = {"type", "allowlists"}
+        unknown_keys = set(raw) - allowed_keys
+        if unknown_keys:
+            paths = ", ".join(f"rules[{index}].{k}" for k in sorted(unknown_keys))
+            raise PolicyError(
+                f"unknown rule keys {paths}; expected one of {sorted(allowed_keys)}"
+            )
+        if "allowlists" not in raw:
+            raise PolicyError(
+                f"rules[{index}].allowlists is missing; expected an object mapping agent_id to tool list"
+            )
+        allowlists = raw["allowlists"]
+        if not isinstance(allowlists, Mapping):
+            raise PolicyError(
+                f"rules[{index}].allowlists must be an object; got {type(allowlists).__name__}"
+            )
+        try:
+            return allow_agent_tools(allowlists)
+        except ValueError as exc:
+            raise PolicyError(f"rules[{index}]: {exc}") from exc
     builders: dict[str, Callable[..., Rule]] = {
         "deny_tools": deny_tools,
         "ask_tools": ask_tools,
@@ -590,7 +811,7 @@ def _rule_from_dict(raw: Any, index: int) -> Rule:
     if kind not in builders:
         raise PolicyError(
             f"rules[{index}].type={kind!r} is not a known rule type; "
-            f"expected one of {sorted([*builders, 'shell_threats'])}"
+            f"expected one of {sorted([*builders, 'shell_threats', 'agent_allowlists'])}"
         )
     key = "patterns" if kind.startswith("deny_") and kind != "deny_tools" else "tools"
     allowed = {"type", key}
