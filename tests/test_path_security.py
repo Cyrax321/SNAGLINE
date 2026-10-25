@@ -422,3 +422,69 @@ def test_as_authorize_rule_empty_or_none_resource() -> None:
 
     req_empty = ToolRequest(tool_name="Read", action="read", resource="")
     assert rule(req_empty) is None
+
+
+def test_empty_allowed_roots_denies_all_paths() -> None:
+    cfg = PathSecurityConfig(allowed_roots=())
+    hits = inspect_path("/workspace/file.txt", config=cfg)
+    assert any(h.rule_id == "allowed_roots" for h in hits)
+
+
+def test_relative_allowed_roots_and_denied_paths_resolved_with_base_dir() -> None:
+    cfg = PathSecurityConfig(
+        base_dir="/workspace/project",
+        allowed_roots=("src", "docs"),
+        denied_paths=("src/private",),
+    )
+    # Inside allowed relative root
+    assert inspect_path("src/main.py", config=cfg) == ()
+    # Outside allowed relative roots
+    hits_outside = inspect_path("scripts/deploy.sh", config=cfg)
+    assert any(h.rule_id == "allowed_roots" for h in hits_outside)
+    # Inside denied relative path
+    hits_denied = inspect_path("src/private/key.pem", config=cfg)
+    assert any(h.rule_id == "denied_paths" for h in hits_denied)
+
+
+def test_windows_case_insensitivity_on_denied_and_patterns() -> None:
+    cfg = PathSecurityConfig(
+        denied_paths=(r"C:\workspace\Confidential",),
+        denied_patterns=("*.SECRET",),
+    )
+    hits_path = inspect_path(r"c:\workspace\confidential\doc.txt", config=cfg)
+    assert any(h.rule_id == "denied_paths" for h in hits_path)
+
+    hits_pat = inspect_path(r"C:\workspace\data.secret", config=cfg)
+    assert any(h.rule_id == "denied_patterns" for h in hits_pat)
+
+
+def test_as_authorize_rule_unknown_action_path_inspected() -> None:
+    cfg = PathSecurityConfig(allowed_roots=("/workspace",))
+    rule = as_authorize_rule(config=cfg)
+    # Unknown action but resource is a path
+    req = ToolRequest(tool_name="CustomTool", action="unknown", resource="/etc/passwd")
+    verdict = rule(req)
+    assert verdict is not None
+    assert verdict.decision == "deny"
+
+
+def test_as_authorize_rule_truncated_or_overlong_resource_rejected() -> None:
+    rule = as_authorize_rule()
+    req_trunc = ToolRequest(
+        tool_name="Read",
+        action="read",
+        resource="/path/to/some/file...<truncated>",
+    )
+    verdict = rule(req_trunc)
+    assert verdict is not None
+    assert verdict.decision == "deny"
+    assert "truncated" in verdict.reason
+
+    req_overlong = ToolRequest(
+        tool_name="Read",
+        action="read",
+        resource="/workspace/" + "a" * 4100,
+    )
+    verdict_overlong = rule(req_overlong)
+    assert verdict_overlong is not None
+    assert verdict_overlong.decision == "deny"

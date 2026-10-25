@@ -130,8 +130,8 @@ def normalize_lexical_path(
     and ``.`` / ``..`` segments, and resolves relative paths against
     ``base_dir`` if provided.
     """
-    raw = os.fspath(path).strip()
-    if not raw:
+    raw = os.fspath(path)
+    if not raw or not raw.strip():
         return ""
 
     # Replace backslashes with standard forward slashes
@@ -148,7 +148,7 @@ def normalize_lexical_path(
 
     # Resolve relative paths against base_dir if base_dir is supplied
     if base_dir and not clean.startswith("/") and not drive:
-        clean_base = os.fspath(base_dir).strip().replace("\\", "/")
+        clean_base = os.fspath(base_dir).replace("\\", "/")
         clean = posixpath.join(clean_base, clean)
 
     # Lexically normalize the path
@@ -161,13 +161,19 @@ def normalize_lexical_path(
     return drive + norm
 
 
-def _is_subpath(target: str, root: str) -> bool:
+def _is_windows_path(path: str) -> bool:
+    return os.name == "nt" or bool(_WINDOWS_DRIVE_RE.match(path))
+
+
+def _is_subpath(target: str, root: str, *, case_insensitive: bool = False) -> bool:
     """Check if normalized ``target`` is inside or equal to normalized ``root``."""
-    target_clean = target.rstrip("/")
-    root_clean = root.rstrip("/")
+    t = target.lower() if case_insensitive else target
+    r = root.lower() if case_insensitive else root
+    target_clean = t.rstrip("/")
+    root_clean = r.rstrip("/")
     if target_clean == root_clean:
         return True
-    return target.startswith(root_clean + "/")
+    return t.startswith(root_clean + "/")
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +261,11 @@ def rule_path_traversal(
     escapes_base = False
     if config.base_dir:
         norm_base = normalize_lexical_path(config.base_dir)
-        escapes_base = not _is_subpath(norm_path, norm_base)
+        escapes_base = not _is_subpath(
+            norm_path,
+            norm_base,
+            case_insensitive=_is_windows_path(norm_path),
+        )
 
     if has_traversal_token or escapes_norm or escapes_base:
         return _finding(
@@ -333,13 +343,22 @@ def rule_allowed_roots(
     config: PathSecurityConfig,
 ) -> PathFinding | None:
     """Verify that path resides strictly inside one of the configured allowed roots."""
-    if not config.allowed_roots:
+    if config.allowed_roots is None:
         return None
 
+    if not config.allowed_roots:
+        return _finding(
+            "allowed_roots",
+            "critical",
+            "path is outside configured allowed roots",
+            norm_path,
+        )
+
+    is_win = _is_windows_path(norm_path)
     # Check against each allowed root
     for root in config.allowed_roots:
-        norm_root = normalize_lexical_path(root)
-        if _is_subpath(norm_path, norm_root):
+        norm_root = normalize_lexical_path(root, base_dir=config.base_dir)
+        if _is_subpath(norm_path, norm_root, case_insensitive=is_win):
             return None
 
     return _finding(
@@ -359,9 +378,10 @@ def rule_denied_paths(
     if not config.denied_paths:
         return None
 
+    is_win = _is_windows_path(norm_path)
     for denied in config.denied_paths:
-        norm_denied = normalize_lexical_path(denied)
-        if _is_subpath(norm_path, norm_denied):
+        norm_denied = normalize_lexical_path(denied, base_dir=config.base_dir)
+        if _is_subpath(norm_path, norm_denied, case_insensitive=is_win):
             return _finding(
                 "denied_paths",
                 "critical",
@@ -381,8 +401,13 @@ def rule_denied_patterns(
         return None
 
     basename = posixpath.basename(norm_path)
+    is_win = _is_windows_path(norm_path)
+    target_base = basename.lower() if is_win else basename
+    target_path = norm_path.lower() if is_win else norm_path
+
     for pattern in config.denied_patterns:
-        if fnmatch.fnmatch(basename, pattern) or fnmatch.fnmatch(norm_path, pattern):
+        pat = pattern.lower() if is_win else pattern
+        if fnmatch.fnmatch(target_base, pat) or fnmatch.fnmatch(target_path, pat):
             return _finding(
                 "denied_patterns",
                 "critical",
@@ -514,6 +539,14 @@ def findings_at_or_above(
 _FILE_ACTIONS = frozenset({"read", "write", "filesystem"})
 
 
+def _looks_like_path(val: str) -> bool:
+    return (
+        val.startswith(("/", "./", "../", "~"))
+        or "\\" in val
+        or bool(_WINDOWS_DRIVE_RE.match(val))
+    )
+
+
 def as_authorize_rule(
     config: PathSecurityConfig | None = None,
     *,
@@ -529,8 +562,21 @@ def as_authorize_rule(
     cfg = config or PathSecurityConfig()
 
     def _rule(request: ToolRequest) -> RuleVerdict | None:
-        if request.action not in actions or not request.resource:
+        if not request.resource:
             return None
+
+        is_targeted_action = request.action in actions or (
+            request.action == "unknown" and _looks_like_path(request.resource)
+        )
+        if not is_targeted_action:
+            return None
+
+        if len(request.resource) > 4096 or request.resource.endswith("...<truncated>"):
+            return RuleVerdict(
+                rule_id="path_security",
+                decision=cfg.decision,
+                reason="resource path exceeds maximum length or is truncated",
+            )
 
         hits = findings_at_or_above(
             inspect_path(request.resource, cfg),
