@@ -64,6 +64,13 @@ def _read_all(sock):
     return b"".join(chunks)
 
 
+def _require_ml_extra():
+    """The ESN detectors live in snagline.ml, which needs the optional 'ml'
+    extra (numpy). Guard them so this batch runs on the core matrix legs and
+    skips cleanly there; the dedicated ML leg exercises them for real."""
+    pytest.importorskip("numpy", reason="ml extra (numpy) not installed")
+
+
 def test_664_bad_content_length_on_an_unsupported_method_answers_once():
     """``_parse_content_length`` answers 400 itself; ``_method_not_allowed``
     must not write a second status line behind it."""
@@ -134,11 +141,18 @@ def test_665_baseline_plain_fit_path_still_exits_2_too():
 # ---------------------------------------------------------------- #666 ----
 
 
-def test_666_serve_reports_a_bind_failure_without_a_traceback():
-    """192.0.2.1 is TEST-NET-1: no host can bind it, so make_server raises
-    OSError. The banner already printed, so the failure must surface as a
-    one-line diagnostic and a non-zero exit -- not a traceback."""
-    code, err = _run(["serve", "--host", "192.0.2.1", "--port", "0"])
+def test_666_serve_reports_a_bind_failure_without_a_traceback(monkeypatch):
+    """The banner already printed, so a bind failure must surface as a
+    one-line diagnostic and a non-zero exit -- not a traceback. The listener
+    is stubbed to raise OSError, so the test depends on no host networking
+    and no occupied port."""
+    import snagline.server.http_server as http_server
+
+    def _unbindable(*args: object, **kwargs: object) -> object:
+        raise OSError("cannot assign requested address")
+
+    monkeypatch.setattr(http_server, "make_server", _unbindable)
+    code, err = _run(["serve", "--host", "127.0.0.1", "--port", "0"])
     assert code != 0, "bind failure must not exit 0"
     assert "Traceback" not in err
     assert "cannot start listener" in err
@@ -155,8 +169,10 @@ def test_667_the_bearer_scheme_token_is_case_insensitive():
         for scheme in ("bearer", "BEARER", "Bearer"):
             sock = socket.create_connection(("127.0.0.1", port), timeout=10)
             try:
+                # /health is deliberately open, so only /metrics actually
+                # reaches the Authorization gate this test is about.
                 sock.sendall(
-                    f"GET /health HTTP/1.0\r\nHost: localhost\r\n"
+                    f"GET /metrics HTTP/1.0\r\nHost: localhost\r\n"
                     f"Authorization: {scheme} sekret\r\n\r\n".encode()
                 )
                 response = _read_all(sock)
@@ -246,6 +262,7 @@ def test_669_load_state_keeps_the_episode_readout_and_context():
     """A restored episode must keep the readout it had already solved and the
     pre-advance context its next prediction is judged from -- not be pushed
     back into warm-up to relearn from the live stream."""
+    _require_ml_extra()
     from snagline.ml.esn_ensemble import EsnCusumDetector
 
     d = EsnCusumDetector(baseline=_profile(), warmup_steps=20)
@@ -269,6 +286,7 @@ def test_669_a_restored_episode_scores_without_rewarming():
     """End-to-end shape of the defect: without refitting, a short anomaly
     must still register on the restored detector instead of being swallowed
     by a restart into warm-up."""
+    _require_ml_extra()
     from snagline.ml.esn_ensemble import EsnCusumDetector
 
     d = EsnCusumDetector(baseline=_profile(), warmup_steps=20)
@@ -292,10 +310,15 @@ def test_669_a_restored_episode_scores_without_rewarming():
 def test_670_the_mahalanobis_score_saturates_instead_of_going_nan():
     """An overflowing z-score must saturate at 1.0, not produce a NaN that
     ``max()`` silently discards."""
+    _require_ml_extra()
     from snagline.events import StepEvent
     from snagline.ml.esn_ensemble import EsnCusumDetector
 
     d = EsnCusumDetector(baseline=_profile())
+    # The score is per-episode (it consults the episode's unseen-tool latch),
+    # so the episode state must exist; one observe creates it.
+    d.observe(_ev(0))
+    st = d._episodes["ep1"]
     for lat in (1e100, 1e308, float("inf")):
         ev = StepEvent(
             step_id="s1",
@@ -307,15 +330,18 @@ def test_670_the_mahalanobis_score_saturates_instead_of_going_nan():
             latency_ms=lat,
             error=False,
         )
-        assert d._mahalanobis_score(ev) == pytest.approx(1.0), lat
+        assert d._mahalanobis_score(st, ev) == pytest.approx(1.0), lat
 
 
 def test_670_a_finite_latency_still_scores_below_one():
     """The saturation must not flatten the normal range into its cap."""
+    _require_ml_extra()
     from snagline.events import StepEvent
     from snagline.ml.esn_ensemble import EsnCusumDetector
 
     d = EsnCusumDetector(baseline=_profile())
+    d.observe(_ev(0))
+    st = d._episodes["ep1"]
     ev = StepEvent(
         step_id="s1",
         episode_id="ep1",
@@ -326,5 +352,5 @@ def test_670_a_finite_latency_still_scores_below_one():
         latency_ms=200.0,
         error=False,
     )
-    score = d._mahalanobis_score(ev)
+    score = d._mahalanobis_score(st, ev)
     assert 0.0 < score < 1.0
