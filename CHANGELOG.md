@@ -1289,6 +1289,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   trigger name exceeds the hardcoded 16-character column width
   (`side_effect_duplicate` is 21).
 
+### Documentation
+- The README now documents the two self-observability surfaces it had been
+  quoting only incidentally: `Monitor.metrics()`'s eight keys
+  (`events_ingested`, `events_dropped`, `risks_emitted`, `detector_errors`,
+  `sink_errors`, `policy_errors`, `live_episodes`, `retained_episodes`) in
+  the Python API table, and all eleven `GET /metrics` Prometheus series in a
+  new table under the HTTP sidecar section, including `GET /metrics` in the
+  endpoint list where it was missing. A new
+  `tests/test_readme_metrics.py` parses both out of the README and compares
+  them against a live `render_prometheus()` render and `Monitor.metrics()`
+  itself, so a series or key added to the code must be documented or the
+  suite fails (#616).
+
 ## [0.1.0] - 2026-08-27
 
 This is the first tagged release. It comprises 87 merge commits on `origin/master`
