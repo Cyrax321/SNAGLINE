@@ -55,11 +55,33 @@ from snagline.adapters.langgraph_adapter import watch_graph
 from snagline.adapters.autogen import SnaglineAutogenHandler
 from snagline.adapters.crewai import snagline_step_callback
 from snagline.adapters.continuum_adapter import ContinuumAdapter
+from snagline.adapters.claude_code import (
+    HookTracker,
+    ingest_payload,
+    payload_to_event,
+)
 ```
 
 Each adapter maps the framework's native callback/hook into a `StepEvent` and
 hands it to a `Monitor`. They are duck-typed so they work without the
 framework installed at import time.
+
+**Claude Code** is the one adapter with a different usage shape, because
+Claude Code is not a Python library: it is a separate process that invokes a
+hook command once per lifecycle event, so the bridge receives one JSON
+payload per invocation rather than a callback object. `ingest_payload(monitor,
+payload, tracker)` covers the simple case — it maps the payload to a
+`StepEvent`, hands it to the `Monitor`, and advances the tracker in one call.
+`HookTracker` is what makes `latency_ms` real: a single hook payload carries
+no duration, and only pairing a `PreToolUse` with its `PostToolUse` over
+their shared `tool_use_id` yields one. Map first and note afterwards (`note`
+retires the paired start, so noting before mapping loses the latency
+entirely, issue #64). For most hosts the wiring is already done elsewhere —
+`snagline hook` as a `PreToolUse`/`PostToolUse` hook (its `--out`/`--url`
+output preserves `side_effect`/`metadata`, issue #226) or the sidecar's
+`POST /hooks/claude-code` endpoint, which shares one `HookTracker` across its
+handler threads and needs no import at all. Reach for `payload_to_event` only
+when mapping and ingesting by hand.
 
 The CONTINUUM adapter watches an existing run's hash-chained ledger
 (`PERCEPTION_OBSERVED`, `BRANCH_RESOLVED`, action claim/complete/reconcile/

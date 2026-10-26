@@ -1289,6 +1289,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   trigger name exceeds the hardcoded 16-character column width
   (`side_effect_duplicate` is 21).
 
+### Documentation
+- `docs/INTEGRATION_MATRIX.md` now imports `adapters.claude_code` in its
+  framework-adapter code block, which listed the module in its table but left
+  it out of the imports, so `HookTracker`, `ingest_payload`, and
+  `payload_to_event` appeared in no import example anywhere in the docs. A
+  new paragraph explains the pairing usage shape — a single hook payload
+  carries no duration, and only matching a `PreToolUse` with its
+  `PostToolUse` over `tool_use_id` yields a `latency_ms` — and points at
+  `snagline hook` and the sidecar's `POST /hooks/claude-code` for hosts that
+  want the wiring done for them (#618).
+
 ## [0.1.0] - 2026-08-27
 
 This is the first tagged release. It comprises 87 merge commits on `origin/master`
