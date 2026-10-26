@@ -1289,6 +1289,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   trigger name exceeds the hardcoded 16-character column width
   (`side_effect_duplicate` is 21).
 
+### Documentation
+- Added `CONTRIBUTING.md` at the repo root: setup from a clean clone, the CI
+  gates with their exact local commands and real output on master, test
+  conventions, the issue bar the tracker actually holds (reproduced against
+  current `master` with `file:line` and real output), the good-first-issue
+  workflow, and what a pull request is expected to carry. `README.md` links
+  it from Contributing, and its setup block now runs `mypy src tests`:
+  CI type-checks tests, so the documented `mypy src` passed locally and
+  failed CI (#617).
+
 ## [0.1.0] - 2026-08-27
 
 This is the first tagged release. It comprises 87 merge commits on `origin/master`
