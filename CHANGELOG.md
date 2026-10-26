@@ -1289,6 +1289,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   trigger name exceeds the hardcoded 16-character column width
   (`side_effect_duplicate` is 21).
 
+### Fixed
+- `examples/real_agent_executor_demo.py --mode error` now fires
+  `error_cascade` instead of crashing with the tool's `RuntimeError`. The
+  demo ran a real `create_agent` graph whose `ToolNode` re-raises any plain
+  tool exception straight out of the graph, so the run died on the *first*
+  failing call, `on_tool_error` was never dispatched to the handler, and no
+  error event reached the Monitor -- while the demo announced
+  `error_cascade` and `tests/real_world_test.sh` section 5 asserted it.
+  Failures are now surfaced through langchain's `ToolErrorMiddleware` as
+  error `ToolMessage`s: the run survives each failure and `on_tool_error`
+  still fires per call (LangChain dispatches it inside `BaseTool.run`, before
+  the ToolNode sees the exception), so consecutive failures accumulate and
+  the cascade trips on the default window. Skip-guarded regression tests run
+  the demo's error, healthy, and loop modes where langchain is installed (#614).
+
 ## [0.1.0] - 2026-08-27
 
 This is the first tagged release. It comprises 87 merge commits on `origin/master`

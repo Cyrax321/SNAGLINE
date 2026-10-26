@@ -16,7 +16,10 @@ Modes (which detector each one is meant to trip):
 
     healthy   -> expect SILENCE (false-positive check)
     loop      -> loop detector (agent repeats the same tool call)
-    error     -> error_cascade (tool always raises)
+    error     -> error_cascade (tool always raises; failures are handed back
+                 to the agent as error ToolMessages by ToolErrorMiddleware,
+                 so the run survives the first failure and consecutive
+                 failures accumulate)
     latency   -> latency_anomaly (a tool's latency shifts from fast to slow)
 
 Requires: pip install langchain  (and snagline[langchain])
@@ -51,10 +54,31 @@ try:
     from langchain_core.messages import AIMessage
     from langchain_core.tools import Tool
     from langchain.agents import create_agent
+    from langchain.agents.middleware import ToolErrorMiddleware
 
     LANGCHAIN_AGENT_AVAILABLE = True
 except Exception:  # pragma: no cover - exercised only without langchain
     LANGCHAIN_AGENT_AVAILABLE = False
+
+
+def _surface_tool_error(exc: Exception, request: object) -> str | None:
+    """``ToolErrorMiddleware`` hook: hand a failed tool call back to the agent.
+
+    Why this hook exists at all (issue #614): LangGraph's ``ToolNode`` re-raises
+    any plain exception -- ``RuntimeError`` here -- straight out of the graph,
+    so the run dies on the *first* failing tool call, ``on_tool_error`` is
+    never dispatched to the handler, and no error event reaches the Monitor.
+    Returning content converts the exception into a ``ToolMessage`` with
+    ``status="error"`` instead: the run keeps going and the agent sees each
+    failure, while ``on_tool_error`` still fires per call (LangChain dispatches
+    it inside ``BaseTool.run``, before the ToolNode ever sees the exception),
+    so the cascade detector observes every failure in the run rather than
+    dying with the first one.
+
+    The middleware's own guidance: name the exception *type*, not the raw
+    message, which can carry internal detail.
+    """
+    return f"{type(exc).__name__} surfaced from {getattr(request, 'tool_call', {}).get('name', 'tool')}"
 
 
 class _FakeToolCallingModel(FakeMessagesListChatModel):
@@ -158,7 +182,14 @@ def main() -> None:
     handler = SnaglineCallbackHandler(monitor, f"exec-{args.mode}")
 
     model = _build_fake_model(args.mode)
-    agent = create_agent(model=model, tools=TOOLS)
+    agent = create_agent(
+        model=model,
+        tools=TOOLS,
+        # Inert for every mode but ``error``: surfacing failures as messages is
+        # what lets the run survive the first failing tool call so the cascade
+        # can accumulate (see _surface_tool_error, issue #614).
+        middleware=[ToolErrorMiddleware(_surface_tool_error)],
+    )
 
     print(f"[demo] mode={args.mode!r} -> expected: {_expected(args.mode)}")
     print("[demo] running a REAL create_agent (LangGraph) agent with the handler attached...")
