@@ -340,14 +340,22 @@ def scan_text(
     return matches
 
 
+_MAX_TRAVERSAL_DEPTH = 32
+
+
 def inspect_payload(
     payload: Any,
     config: DlpSecurityConfig | None = None,
     *,
     path: str = "",
     extra_rules: Sequence[tuple[str, DlpRuleFn]] = (),
+    max_depth: int = _MAX_TRAVERSAL_DEPTH,
+    _seen: set[int] | None = None,
 ) -> tuple[DlpFinding, ...]:
     """Recursively scan an arbitrary payload (string, dict, list) for DLP hits."""
+    if max_depth <= 0:
+        return ()
+
     cfg = config or DlpSecurityConfig()
     findings: list[DlpFinding] = []
 
@@ -370,27 +378,47 @@ def inspect_payload(
                 )
             )
     elif isinstance(payload, Mapping):
-        for k, v in list(payload.items()):
-            sub_path = f"{path}.{k}" if path else str(k)
-            findings.extend(
-                inspect_payload(
-                    v,
-                    cfg,
-                    path=sub_path,
-                    extra_rules=extra_rules,
+        seen = _seen if _seen is not None else set()
+        obj_id = id(payload)
+        if obj_id in seen:
+            return ()
+        seen.add(obj_id)
+        try:
+            for k, v in list(payload.items()):
+                sub_path = f"{path}.{k}" if path else str(k)
+                findings.extend(
+                    inspect_payload(
+                        v,
+                        cfg,
+                        path=sub_path,
+                        extra_rules=extra_rules,
+                        max_depth=max_depth - 1,
+                        _seen=seen,
+                    )
                 )
-            )
+        finally:
+            seen.remove(obj_id)
     elif isinstance(payload, (list, tuple, set, frozenset)):
-        for idx, item in enumerate(payload):
-            sub_path = f"{path}[{idx}]" if path else f"[{idx}]"
-            findings.extend(
-                inspect_payload(
-                    item,
-                    cfg,
-                    path=sub_path,
-                    extra_rules=extra_rules,
+        seen = _seen if _seen is not None else set()
+        obj_id = id(payload)
+        if obj_id in seen:
+            return ()
+        seen.add(obj_id)
+        try:
+            for idx, item in enumerate(payload):
+                sub_path = f"{path}[{idx}]" if path else f"[{idx}]"
+                findings.extend(
+                    inspect_payload(
+                        item,
+                        cfg,
+                        path=sub_path,
+                        extra_rules=extra_rules,
+                        max_depth=max_depth - 1,
+                        _seen=seen,
+                    )
                 )
-            )
+        finally:
+            seen.remove(obj_id)
 
     return tuple(findings)
 
@@ -431,22 +459,92 @@ def redact_payload(
     config: DlpSecurityConfig | None = None,
     *,
     mask: str | None = None,
+    max_depth: int = _MAX_TRAVERSAL_DEPTH,
+    _seen: set[int] | None = None,
 ) -> Any:
     """Recursively redact sensitive data from nested mappings and lists."""
+    if max_depth <= 0:
+        return "<truncated>"
+
     cfg = config or DlpSecurityConfig()
 
     if isinstance(payload, str):
         return redact_text(payload, cfg, mask=mask)
     if isinstance(payload, Mapping):
-        return {k: redact_payload(v, cfg, mask=mask) for k, v in payload.items()}
+        seen = _seen if _seen is not None else set()
+        obj_id = id(payload)
+        if obj_id in seen:
+            return "<cyclic>"
+        seen.add(obj_id)
+        try:
+            return {
+                k: redact_payload(
+                    v, cfg, mask=mask, max_depth=max_depth - 1, _seen=seen
+                )
+                for k, v in payload.items()
+            }
+        finally:
+            seen.remove(obj_id)
     if isinstance(payload, tuple):
-        return tuple(redact_payload(item, cfg, mask=mask) for item in payload)
+        seen = _seen if _seen is not None else set()
+        obj_id = id(payload)
+        if obj_id in seen:
+            return "<cyclic>"
+        seen.add(obj_id)
+        try:
+            return tuple(
+                redact_payload(
+                    item, cfg, mask=mask, max_depth=max_depth - 1, _seen=seen
+                )
+                for item in payload
+            )
+        finally:
+            seen.remove(obj_id)
     if isinstance(payload, list):
-        return [redact_payload(item, cfg, mask=mask) for item in payload]
+        seen = _seen if _seen is not None else set()
+        obj_id = id(payload)
+        if obj_id in seen:
+            return "<cyclic>"
+        seen.add(obj_id)
+        try:
+            return [
+                redact_payload(
+                    item, cfg, mask=mask, max_depth=max_depth - 1, _seen=seen
+                )
+                for item in payload
+            ]
+        finally:
+            seen.remove(obj_id)
     if isinstance(payload, frozenset):
-        return frozenset(redact_payload(item, cfg, mask=mask) for item in payload)
+        seen = _seen if _seen is not None else set()
+        obj_id = id(payload)
+        if obj_id in seen:
+            return "<cyclic>"
+        seen.add(obj_id)
+        try:
+            return frozenset(
+                redact_payload(
+                    item, cfg, mask=mask, max_depth=max_depth - 1, _seen=seen
+                )
+                for item in payload
+            )
+        finally:
+            seen.remove(obj_id)
     if isinstance(payload, set):
-        return {redact_payload(item, cfg, mask=mask) for item in payload}
+        seen = _seen if _seen is not None else set()
+        obj_id = id(payload)
+        if obj_id in seen:
+            return "<cyclic>"
+        seen.add(obj_id)
+        try:
+            return {
+                redact_payload(
+                    item, cfg, mask=mask, max_depth=max_depth - 1, _seen=seen
+                )
+                for item in payload
+            }
+        finally:
+            seen.remove(obj_id)
     return payload
 
 

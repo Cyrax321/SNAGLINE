@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from snagline.authorize import (
@@ -527,3 +529,43 @@ def test_secrets_integration_retains_distinct_signatures() -> None:
     signatures = [f.value_signature for f in secret_findings]
     assert len(set(signatures)) == 2
     assert all(len(sig) == 64 for sig in signatures)
+
+
+def test_inspect_and_redact_payload_cyclic_containers() -> None:
+    """Issue #679: inspect_payload and redact_payload must not raise RecursionError on cycles."""
+    d: dict[str, Any] = {"info": "test@example.com"}
+    d["self"] = d
+    lst: list[Any] = ["123-45-6789"]
+    lst.append(lst)
+    d["cyclic_list"] = lst
+
+    # Inspection must finish cleanly and find sensitive values without infinite loop
+    findings = inspect_payload(d)
+    rule_ids = {f.rule_id for f in findings}
+    assert "email_address" in rule_ids
+    assert "us_ssn" in rule_ids
+
+    # Redaction must truncate cycles gracefully without RecursionError
+    redacted = redact_payload(d)
+    assert redacted["info"] == "[REDACTED:email_address]"
+    assert redacted["self"] == "<cyclic>"
+    assert redacted["cyclic_list"][0] == "[REDACTED:us_ssn]"
+    assert redacted["cyclic_list"][1] == "<cyclic>"
+
+
+def test_inspect_and_redact_payload_deeply_nested() -> None:
+    """Issue #679: deeply nested containers beyond max_depth are bounded gracefully."""
+    curr: Any = "user@example.com"
+    for _ in range(50):
+        curr = [curr]
+
+    # Must not raise RecursionError
+    findings = inspect_payload(curr, max_depth=10)
+    assert findings == ()
+
+    redacted = redact_payload(curr, max_depth=10)
+    # At depth 10, recursion stops and returns truncation marker
+    for _ in range(10):
+        assert isinstance(redacted, list)
+        redacted = redacted[0]
+    assert redacted == "<truncated>"
