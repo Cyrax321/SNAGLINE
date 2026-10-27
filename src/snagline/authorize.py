@@ -73,6 +73,8 @@ VALID_PROFILES = frozenset({PROFILE_FAIL_CLOSED, PROFILE_PERMISSIVE, "strict"})
 #: it just arrives with ``action="unknown"``.
 _TOOL_RESOURCES: dict[str, tuple[tuple[str, ...], str]] = {
     "Bash": (("command",), "execute"),
+    "bash": (("command",), "execute"),
+    "sh": (("command",), "execute"),
     "Read": (("file_path",), "read"),
     "Write": (("file_path",), "write"),
     "Edit": (("file_path",), "write"),
@@ -161,6 +163,8 @@ class ToolRequest:
             if isinstance(raw_agent, str) and raw_agent.strip():
                 agent_id = raw_agent.strip()
         known = _TOOL_RESOURCES.get(tool_name)
+        if known is None and isinstance(tool_name, str):
+            known = _TOOL_RESOURCES.get(tool_name.capitalize())
         if known is None:
             return cls(
                 tool_name=tool_name,

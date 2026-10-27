@@ -299,7 +299,17 @@ def findings_at_or_above(
     return tuple(f for f in findings if _SEVERITY_RANK[f.severity] >= floor)
 
 
-def as_authorize_rule(config: ShellThreatConfig | None = None):
+_EXECUTION_ACTIONS = frozenset({"execute"})
+_EXECUTION_TOOL_NAMES = frozenset(
+    {"bash", "sh", "terminal", "exec", "cmd", "shell", "powershell", "execute_code"}
+)
+
+
+def as_authorize_rule(
+    config: ShellThreatConfig | None = None,
+    *,
+    actions: frozenset[str] = _EXECUTION_ACTIONS,
+):
     """Build a ``snagline.authorize.Rule`` from shell threat findings.
 
     Lazy-imports authorize so this module stays usable without pulling the
@@ -310,8 +320,23 @@ def as_authorize_rule(config: ShellThreatConfig | None = None):
     cfg = config or ShellThreatConfig()
 
     def _rule(request: ToolRequest) -> RuleVerdict | None:
-        if request.action != "execute" or not request.resource:
+        if not request.resource:
             return None
+
+        is_execution = (
+            request.action in actions
+            or (
+                isinstance(request.tool_name, str)
+                and request.tool_name.lower() in _EXECUTION_TOOL_NAMES
+            )
+            or (
+                request.action == "unknown"
+                and ("command" in request.tool_input or "cmd" in request.tool_input)
+            )
+        )
+        if not is_execution:
+            return None
+
         hits = findings_at_or_above(
             inspect_command(request.resource, cfg),
             cfg.min_severity,
