@@ -340,6 +340,15 @@ def scan_text(
     return matches
 
 
+def _payload_item_sort_key(item: Any) -> tuple[str, str]:
+    """Stable sort key for unordered collection members (sets/frozensets)."""
+    try:
+        s = str(item)
+    except Exception:
+        s = repr(item)
+    return (type(item).__name__, s)
+
+
 def inspect_payload(
     payload: Any,
     config: DlpSecurityConfig | None = None,
@@ -380,8 +389,19 @@ def inspect_payload(
                     extra_rules=extra_rules,
                 )
             )
-    elif isinstance(payload, (list, tuple, set, frozenset)):
+    elif isinstance(payload, (list, tuple)):
         for idx, item in enumerate(payload):
+            sub_path = f"{path}[{idx}]" if path else f"[{idx}]"
+            findings.extend(
+                inspect_payload(
+                    item,
+                    cfg,
+                    path=sub_path,
+                    extra_rules=extra_rules,
+                )
+            )
+    elif isinstance(payload, (set, frozenset)):
+        for idx, item in enumerate(sorted(payload, key=_payload_item_sort_key)):
             sub_path = f"{path}[{idx}]" if path else f"[{idx}]"
             findings.extend(
                 inspect_payload(
