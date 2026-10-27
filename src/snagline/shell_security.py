@@ -312,6 +312,12 @@ def as_authorize_rule(config: ShellThreatConfig | None = None):
     def _rule(request: ToolRequest) -> RuleVerdict | None:
         if request.action != "execute" or not request.resource:
             return None
+        if len(request.resource) > 4096 or request.resource.endswith("...<truncated>"):
+            return RuleVerdict(
+                rule_id="shell_threats",
+                decision=cfg.decision,
+                reason="command exceeds maximum length or is truncated",
+            )
         hits = findings_at_or_above(
             inspect_command(request.resource, cfg),
             cfg.min_severity,
