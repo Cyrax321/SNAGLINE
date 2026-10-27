@@ -30,6 +30,11 @@ Pattern-based secret detection has inherent limitations:
 4. False positives: Synthetic test fixtures, example documentation strings
    (such as placeholder keys), or random hashes sharing pattern shapes may
    trigger detection.
+5. Whole-match redaction for group-less rules: ``private_key`` and
+   ``database_connection_uri`` have no captured credential group, so
+   ``redact_secrets`` replaces their entire match -- for a connection URI
+   that includes the scheme and host, not just the embedded password. Rules
+   that do capture the credential in group 1 replace only that group.
 
 For defense in depth, combine pattern inspection with secret scanning at the
 repository, CI, and identity-provider levels.
@@ -218,14 +223,27 @@ def _scan_matches(
             continue
         sev = cfg.severity_overrides.get(rule_id, default_sev)
         for m in pattern.finditer(text):
-            # If there is a capture group, use group 1 as the secret; otherwise entire match
-            raw_secret = m.group(1) if m.groups() else m.group(0)
+            # The span is the captured group when the pattern defines one
+            # (issue #697): for ``uri_basic_auth`` and
+            # ``generic_credential_assignment`` group 1 is the credential and
+            # the rest of the match -- URL scheme and userinfo separator, or
+            # the key name and its quotes -- is context that redaction must
+            # keep. A group that did not participate (``None``) and group-less
+            # rules such as ``private_key`` fall back to the whole match, so
+            # the span always covers exactly the text ``raw_secret`` -- and
+            # therefore the text ``secret_signature`` is computed over.
+            if pattern.groups and m.group(1) is not None:
+                start, end = m.span(1)
+                raw_secret = m.group(1)
+            else:
+                start, end = m.span(0)
+                raw_secret = m.group(0)
             matches.append(
                 SecretMatch(
                     rule_id=rule_id,
                     severity=sev,
-                    start=m.start(),
-                    end=m.end(),
+                    start=start,
+                    end=end,
                     raw_secret=raw_secret,
                     match_type=desc,
                 )
@@ -378,6 +396,14 @@ def redact_secrets(
 
     If ``mask`` is ``None``, defaults to ``"[REDACTED:{rule_id}]"``.
     Preserves surrounding text and non-secret structure.
+
+    The redacted span is the secret itself, not the whole pattern match
+    (issue #697): rules whose pattern captures the credential in group 1
+    (``uri_basic_auth``, ``generic_credential_assignment``) replace only the
+    captured value, leaving the URL scheme, the userinfo separator, and the
+    key name in place. Group-less rules (``private_key``,
+    ``database_connection_uri``) have no separate credential group and
+    replace the whole match.
     """
     if not isinstance(text, str) or not text:
         return text

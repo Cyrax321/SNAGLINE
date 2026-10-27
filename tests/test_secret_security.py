@@ -17,6 +17,7 @@ from snagline.secret_security import (
     SecretFinding,
     SecretMatch,
     SecretSecurityConfig,
+    _scan_matches,
     as_authorize_rule,
     findings_at_or_above,
     inspect_text,
@@ -347,6 +348,51 @@ def test_redact_secrets_literal_braces_in_mask() -> None:
     assert redacted == "key is {CUSTOM_TAG}:aws_access_key"
 
 
+def test_redact_uri_basic_auth_replaces_only_the_captured_secret() -> None:
+    # Issue #697: the span was the whole match, so the redaction also deleted
+    # the https:// scheme and the userinfo separator -- text that is not a
+    # credential and that the audit signature (computed over group 1) does
+    # not cover.
+    raw = "curl https://alice:SuperSecret123@api.example.com/v1/data"
+    assert redact_secrets(raw) == (
+        "curl https://alice:[REDACTED:uri_basic_auth]@api.example.com/v1/data"
+    )
+
+
+def test_redact_generic_assignment_keeps_the_key_name() -> None:
+    # The match includes the key name; erasing the whole assignment left an
+    # operator unable to tell *which* credential had been redacted (#697).
+    assert redact_secrets('db_password = "hunter2hunter2"') == (
+        'db_password = "[REDACTED:generic_credential_assignment]"'
+    )
+
+
+def test_groupless_rules_still_redact_the_whole_match() -> None:
+    # private_key and database_connection_uri have no captured credential
+    # group, so their whole match is the secret-bearing text and the whole
+    # match is replaced -- the documented group-less contract in the
+    # module's LIMITATIONS block.
+    uri = "postgres://alice:hunter2xyz@db.internal:5432/app"
+    assert redact_secrets(uri) == "[REDACTED:database_connection_uri]"
+    pem = (
+        "lead -----BEGIN RSA PRIVATE KEY-----\nAAAA\n-----END RSA PRIVATE KEY----- tail"
+    )
+    assert redact_secrets(pem) == "lead [REDACTED:private_key] tail"
+
+
+def test_match_span_covers_exactly_the_captured_secret() -> None:
+    # The span must cover exactly the text raw_secret holds: the audit
+    # signature is computed over raw_secret, so a wider span is a
+    # span/signature inconsistency (issue #697).
+    text = "curl https://alice:SuperSecret123@api.example.com/"
+    hit = next(
+        m
+        for m in _scan_matches(text, SecretSecurityConfig())
+        if m.rule_id == "uri_basic_auth"
+    )
+    assert text[hit.start : hit.end] == hit.raw_secret == "SuperSecret123"
+
+
 def test_redact_mapping_nested_containers() -> None:
     data = {
         "user": "alice",
@@ -475,6 +521,8 @@ def test_limitations_clearly_documented() -> None:
     assert "Encoded secrets" in doc
     assert "Split" in doc or "constructed" in doc
     assert "Unseen" in doc or "proprietary" in doc
+    # Issue #697: the group-less redaction contract is documented, not implicit.
+    assert "group-less" in doc
 
 
 def test_edge_cases_and_coverage_branches() -> None:

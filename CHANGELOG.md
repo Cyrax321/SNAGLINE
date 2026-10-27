@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `redact_secrets` now replaces the captured credential instead of the whole
+  regex match. For `uri_basic_auth` and `generic_credential_assignment` the
+  pattern captures the secret in group 1, but the redaction span was the full
+  match, so `https://alice:SuperSecret123@api.example.com/` lost its scheme and
+  separator (`curl [REDACTED:uri_basic_auth]api.example.com/`) and
+  `db_password = "hunter2hunter2"` was erased whole -- an operator could not
+  tell which credential had gone. It now redacts exactly the captured secret
+  (`curl https://alice:[REDACTED:uri_basic_auth]@api.example.com/`,
+  `db_password = "[REDACTED:generic_credential_assignment]"`), which also makes
+  the redacted span the same text the `secret_signature` digest is computed
+  over. Group-less rules (`private_key`, `database_connection_uri`) have no
+  separate credential group and keep replacing the whole match, now stated in
+  the module's LIMITATIONS block (#697).
 - `policy_from_dict` now rejects an unknown key inside a rule entry and a missing
   `patterns`/`tools` list with a `PolicyError` naming `rules[i].<key>`. Before, a
   typo'd key was ignored and the rule was built with an empty list: a deny rule
