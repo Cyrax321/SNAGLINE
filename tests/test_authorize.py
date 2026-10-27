@@ -559,6 +559,22 @@ def test_oversized_structural_values_are_truncated() -> None:
     assert request.tool_input["file_path"] == resource
 
 
+def test_is_truncated_or_oversized_helper_and_property() -> None:
+    from snagline.authorize import is_truncated_or_oversized
+
+    assert not is_truncated_or_oversized("safe string")
+    assert not is_truncated_or_oversized({"key": "value"})
+    assert is_truncated_or_oversized("long" * 2000)
+    assert is_truncated_or_oversized("data...<truncated>")
+    assert is_truncated_or_oversized({"args": ["ok", "val...<truncated>"]})
+
+    req_clean = ToolRequest(tool_name="Tool", tool_input={"a": "normal"})
+    assert not req_clean.is_truncated
+
+    req_trunc = ToolRequest(tool_name="Tool", tool_input={"a": "x...<truncated>"})
+    assert req_trunc.is_truncated
+
+
 # --- config errors must not fail open ---------------------------------------
 
 

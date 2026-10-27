@@ -484,7 +484,11 @@ def as_authorize_rule(
     actions: frozenset[str] = _EGRESS_ACTIONS,
 ):
     """Build a ``snagline.authorize.Rule`` from data loss prevention findings."""
-    from snagline.authorize import RuleVerdict, ToolRequest
+    from snagline.authorize import (
+        RuleVerdict,
+        ToolRequest,
+        is_truncated_or_oversized,
+    )
 
     cfg = config or DlpSecurityConfig()
 
@@ -492,13 +496,18 @@ def as_authorize_rule(
         if request.action not in actions:
             return None
 
-        if request.resource and (
-            request.resource.endswith("...<truncated>") or len(request.resource) > 4096
-        ):
+        if request.resource and is_truncated_or_oversized(request.resource):
             return RuleVerdict(
                 rule_id="dlp",
                 decision=cfg.decision,
                 reason="resource exceeds maximum length or is truncated",
+            )
+
+        if request.tool_input and is_truncated_or_oversized(request.tool_input):
+            return RuleVerdict(
+                rule_id="dlp",
+                decision=cfg.decision,
+                reason="tool_input exceeds maximum length or is truncated",
             )
 
         # Inspect tool_input as payload; also inspect resource if present

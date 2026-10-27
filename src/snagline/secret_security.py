@@ -478,18 +478,26 @@ def as_authorize_rule(config: SecretSecurityConfig | None = None):
 
     Scans both ``request.resource`` and any string values in ``request.tool_input``.
     """
-    from snagline.authorize import RuleVerdict, ToolRequest
+    from snagline.authorize import (
+        RuleVerdict,
+        ToolRequest,
+        is_truncated_or_oversized,
+    )
 
     cfg = config or SecretSecurityConfig()
 
     def _rule(request: ToolRequest) -> RuleVerdict | None:
-        if request.resource and (
-            request.resource.endswith("...<truncated>") or len(request.resource) > 4096
-        ):
+        if request.resource and is_truncated_or_oversized(request.resource):
             return RuleVerdict(
                 rule_id="secret_exposure",
                 decision=cfg.decision,
                 reason="resource exceeds maximum length or is truncated",
+            )
+        if request.tool_input and is_truncated_or_oversized(request.tool_input):
+            return RuleVerdict(
+                rule_id="secret_exposure",
+                decision=cfg.decision,
+                reason="tool_input exceeds maximum length or is truncated",
             )
 
         hits: list[SecretFinding] = []
