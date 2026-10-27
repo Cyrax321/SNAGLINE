@@ -202,3 +202,46 @@ def test_windowed_first_crossing_is_graded_not_flat():
     )
     assert risks[0].score == 0.5
     assert risks[0].detail.startswith("3 errors in last")
+
+
+def test_higher_density_alarm_not_suppressed_by_lower_consecutive_alarm():
+    # Issue #703: When both consecutive_alarm and density_alarm are satisfied,
+    # the detector must pick the stronger severity band. A lower-band consecutive
+    # streak must not suppress a higher-severity density escalation.
+    d = ErrorCascadeDetector(window_size=10, error_threshold=3, consecutive_threshold=3)
+
+    # Steps 1-6: 6 consecutive errors -> fires at 0.5 (step 3) and escalates to 0.8 (step 6)
+    fires = [d.observe(_event(i, True)) for i in range(1, 7)]
+    escalations = [r for r in fires if r is not None]
+    assert len(escalations) == 2
+    assert escalations[0].score == 0.5
+    assert escalations[0].detail == "3 consecutive errors"
+    assert escalations[1].score == 0.8
+    assert escalations[1].detail == "6 consecutive errors"
+
+    # Step 7: clean step -> consecutive resets to 0, total errors in window is 6
+    assert d.observe(_event(7, False)) is None
+
+    # Steps 8-9: 2 errors -> consecutive=2 (no consecutive alarm), total=8 (score 0.8 <= already 0.8)
+    assert d.observe(_event(8, True)) is None
+    assert d.observe(_event(9, True)) is None
+
+    # Step 10: error -> consecutive=3 (score 0.5), total=9 in last 10 steps (ratio 9/3=3.0 -> score 1.0)
+    risk_10 = d.observe(_event(10, True))
+    assert risk_10 is not None, (
+        "deepening density alarm must not be suppressed by lower consecutive streak"
+    )
+    assert risk_10.score == 1.0
+    assert risk_10.detail == "9 errors in last 10 steps"
+
+
+def test_consecutive_alarm_preferred_when_scores_equal():
+    # When both conditions land on the same severity score, consecutive detail is preserved
+    d = ErrorCascadeDetector(window_size=10, error_threshold=3, consecutive_threshold=3)
+    # 3 consecutive errors in a window of 3: both have score 0.5
+    for i in range(2):
+        assert d.observe(_event(i, True)) is None
+    r = d.observe(_event(2, True))
+    assert r is not None
+    assert r.score == 0.5
+    assert r.detail == "3 consecutive errors"
