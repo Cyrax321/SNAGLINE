@@ -527,3 +527,29 @@ def test_secrets_integration_retains_distinct_signatures() -> None:
     signatures = [f.value_signature for f in secret_findings]
     assert len(set(signatures)) == 2
     assert all(len(sig) == 64 for sig in signatures)
+
+
+def test_redact_text_overlapping_matches_phone_and_card() -> None:
+    """Issue #691: overlapping card and phone number spans must be merged cleanly without strays."""
+    text = "card 4111111111111111 ok"
+    matches = scan_text(text)
+    rule_ids = {m.rule_id for m in matches}
+    assert "credit_card" in rule_ids
+    assert "phone_number" in rule_ids
+
+    redacted = redact_text(text)
+    assert redacted == "card [REDACTED:credit_card] ok"
+    assert "hone_number]" not in redacted
+
+    # Also test via structured redact_payload
+    payload = {"note": text}
+    redacted_payload = redact_payload(payload)
+    assert redacted_payload["note"] == "card [REDACTED:credit_card] ok"
+
+
+def test_redact_text_overlapping_spans_prefers_stronger_severity() -> None:
+    """Overlapping spans must merge and retain the rule_id of the stronger severity."""
+    # credit_card (critical) overlapping phone_number (info)
+    text = "secret: 4111111111111111"
+    redacted = redact_text(text)
+    assert redacted == "secret: [REDACTED:credit_card]"
