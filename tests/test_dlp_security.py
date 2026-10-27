@@ -483,6 +483,30 @@ def test_as_authorize_rule_rejects_truncated_resource() -> None:
     assert "truncated" in verdict.reason
 
 
+def test_as_authorize_rule_rejects_truncated_tool_input() -> None:
+    rule = as_authorize_rule()
+    tail = "4111-1111-1111-1111"
+    req_long = ToolRequest.from_tool_input(
+        "McpTool",
+        {"description": "x" * 5000 + " " + tail},
+    )
+    verdict = rule(req_long)
+    assert verdict is not None
+    assert verdict.decision == "deny"
+    assert "truncated" in verdict.reason
+
+    # Nested tool_input truncation
+    req_nested = ToolRequest(
+        tool_name="CustomHttpTool",
+        action="network",
+        tool_input={"payload": {"records": ["data...<truncated>"]}},
+    )
+    verdict_nested = rule(req_nested)
+    assert verdict_nested is not None
+    assert verdict_nested.decision == "deny"
+    assert "truncated" in verdict_nested.reason
+
+
 def test_redact_text_literal_braces_in_mask() -> None:
     text = "User SSN is 123-45-6789"
     redacted = redact_text(text, mask="{CUSTOM_TAG}:{rule_id}")

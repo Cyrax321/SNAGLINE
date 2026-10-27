@@ -134,6 +134,13 @@ class ToolRequest:
             parts.append(self.agent_id)
         return make_signature("tool_request", self.tool_name, *parts)
 
+    @property
+    def is_truncated(self) -> bool:
+        """True if the resource or any tool_input value was truncated or exceeds the length limit."""
+        return is_truncated_or_oversized(self.resource) or is_truncated_or_oversized(
+            self.tool_input
+        )
+
     @classmethod
     def from_tool_input(
         cls,
@@ -267,6 +274,33 @@ def _redact(data: Mapping[str, Any]) -> dict[str, Any]:
         else _redact_value(value, _REDACT_DEPTH)
         for key, value in data.items()
     }
+
+
+def is_truncated_or_oversized(
+    value: Any,
+    max_len: int = _MAX_RESOURCE_CHARS,
+    depth: int = _REDACT_DEPTH + 1,
+) -> bool:
+    """Check if ``value`` (or any nested string within a mapping/sequence) is truncated or exceeds ``max_len``."""
+    if depth <= 0:
+        return False
+    if isinstance(value, str):
+        return len(value) > max_len or value.endswith("...<truncated>")
+    if isinstance(value, Mapping):
+        try:
+            items = list(value.values())
+        except (RuntimeError, TypeError):
+            items = []
+        return any(is_truncated_or_oversized(v, max_len, depth - 1) for v in items)
+    if isinstance(value, (list, tuple, set, frozenset)):
+        try:
+            items = list(value)
+        except (RuntimeError, TypeError):
+            items = []
+        return any(
+            is_truncated_or_oversized(item, max_len, depth - 1) for item in items
+        )
+    return False
 
 
 def _first_str(data: Mapping[str, Any], keys: Iterable[str]) -> str | None:
