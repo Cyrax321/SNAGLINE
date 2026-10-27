@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -52,6 +53,51 @@ def test_normalize_lexical_path_with_base_dir() -> None:
         normalize_lexical_path("/etc/hosts", base_dir="/workspace/project")
         == "/etc/hosts"
     )
+
+
+def test_normalize_lexical_path_expands_tilde(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Issue #692: ~ must expand consistently and not be joined as a literal segment."""
+    fake_home = "C:/Users/alice" if os.name == "nt" else "/home/alice"
+    monkeypatch.setenv("HOME", fake_home)
+    if os.name == "nt":
+        monkeypatch.setenv("USERPROFILE", "C:\\Users\\alice")
+
+    expected = f"{fake_home}/.ssh/id_rsa"
+    # Normalizes to home without base_dir
+    assert normalize_lexical_path("~/.ssh/id_rsa") == expected
+    # With base_dir, it must NOT become base_dir/~/.ssh/id_rsa
+    assert normalize_lexical_path("~/.ssh/id_rsa", base_dir="/workspace") == expected
+    assert normalize_lexical_path("~/.ssh/id_rsa", base_dir=fake_home) == expected
+
+
+def test_allowed_roots_verdict_consistent_for_tilde_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issue #692: allowed_roots verdict must not flip depending on base_dir for tilde paths."""
+    fake_home = "C:/Users/alice" if os.name == "nt" else "/home/alice"
+    monkeypatch.setenv("HOME", fake_home)
+    if os.name == "nt":
+        monkeypatch.setenv("USERPROFILE", "C:\\Users\\alice")
+
+    for base in (None, fake_home, "/tmp"):
+        cfg = PathSecurityConfig(allowed_roots=(fake_home,), base_dir=base)
+        hits = [f.rule_id for f in inspect_path("~/.ssh/id_rsa", cfg)]
+        # ~/.ssh/id_rsa is inside fake_home, so allowed_roots must NOT fire for any base_dir
+        assert "allowed_roots" not in hits
+        # Sensitive location .ssh/id_rsa must still be detected
+        assert "sensitive_locations" in hits
+
+
+def test_unexpandable_tilde_path_not_joined_under_base_dir(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issue #692: unexpandable tilde paths must not be joined under base_dir as a literal ~ segment."""
+    unexpandable = "~nonexistent_user_xyz_12345/foo"
+    # When expanduser cannot resolve the tilde path, it returns the input unchanged
+    monkeypatch.setattr(os.path, "expanduser", lambda p: p)
+    norm = normalize_lexical_path(unexpandable, base_dir="/workspace")
+    assert not norm.startswith("/workspace/~")
+    assert norm == unexpandable
 
 
 # ---------------------------------------------------------------------------
