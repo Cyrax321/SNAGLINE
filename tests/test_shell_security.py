@@ -68,6 +68,13 @@ def test_inspect_never_calls_subprocess_or_system(
     [
         "rm -rf /tmp/x",
         "sudo rm -fr /var/tmp/y",
+        "rm -r -f /tmp/x",
+        "rm -f -r /tmp/x",
+        "rm --recursive --force /tmp/x",
+        "rm --force --recursive /tmp/x",
+        "rm -r --force /tmp/x",
+        "rm -f --recursive /tmp/x",
+        "sudo rm -r -v -f /var/log",
         "mkfs.ext4 /dev/sdb1",
         "dd if=/dev/zero of=/dev/sda bs=1M",
         "shred -u secret.bin",
@@ -80,6 +87,21 @@ def test_destructive_commands_fire(command: str) -> None:
     assert hit.rule_id == "destructive_command"
     assert hit.severity == "critical"
     assert "command" not in hit.reason.lower() or "pattern" in hit.reason
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rm file.txt",
+        "rm -f file.txt",
+        "rm -r dir",
+        "rm --force file.txt",
+        "rm --recursive dir",
+        "echo rm -r -f /",
+    ],
+)
+def test_non_destructive_rm_does_not_fire(command: str) -> None:
+    assert rule_destructive(command) is None
 
 
 @pytest.mark.parametrize(
@@ -118,12 +140,32 @@ def test_chaining_fires(command: str) -> None:
         "echo wipe > /dev/sda",
         "cat payload > /etc/passwd",
         "printf x >> /boot/grub/grub.cfg",
+        "echo 1>/etc/passwd",
+        "echo 1> /etc/passwd",
+        "echo 2>/etc/shadow",
+        "echo 2> /etc/shadow",
+        "echo &>/etc/passwd",
+        "echo &>>/boot/grub/grub.cfg",
     ],
 )
 def test_unsafe_redirect_fires(command: str) -> None:
     hit = rule_unsafe_redirect(command)
     assert hit is not None
     assert hit.severity == "critical"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo hello > /tmp/out.txt",
+        "echo hello 1> /tmp/out.txt",
+        "echo hello 2> /tmp/err.log",
+        "echo hello &> /tmp/both.log",
+        "echo 12345",
+    ],
+)
+def test_safe_redirect_does_not_fire(command: str) -> None:
+    assert rule_unsafe_redirect(command) is None
 
 
 @pytest.mark.parametrize(
