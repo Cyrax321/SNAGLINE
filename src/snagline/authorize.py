@@ -360,15 +360,30 @@ def deny_command_glob(*patterns: str) -> Rule:
     invites a pattern written for the wrong one. Matching is case-sensitive on
     every OS, like :func:`deny_resource_glob`.
     """
-    return lambda request: RuleVerdict(
-        "deny_command_glob",
-        "deny"
-        if request.action == "execute"
-        and request.resource is not None
-        and any(fnmatch.fnmatchcase(request.resource, pat) for pat in patterns)
-        else None,
-        f"command matches a denied pattern: {request.resource!r}",
-    )
+
+    def _rule(request: ToolRequest) -> RuleVerdict:
+        if request.action != "execute" or request.resource is None:
+            return RuleVerdict(
+                "deny_command_glob",
+                None,
+                f"command matches a denied pattern: {request.resource!r}",
+            )
+        if len(request.resource) > _MAX_RESOURCE_CHARS or request.resource.endswith(
+            "...<truncated>"
+        ):
+            return RuleVerdict(
+                "deny_command_glob",
+                "deny",
+                "command exceeds maximum length or is truncated",
+            )
+        matched = any(fnmatch.fnmatchcase(request.resource, pat) for pat in patterns)
+        return RuleVerdict(
+            "deny_command_glob",
+            "deny" if matched else None,
+            f"command matches a denied pattern: {request.resource!r}",
+        )
+
+    return _rule
 
 
 def allow_agent_tools(allowlists: Mapping[str, Sequence[str]]) -> Rule:

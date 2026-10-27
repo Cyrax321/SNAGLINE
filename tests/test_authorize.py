@@ -249,6 +249,15 @@ def test_deny_command_glob_only_fires_on_execute() -> None:
     assert read.decision == "allow", "a path is not a command"
 
 
+def test_deny_command_glob_rejects_truncated_command() -> None:
+    policy = Policy(rules=(deny_command_glob("rm -rf*"),))
+    cmd = "echo " + "a" * 5000 + " ; rm -rf /"
+    req = ToolRequest.from_tool_input("Bash", {"command": cmd})
+    result = policy.decide(req)
+    assert result.decision == "deny"
+    assert "truncated" in result.reason
+
+
 def test_non_matching_rule_has_no_opinion() -> None:
     policy = Policy(rules=(deny_tools("Bash"),))
     result = policy.decide(ToolRequest.from_tool_input("Read", {}))

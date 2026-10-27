@@ -248,6 +248,26 @@ def test_authorize_rule_ignores_non_execute_tools() -> None:
     assert policy.decide(req).decision == "allow"
 
 
+def test_authorize_rule_rejects_truncated_command() -> None:
+    rule = as_authorize_rule()
+    cmd = "echo " + "a" * 5000 + " ; rm -rf /"
+    req = ToolRequest.from_tool_input("Bash", {"command": cmd})
+    verdict = rule(req)
+    assert verdict is not None
+    assert verdict.decision == "deny"
+    assert "truncated" in verdict.reason
+
+    req_manual = ToolRequest(
+        tool_name="Bash",
+        action="execute",
+        resource="some_cmd...<truncated>",
+    )
+    verdict_manual = rule(req_manual)
+    assert verdict_manual is not None
+    assert verdict_manual.decision == "deny"
+    assert "truncated" in verdict_manual.reason
+
+
 def test_authorize_ask_mode_and_min_severity() -> None:
     # Chaining alone is warning; with min_severity=critical it must not fire.
     quiet = ShellThreatConfig(min_severity="critical", decision="ask")
