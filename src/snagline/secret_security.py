@@ -53,6 +53,11 @@ _SEVERITY_RANK: dict[SecretSeverity, int] = {
     "critical": 2,
 }
 
+#: Depth ceiling for container walks. Self-referential or pathologically
+#: nested tool inputs must not raise ``RecursionError`` and abort policy
+#: evaluation (issue #679); containers past this depth are skipped.
+_MAX_CONTAINER_DEPTH = 32
+
 
 @dataclass(frozen=True, slots=True)
 class SecretMatch:
@@ -311,38 +316,74 @@ def inspect_text(
     return tuple(findings)
 
 
+def scan_secret_spans(
+    text: str,
+    config: SecretSecurityConfig | None = None,
+    *,
+    extra_rules: Sequence[tuple[str, SecretRuleFn]] = (),
+) -> list[SecretMatch]:
+    """Span-bearing secret scan for callers that need match offsets.
+
+    ``inspect_text`` deliberately drops offsets (its findings must not carry
+    the raw secret), but a redactor needs ``start``/``end`` to cut the span
+    out of the text -- the DLP layer reads the offsets here (issue #677).
+    The raw secret itself stays on the ``SecretMatch`` and never reaches a
+    finding or a log line.
+    """
+    cfg = config or SecretSecurityConfig()
+    return _scan_matches(text, cfg, extra_rules)
+
+
 def inspect_tool_input(
     tool_input: Mapping[str, Any],
     config: SecretSecurityConfig | None = None,
     *,
     extra_rules: Sequence[tuple[str, SecretRuleFn]] = (),
 ) -> tuple[SecretFinding, ...]:
-    """Recursively scan string values inside ``tool_input`` for exposed secrets."""
+    """Recursively scan string values inside ``tool_input`` for exposed secrets.
+
+    Self-referential containers are cut at the cycle and containers deeper
+    than ``_MAX_CONTAINER_DEPTH`` are skipped, rather than raising
+    ``RecursionError`` mid-evaluation (issue #679).
+    """
     if not isinstance(tool_input, Mapping):
         return ()
 
     cfg = config or SecretSecurityConfig()
     findings: list[SecretFinding] = []
+    visited: set[int] = set()
 
-    def _walk(val: Any) -> None:
+    def _walk(val: Any, depth: int) -> None:
         if isinstance(val, str):
             findings.extend(inspect_text(val, cfg, extra_rules=extra_rules))
         elif isinstance(val, Mapping):
+            if depth >= _MAX_CONTAINER_DEPTH or id(val) in visited:
+                return
+            visited.add(id(val))
             try:
                 items = list(val.values())
             except (RuntimeError, TypeError):
                 items = []
-            for v in items:
-                _walk(v)
+            try:
+                for v in items:
+                    _walk(v, depth + 1)
+            finally:
+                visited.discard(id(val))
         elif isinstance(val, (list, tuple, set, frozenset)):
+            if depth >= _MAX_CONTAINER_DEPTH or id(val) in visited:
+                return
+            visited.add(id(val))
             try:
                 items = list(val)
             except (RuntimeError, TypeError):
                 items = []
-            for item in items:
-                _walk(item)
+            try:
+                for item in items:
+                    _walk(item, depth + 1)
+            finally:
+                visited.discard(id(val))
 
-    _walk(tool_input)
+    _walk(tool_input, 0)
     # Deduplicate findings by secret_signature and rule_id
     seen: set[tuple[str, str]] = set()
     deduped: list[SecretFinding] = []
@@ -421,19 +462,54 @@ def redact_secrets(
     return result
 
 
-def _redact_value(val: Any, mask: str | None, cfg: SecretSecurityConfig) -> Any:
+#: Placeholder substituted for a cyclic or over-deep container during
+#: redaction (issue #679): the cycle cannot be rebuilt, and re-emitting the
+#: original object would re-expose the very secret being redacted.
+_CYCLE_MARK = "<cycle>"
+
+
+def _redact_value(
+    val: Any,
+    mask: str | None,
+    cfg: SecretSecurityConfig,
+    *,
+    depth: int = 0,
+    visited: set[int] | None = None,
+) -> Any:
+    visited = visited if visited is not None else set()
     if isinstance(val, str):
         return redact_secrets(val, mask, cfg)
-    if isinstance(val, Mapping):
-        return {k: _redact_value(v, mask, cfg) for k, v in val.items()}
-    if isinstance(val, list):
-        return [_redact_value(item, mask, cfg) for item in val]
-    if isinstance(val, tuple):
-        return tuple(_redact_value(item, mask, cfg) for item in val)
-    if isinstance(val, set):
-        return {_redact_value(item, mask, cfg) for item in val}
-    if isinstance(val, frozenset):
-        return frozenset(_redact_value(item, mask, cfg) for item in val)
+    if isinstance(val, (Mapping, list, tuple, set, frozenset)):
+        if depth >= _MAX_CONTAINER_DEPTH or id(val) in visited:
+            return _CYCLE_MARK
+        visited.add(id(val))
+        try:
+            if isinstance(val, Mapping):
+                return {
+                    k: _redact_value(v, mask, cfg, depth=depth + 1, visited=visited)
+                    for k, v in val.items()
+                }
+            if isinstance(val, list):
+                return [
+                    _redact_value(item, mask, cfg, depth=depth + 1, visited=visited)
+                    for item in val
+                ]
+            if isinstance(val, tuple):
+                return tuple(
+                    _redact_value(item, mask, cfg, depth=depth + 1, visited=visited)
+                    for item in val
+                )
+            if isinstance(val, frozenset):
+                return frozenset(
+                    _redact_value(item, mask, cfg, depth=depth + 1, visited=visited)
+                    for item in val
+                )
+            return {
+                _redact_value(item, mask, cfg, depth=depth + 1, visited=visited)
+                for item in val
+            }
+        finally:
+            visited.discard(id(val))
     return val
 
 
@@ -442,12 +518,22 @@ def redact_mapping(
     mask: str | None = None,
     config: SecretSecurityConfig | None = None,
 ) -> dict[str, Any]:
-    """Recursively redact secrets across dictionary values."""
+    """Recursively redact secrets across dictionary values.
+
+    A container that refers to itself (directly or through a nested branch)
+    cannot be rebuilt, so it is cut at the cycle and replaced with
+    ``_CYCLE_MARK``, as is anything deeper than ``_MAX_CONTAINER_DEPTH``,
+    rather than raising ``RecursionError`` (issue #679).
+    """
     if not isinstance(mapping, Mapping):
         return {}
 
     cfg = config or SecretSecurityConfig()
-    return {k: _redact_value(v, mask, cfg) for k, v in mapping.items()}
+    visited: set[int] = set()
+    return {
+        k: _redact_value(v, mask, cfg, depth=0, visited=visited)
+        for k, v in mapping.items()
+    }
 
 
 def strongest_severity(

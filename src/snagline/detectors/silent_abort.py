@@ -37,8 +37,6 @@ from snagline.detectors.base import snapshot_items
 from snagline.events import StepEvent
 from snagline.risk import FailureRisk
 
-_DEFAULT_OUTPUT_TYPES = frozenset({"message", "plan_step"})
-
 
 class SilentAbortDetector:
     name = "silent_abort"
@@ -48,11 +46,15 @@ class SilentAbortDetector:
         output_action_types: frozenset[str] | set[str] | None = None,
         config: Config | None = None,
     ) -> None:
-        del config  # thresholds live here only for symmetry with other detectors
+        # The explicit argument keeps priority, but the Config field is the
+        # operator surface (issue #578) and must be honoured by the uniform
+        # ``Detector(config=cfg)`` contract every other detector follows --
+        # ``del config`` made the field silently unreachable (issue #686).
+        cfg = config or Config()
         self.output_action_types = (
             frozenset(output_action_types)
             if output_action_types is not None
-            else _DEFAULT_OUTPUT_TYPES
+            else cfg.silent_abort_output_action_types
         )
         self._last: dict[str, StepEvent] = {}
 

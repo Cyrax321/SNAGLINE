@@ -42,6 +42,11 @@ _SEVERITY_RANK: dict[DlpSeverity, int] = {
     "critical": 2,
 }
 
+#: Depth ceiling for payload walks. Cyclic or pathologically nested payloads
+#: must not raise ``RecursionError`` and abort policy evaluation (issue #679);
+#: containers past this depth are skipped.
+_MAX_PAYLOAD_DEPTH = 32
+
 
 @dataclass(frozen=True, slots=True)
 class DlpMatch:
@@ -317,23 +322,26 @@ def scan_text(
             continue
         matches.extend(extra_fn(text))
 
-    # Also run credentials detection if configured
+    # Also run credentials detection if configured. Secret matches carry real
+    # (start, end) spans: synthesizing start=0/end=0 made redact_text's
+    # `m.start < m.end` filter drop every one of them (issue #677).
     if cfg.include_secrets:
-        from snagline.secret_security import SecretSecurityConfig, inspect_text
+        from snagline.secret_security import SecretSecurityConfig, scan_secret_spans
 
         sec_cfg = SecretSecurityConfig()
-        sec_findings = inspect_text(text, sec_cfg)
-        for sf in sec_findings:
+        for sm in scan_secret_spans(text, sec_cfg):
             matches.append(
                 DlpMatch(
-                    rule_id=f"secret:{sf.rule_id}",
-                    severity=sf.severity,
-                    start=0,
-                    end=0,
+                    rule_id=f"secret:{sm.rule_id}",
+                    severity=sm.severity,
+                    start=sm.start,
+                    end=sm.end,
                     raw_value="",
                     redacted_value="[REDACTED:secret]",
-                    match_type=sf.match_type,
-                    value_signature=sf.secret_signature,
+                    match_type=sm.match_type,
+                    value_signature=make_signature(
+                        "secret_credential", None, sm.raw_secret
+                    ),
                 )
             )
 
@@ -347,51 +355,57 @@ def inspect_payload(
     path: str = "",
     extra_rules: Sequence[tuple[str, DlpRuleFn]] = (),
 ) -> tuple[DlpFinding, ...]:
-    """Recursively scan an arbitrary payload (string, dict, list) for DLP hits."""
+    """Recursively scan an arbitrary payload (string, dict, list) for DLP hits.
+
+    Self-referential containers are cut at the cycle and containers deeper
+    than ``_MAX_PAYLOAD_DEPTH`` are skipped, rather than raising
+    ``RecursionError`` mid-evaluation (issue #679).
+    """
     cfg = config or DlpSecurityConfig()
     findings: list[DlpFinding] = []
+    visited: set[int] = set()
 
-    if isinstance(payload, str):
-        matches = scan_text(payload, cfg, extra_rules=extra_rules)
-        for m in matches:
-            sig = (
-                m.value_signature
-                if m.value_signature
-                else make_signature(f"dlp:{m.rule_id}", None, m.raw_value)
-            )
-            findings.append(
-                DlpFinding(
-                    rule_id=m.rule_id,
-                    severity=m.severity,
-                    reason=f"outbound payload contains {m.match_type}",
-                    value_signature=sig,
-                    redacted_value=m.redacted_value,
-                    path=path,
+    def _scan(value: Any, sub_path: str, depth: int) -> None:
+        if isinstance(value, str):
+            matches = scan_text(value, cfg, extra_rules=extra_rules)
+            for m in matches:
+                sig = (
+                    m.value_signature
+                    if m.value_signature
+                    else make_signature(f"dlp:{m.rule_id}", None, m.raw_value)
                 )
-            )
-    elif isinstance(payload, Mapping):
-        for k, v in list(payload.items()):
-            sub_path = f"{path}.{k}" if path else str(k)
-            findings.extend(
-                inspect_payload(
-                    v,
-                    cfg,
-                    path=sub_path,
-                    extra_rules=extra_rules,
+                findings.append(
+                    DlpFinding(
+                        rule_id=m.rule_id,
+                        severity=m.severity,
+                        reason=f"outbound payload contains {m.match_type}",
+                        value_signature=sig,
+                        redacted_value=m.redacted_value,
+                        path=sub_path,
+                    )
                 )
-            )
-    elif isinstance(payload, (list, tuple, set, frozenset)):
-        for idx, item in enumerate(payload):
-            sub_path = f"{path}[{idx}]" if path else f"[{idx}]"
-            findings.extend(
-                inspect_payload(
-                    item,
-                    cfg,
-                    path=sub_path,
-                    extra_rules=extra_rules,
-                )
-            )
+        elif isinstance(value, Mapping):
+            if depth >= _MAX_PAYLOAD_DEPTH or id(value) in visited:
+                return
+            visited.add(id(value))
+            try:
+                for k, v in list(value.items()):
+                    sub = f"{sub_path}.{k}" if sub_path else str(k)
+                    _scan(v, sub, depth + 1)
+            finally:
+                visited.discard(id(value))
+        elif isinstance(value, (list, tuple, set, frozenset)):
+            if depth >= _MAX_PAYLOAD_DEPTH or id(value) in visited:
+                return
+            visited.add(id(value))
+            try:
+                for idx, item in enumerate(value):
+                    sub = f"{sub_path}[{idx}]" if sub_path else f"[{idx}]"
+                    _scan(item, sub, depth + 1)
+            finally:
+                visited.discard(id(value))
 
+    _scan(payload, path, 0)
     return tuple(findings)
 
 
@@ -408,16 +422,27 @@ def redact_text(
 ) -> str:
     """Replace sensitive spans in string with safe redacted markers."""
     cfg = config or DlpSecurityConfig()
-    # For text redaction, only span-based rules apply directly
+    # Every scan_text match now carries a real span (including secrets), so
+    # the start<end filter is a defensive no-op rather than a silent drop.
     matches = [m for m in scan_text(text, cfg) if m.start < m.end]
     if not matches:
         return text
 
+    # Drop overlaps first (a secret span can nest inside a PII span, e.g. an
+    # email inside a credential assignment): the descending replacement below
+    # assumes disjoint offsets.
+    ordered = sorted(matches, key=lambda m: (m.start, -(m.end - m.start)))
+    disjoint: list[DlpMatch] = []
+    for m in ordered:
+        if disjoint and m.start < disjoint[-1].end:
+            continue
+        disjoint.append(m)
+
     # Sort descending by start position to replace without shifting offsets
-    matches.sort(key=lambda m: (m.start, m.end - m.start), reverse=True)
+    disjoint.sort(key=lambda m: (m.start, m.end - m.start), reverse=True)
 
     result = list(text)
-    for m in matches:
+    for m in disjoint:
         marker = (
             mask.replace("{rule_id}", m.rule_id) if mask else f"[REDACTED:{m.rule_id}]"
         )
@@ -426,28 +451,50 @@ def redact_text(
     return "".join(result)
 
 
+#: Placeholder substituted for a cyclic or over-deep container during
+#: redaction (issue #679): the cycle cannot be rebuilt, and re-emitting the
+#: original object would re-expose the very values being redacted.
+_CYCLE_MARK = "<cycle>"
+
+
 def redact_payload(
     payload: Any,
     config: DlpSecurityConfig | None = None,
     *,
     mask: str | None = None,
 ) -> Any:
-    """Recursively redact sensitive data from nested mappings and lists."""
-    cfg = config or DlpSecurityConfig()
+    """Recursively redact sensitive data from nested mappings and lists.
 
-    if isinstance(payload, str):
-        return redact_text(payload, cfg, mask=mask)
-    if isinstance(payload, Mapping):
-        return {k: redact_payload(v, cfg, mask=mask) for k, v in payload.items()}
-    if isinstance(payload, tuple):
-        return tuple(redact_payload(item, cfg, mask=mask) for item in payload)
-    if isinstance(payload, list):
-        return [redact_payload(item, cfg, mask=mask) for item in payload]
-    if isinstance(payload, frozenset):
-        return frozenset(redact_payload(item, cfg, mask=mask) for item in payload)
-    if isinstance(payload, set):
-        return {redact_payload(item, cfg, mask=mask) for item in payload}
-    return payload
+    A container that refers to itself (directly or through a nested branch)
+    cannot be rebuilt, so it is cut at the cycle and replaced with
+    ``_CYCLE_MARK``; containers deeper than ``_MAX_PAYLOAD_DEPTH`` are cut the
+    same way, rather than raising ``RecursionError`` (issue #679).
+    """
+    cfg = config or DlpSecurityConfig()
+    visited: set[int] = set()
+
+    def _redact(value: Any, depth: int) -> Any:
+        if isinstance(value, str):
+            return redact_text(value, cfg, mask=mask)
+        if isinstance(value, (Mapping, list, tuple, set, frozenset)):
+            if depth >= _MAX_PAYLOAD_DEPTH or id(value) in visited:
+                return _CYCLE_MARK
+            visited.add(id(value))
+            try:
+                if isinstance(value, Mapping):
+                    return {k: _redact(v, depth + 1) for k, v in list(value.items())}
+                if isinstance(value, list):
+                    return [_redact(item, depth + 1) for item in value]
+                if isinstance(value, tuple):
+                    return tuple(_redact(item, depth + 1) for item in value)
+                if isinstance(value, frozenset):
+                    return frozenset(_redact(item, depth + 1) for item in value)
+                return {_redact(item, depth + 1) for item in value}
+            finally:
+                visited.discard(id(value))
+        return value
+
+    return _redact(payload, 0)
 
 
 # ---------------------------------------------------------------------------
