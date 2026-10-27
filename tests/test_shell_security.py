@@ -248,6 +248,25 @@ def test_authorize_rule_ignores_non_execute_tools() -> None:
     assert policy.decide(req).decision == "allow"
 
 
+@pytest.mark.parametrize(
+    "tool_name",
+    ["bash", "sh", "terminal", "exec", "cmd", "shell", "execute_code", "custom_runner"],
+)
+def test_authorize_rule_inspects_various_execution_tool_names(tool_name: str) -> None:
+    """Issue #684: execution tools not titled 'Bash' must be inspected."""
+    policy = Policy(rules=(as_authorize_rule(),))
+    req = ToolRequest.from_tool_input(tool_name, {"command": "rm -rf /"})
+    result = policy.decide(req)
+    assert result.decision == "deny"
+    assert "shell_threats" in result.matched_rules
+
+
+def test_authorize_rule_ignores_unrelated_unknown_tools() -> None:
+    policy = Policy(rules=(as_authorize_rule(),))
+    req = ToolRequest.from_tool_input("weather_service", {"city": "Paris"})
+    assert policy.decide(req).decision == "allow"
+
+
 def test_authorize_ask_mode_and_min_severity() -> None:
     # Chaining alone is warning; with min_severity=critical it must not fire.
     quiet = ShellThreatConfig(min_severity="critical", decision="ask")
