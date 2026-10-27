@@ -407,23 +407,63 @@ def redact_text(
     mask: str | None = None,
 ) -> str:
     """Replace sensitive spans in string with safe redacted markers."""
+    if not isinstance(text, str) or not text:
+        return text
+
     cfg = config or DlpSecurityConfig()
     # For text redaction, only span-based rules apply directly
     matches = [m for m in scan_text(text, cfg) if m.start < m.end]
     if not matches:
         return text
 
-    # Sort descending by start position to replace without shifting offsets
-    matches.sort(key=lambda m: (m.start, m.end - m.start), reverse=True)
+    # Sort matches by start ascending; tie-break on wider span, stronger severity, and rule_id
+    matches.sort(
+        key=lambda m: (
+            m.start,
+            -(m.end - m.start),
+            -_SEVERITY_RANK.get(m.severity, 0),
+            m.rule_id,
+        )
+    )
 
-    result = list(text)
+    # Merge overlapping matches, keeping the stronger rule's id and severity (issue #691)
+    merged: list[DlpMatch] = []
     for m in matches:
+        if not merged:
+            merged.append(m)
+            continue
+        prev = merged[-1]
+        if m.start < prev.end:
+            # Overlapping match: choose the stronger rule's id and severity
+            stronger = (
+                m
+                if _SEVERITY_RANK.get(m.severity, 0)
+                > _SEVERITY_RANK.get(prev.severity, 0)
+                else prev
+            )
+            merged_start = min(prev.start, m.start)
+            merged_end = max(prev.end, m.end)
+            merged[-1] = DlpMatch(
+                rule_id=stronger.rule_id,
+                severity=stronger.severity,
+                start=merged_start,
+                end=merged_end,
+                raw_value=text[merged_start:merged_end],
+                redacted_value=f"[REDACTED:{stronger.rule_id}]",
+                match_type=stronger.match_type,
+            )
+        else:
+            merged.append(m)
+
+    # Replace from back to front to preserve offsets
+    result = text
+    for m in reversed(merged):
         marker = (
             mask.replace("{rule_id}", m.rule_id) if mask else f"[REDACTED:{m.rule_id}]"
         )
-        result[m.start : m.end] = list(marker)
+        result = result[: m.start] + marker + result[m.end :]
 
-    return "".join(result)
+    return result
 
 
 def redact_payload(
