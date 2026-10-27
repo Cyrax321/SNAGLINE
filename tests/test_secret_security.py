@@ -17,6 +17,7 @@ from snagline.secret_security import (
     SecretFinding,
     SecretMatch,
     SecretSecurityConfig,
+    _scan_matches,
     as_authorize_rule,
     findings_at_or_above,
     inspect_text,
@@ -169,6 +170,44 @@ def test_redact_secrets_custom_mask() -> None:
     raw = "key is AKIAIOSFODNN7EXAMPLE"
     redacted = redact_secrets(raw, mask="***{rule_id}***")
     assert redacted == "key is ***aws_access_key***"
+
+
+def test_redact_secrets_preserves_url_scheme_and_username_in_uri_basic_auth() -> None:
+    url = "curl https://alice:SuperSecret123@api.example.com/v1/data"
+    redacted = redact_secrets(url)
+    assert (
+        redacted
+        == "curl https://alice:[REDACTED:uri_basic_auth]@api.example.com/v1/data"
+    )
+    assert "SuperSecret123" not in redacted
+
+
+def test_redact_secrets_preserves_key_name_in_generic_credential_assignment() -> None:
+    text = 'db_password = "hunter2hunter2"'
+    redacted = redact_secrets(text)
+    assert redacted == 'db_password = "[REDACTED:generic_credential_assignment]"'
+    assert "hunter2hunter2" not in redacted
+
+    text_single = "MY_API_KEY: 'my-super-secret-token-value'"
+    redacted_single = redact_secrets(text_single)
+    assert redacted_single == "MY_API_KEY: '[REDACTED:generic_credential_assignment]'"
+    assert "my-super-secret-token-value" not in redacted_single
+
+
+def test_scan_matches_span_matches_raw_secret_slice() -> None:
+    """Ensure the match span start..end precisely covers the raw_secret for all rules."""
+    samples = [
+        "curl https://alice:SuperSecret123@api.example.com/v1/data",
+        'db_password = "hunter2hunter2"',
+        "export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
+        "DATABASE_URL=postgres://dbuser:pAssW0rd123@db.internal:5432/production",
+    ]
+    cfg = SecretSecurityConfig()
+    for s in samples:
+        matches = _scan_matches(s, cfg)
+        assert len(matches) >= 1
+        for m in matches:
+            assert s[m.start : m.end] == m.raw_secret
 
 
 def test_redact_mapping_recursive() -> None:

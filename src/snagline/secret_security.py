@@ -218,14 +218,21 @@ def _scan_matches(
             continue
         sev = cfg.severity_overrides.get(rule_id, default_sev)
         for m in pattern.finditer(text):
-            # If there is a capture group, use group 1 as the secret; otherwise entire match
-            raw_secret = m.group(1) if m.groups() else m.group(0)
+            # If there is a capture group, use group 1 as the secret span; otherwise entire match
+            if m.groups() and m.group(1) is not None:
+                raw_secret = m.group(1)
+                start = m.start(1)
+                end = m.end(1)
+            else:
+                raw_secret = m.group(0)
+                start = m.start()
+                end = m.end()
             matches.append(
                 SecretMatch(
                     rule_id=rule_id,
                     severity=sev,
-                    start=m.start(),
-                    end=m.end(),
+                    start=start,
+                    end=end,
                     raw_secret=raw_secret,
                     match_type=desc,
                 )
