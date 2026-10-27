@@ -559,6 +559,43 @@ def test_oversized_structural_values_are_truncated() -> None:
     assert request.tool_input["file_path"] == resource
 
 
+def test_oversized_strings_in_sets_and_frozensets_are_truncated() -> None:
+    """Issue #693: set and frozenset elements must not bypass the 4096 character cap."""
+    huge_a = "a" * 5000
+    huge_b = "b" * 5000
+    request = ToolRequest.from_tool_input(
+        "Write",
+        {"file_path": "/tmp/out.txt", "tags": {huge_a, huge_b}},
+    )
+    tags = request.tool_input["tags"]
+    assert isinstance(tags, set)
+    assert huge_a not in repr(request)
+    assert huge_b not in repr(request)
+    assert all(len(v) < 5000 for v in tags)
+    assert all(v.endswith("<truncated>") for v in tags)
+
+    # frozenset retains frozenset type and truncates
+    fs_request = ToolRequest.from_tool_input(
+        "Write",
+        {"file_path": "/tmp/out.txt", "tags": frozenset({huge_a})},
+    )
+    fs_tags = fs_request.tool_input["tags"]
+    assert isinstance(fs_tags, frozenset)
+    assert huge_a not in repr(fs_request)
+    assert all(len(v) < 5000 for v in fs_tags)
+    assert all(v.endswith("<truncated>") for v in fs_tags)
+
+
+def test_sets_below_the_depth_limit_collapse_to_the_marker() -> None:
+    """Issue #693: sets nested beyond _REDACT_DEPTH must collapse to the content marker."""
+    deep: object = {"tag1", "tag2"}
+    for _ in range(6):
+        deep = {"level": deep}
+    request = ToolRequest.from_tool_input("SomeNewTool", {"payload": deep})
+    assert "tag1" not in repr(request)
+    assert "tag2" not in repr(request)
+
+
 # --- config errors must not fail open ---------------------------------------
 
 
