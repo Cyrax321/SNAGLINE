@@ -100,10 +100,15 @@ class ShellThreatConfig:
 # Word-ish token: command name at start or after a shell separator.
 _SEP = r"(?:^|[;|&`\n]|\$\(|\(\s*)\s*(?:sudo\s+)?"
 
+# rm flags: recursive and force can be combined (-rf, -fr) or split (-r -f, --recursive --force)
+_RM_ARG = r"(?:[^\s;|&`\n]+\s+)*"
+_RM_COMBINED = r"-(?:[a-zA-Z]*f[a-zA-Z]*r|[a-zA-Z]*r[a-zA-Z]*f)[a-zA-Z]*\b"
+_RM_REC = r"(?:-[a-zA-Z]*r[a-zA-Z]*|--recursive)\b"
+_RM_FORCE = r"(?:-[a-zA-Z]*f[a-zA-Z]*|--force)\b"
+_RM_DESTRUCTIVE = rf"rm\s+{_RM_ARG}(?:{_RM_COMBINED}|{_RM_REC}\s+{_RM_ARG}{_RM_FORCE}|{_RM_FORCE}\s+{_RM_ARG}{_RM_REC})"
+
 _DESTRUCTIVE = re.compile(
-    _SEP + r"(?:"
-    r"rm\s+-(?:[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*|[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*)\b"
-    r"|mkfs(?:\.\w+)?\b"
+    _SEP + r"(?:" + _RM_DESTRUCTIVE + r"|mkfs(?:\.\w+)?\b"
     r"|dd\s+.*\bof\s*=\s*/dev/"
     r"|shred\b"
     r"|wipefs\b"
@@ -124,7 +129,7 @@ _CHAINING = re.compile(
 )
 
 _UNSAFE_REDIRECT = re.compile(
-    r"(?:^|[\s;|&])(?:>>?|Tee-Object)\s*/(?:dev/sd|dev/nvme|etc/|boot/)",
+    r"(?:^|[\s;|&])(?:[0-9]+|&)?(?:>>?|Tee-Object)\s*/(?:dev/sd|dev/nvme|etc/|boot/)",
     re.IGNORECASE,
 )
 
