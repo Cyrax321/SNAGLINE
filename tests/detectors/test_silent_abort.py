@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from snagline.config import Config
 from snagline.detectors.silent_abort import SilentAbortDetector
 from snagline.events import StepEvent
 from snagline.monitor import Monitor
@@ -160,3 +161,27 @@ def test_dump_state_still_records_the_types_for_diagnostics():
     assert stock.finalize("ep") is not None, (
         "stock config treats assistant_message as just another tool call"
     )
+
+
+def test_config_silent_abort_output_action_types_respected() -> None:
+    """Issue #686: SilentAbortDetector must read output_action_types from config."""
+    cfg = Config(silent_abort_output_action_types=frozenset({"tool_result", "finish"}))
+    detector = SilentAbortDetector(config=cfg)
+    assert detector.output_action_types == frozenset({"tool_result", "finish"})
+
+    # Ending on configured output type is clean
+    detector.observe(_event(0, action_type="tool_result"))
+    assert detector.finalize("ep") is None
+
+    # Ending on default type (not in custom config) is flagged
+    detector.observe(_event(1, action_type="message"))
+    risk = detector.finalize("ep")
+    assert risk is not None
+    assert risk.trigger == "silent_abort"
+
+
+def test_explicit_output_action_types_overrides_config() -> None:
+    """Explicit constructor argument takes precedence over config."""
+    cfg = Config(silent_abort_output_action_types=frozenset({"from_config"}))
+    detector = SilentAbortDetector(output_action_types={"explicit"}, config=cfg)
+    assert detector.output_action_types == frozenset({"explicit"})
