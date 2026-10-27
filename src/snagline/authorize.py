@@ -539,22 +539,6 @@ class Policy:
 
     def decide(self, request: ToolRequest) -> DecisionResult:
         """Evaluate every rule and return the strictest verdict."""
-        if request.action == "unknown":
-            override = self.unknown_tool_decision
-            if override is not None:
-                # Short-circuits the rules: the operator has said what to do
-                # with tools we do not recognise, and that outranks whatever
-                # the rules would have made of it.
-                return DecisionResult(
-                    override,
-                    f"tool {request.tool_name!r} is unknown; "
-                    f"policy unknown_tool_decision is {override!r}",
-                    (),
-                )
-            # Otherwise fall through and run the rules: an operator may have
-            # named that tool explicitly, and an explicit rule is better
-            # knowledge than our own ignorance of the tool set.
-
         opinions: list[tuple[Decision, RuleVerdict]] = []
         for index, rule in enumerate(self.rules):
             try:
@@ -576,11 +560,19 @@ class Policy:
                 opinions.append((verdict.decision, verdict))
 
         if not opinions:
+            if request.action == "unknown":
+                override = self.unknown_tool_decision
+                if override is not None:
+                    return DecisionResult(
+                        override,
+                        f"tool {request.tool_name!r} is unknown; "
+                        f"policy unknown_tool_decision is {override!r}",
+                        (),
+                    )
             # Name the default in the reason. "no rule matched" reads like a
             # bug to an operator staring at a deny they did not write; "no rule
             # matched; policy default_decision is 'deny'" tells them this is an
-            # allowlist and the tool is simply not on it. (The unknown-tool
-            # case already returned at the top of this method.)
+            # allowlist and the tool is simply not on it.
             return DecisionResult(
                 self.default_decision,
                 f"no rule matched; policy default_decision is "
