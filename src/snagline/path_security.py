@@ -30,6 +30,11 @@ Lexical path checks alone cannot guarantee filesystem confinement:
 4. Alternate data streams and platform quirks: Platform-specific tricks (such
    as Windows ADS ``file:stream`` or DOS short names 8.3) may refer to files
    under names not recognized by standard lexical patterns.
+5. User home expansion (~): Leading ``~`` or ``~user`` references are resolved
+   lexically via environment variables (e.g. ``$HOME`` or ``$USERPROFILE``)
+   without touching filesystem state. If the target user account cannot be
+   resolved, the tilde segment is preserved unexpanded and is not joined under
+   ``base_dir``.
 
 For strict confinement, pair these lexical policy rules with kernel-level or
 container-level filesystem sandboxing.
@@ -126,9 +131,9 @@ def normalize_lexical_path(
 ) -> str:
     """Normalize a path lexically without accessing the filesystem.
 
-    Converts backslashes to forward slashes, collapses redundant separators
-    and ``.`` / ``..`` segments, and resolves relative paths against
-    ``base_dir`` if provided.
+    Converts backslashes to forward slashes, expands leading ``~`` or ``~user``
+    references, collapses redundant separators and ``.`` / ``..`` segments,
+    and resolves relative paths against ``base_dir`` if provided.
     """
     raw = os.fspath(path)
     if not raw or not raw.strip():
@@ -136,6 +141,10 @@ def normalize_lexical_path(
 
     # Replace backslashes with standard forward slashes
     clean = raw.replace("\\", "/")
+
+    # Expand leading ~ or ~user before resolving against base_dir (issue #692)
+    if clean.startswith("~"):
+        clean = os.path.expanduser(clean).replace("\\", "/")
 
     # Preserve leading Windows drive letters if present (e.g., C:/)
     drive = ""
@@ -146,9 +155,18 @@ def normalize_lexical_path(
         if not clean.startswith("/"):
             clean = "/" + clean
 
-    # Resolve relative paths against base_dir if base_dir is supplied
-    if base_dir and not clean.startswith("/") and not drive:
+    # Resolve relative paths against base_dir if base_dir is supplied.
+    # Paths starting with ~ (e.g. unresolvable ~user) are home-relative, not
+    # base_dir-relative, so they are never joined under base_dir (issue #692).
+    if (
+        base_dir
+        and not clean.startswith("/")
+        and not drive
+        and not clean.startswith("~")
+    ):
         clean_base = os.fspath(base_dir).replace("\\", "/")
+        if clean_base.startswith("~"):
+            clean_base = os.path.expanduser(clean_base).replace("\\", "/")
         clean = posixpath.join(clean_base, clean)
 
     # Lexically normalize the path
