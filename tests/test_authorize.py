@@ -876,3 +876,55 @@ def test_path_security_rule_from_dict_validation() -> None:
                 ]
             }
         )
+
+
+# --- Issue #683: fail_closed profile with custom/unknown tools ---
+
+
+def test_fail_closed_allows_custom_agent_tools() -> None:
+    """Issue #683: fail_closed profile must not short-circuit explicit allow_agent_tools."""
+    policy = Policy(
+        profile="fail_closed",
+        rules=(allow_agent_tools({"my_agent": ["custom_tool"]}),),
+    )
+    req = ToolRequest.from_tool_input("custom_tool", {}, agent_id="my_agent")
+    res = policy.decide(req)
+    assert res.decision == "allow"
+    assert res.allowed
+
+
+def test_fail_closed_allows_explicit_allow_tools_for_unknown_tools() -> None:
+    """Issue #683: fail_closed profile must evaluate allow_tools for non-Claude tools."""
+    policy = Policy(
+        profile="fail_closed",
+        rules=(allow_tools("calculator", "query_db"),),
+    )
+    res = policy.decide(ToolRequest.from_tool_input("calculator", {}))
+    assert res.decision == "allow"
+    assert res.allowed
+
+    # Unlisted unknown tool must still be denied via unknown_tool_decision fallback
+    res_unlisted = policy.decide(ToolRequest.from_tool_input("unlisted_tool", {}))
+    assert res_unlisted.decision == "deny"
+    assert "tool 'unlisted_tool' is unknown" in res_unlisted.reason
+
+
+def test_declarative_fail_closed_allows_custom_agent_tools() -> None:
+    """Issue #683: declarative agent_allowlists in fail_closed policy works for unknown tools."""
+    doc = {
+        "profile": "fail_closed",
+        "agent_allowlists": {"data_bot": ["query_sql", "export_csv"]},
+    }
+    p = policy_from_dict(doc)
+    res = p.decide(ToolRequest.from_tool_input("query_sql", {}, agent_id="data_bot"))
+    assert res.decision == "allow"
+    assert res.allowed
+
+    # Unallowed tool for agent is denied
+    res_denied = p.decide(
+        ToolRequest.from_tool_input("delete_table", {}, agent_id="data_bot")
+    )
+    assert res_denied.decision == "deny"
+    assert (
+        "tool 'delete_table' is not allowed for agent 'data_bot'" in res_denied.reason
+    )
