@@ -104,14 +104,22 @@ class ToolRequest:
     ``None`` when it cannot be identified. It is a *string the host already
     sent us*, not content SNAGLINE derived.
 
-    ``tool_input`` is a REDACTED copy (:func:`_redact`): content-bearing keys
-    (``Write.content``, ``Edit.new_string``, ``prompt``, ...) survive as keys
-    with their values replaced by a marker, and oversized structural values are
-    truncated. Keeping the raw mapping would put file bodies in memory and in
-    this object's ``repr``, which would break the same no-content-retention
-    invariant that governs ``FailureRisk``. A rule that genuinely needs a
-    field this module redacts should receive it through a host-side rule that
-    does not retain it.
+    ``tool_input`` is a *capped* copy (:func:`_prepare_tool_input`), not a
+    redacted one: values under content-bearing keys (``Write.content``,
+    ``Edit.new_string``, ``prompt``, ...) are retained, bounded by the
+    structural cap, because the payload-inspecting security rules
+    (:mod:`dlp_security`, :mod:`secret_security`) cannot guard content they
+    cannot see (issue #676). The no-content-leak invariant moves to the
+    display surface: :meth:`__repr__` renders ``tool_input`` through
+    :func:`_redact_for_display`, so a request printed into a log or an error
+    message never carries a body. Keys are always preserved, so
+    ``"content" in request.tool_input`` still answers "was content
+    supplied?".
+
+    The structural cap bounds the retained copy: strings longer than
+    :data:`_MAX_RESOURCE_CHARS` are truncated and containers deeper than
+    :data:`_REDACT_DEPTH` collapse, so a request never holds an unbounded
+    body even in memory.
 
     ``signature`` is a one-way SHA-256 digest of the request, offered for
     logging an allow/deny decision without recording what was requested. It
@@ -125,6 +133,21 @@ class ToolRequest:
     tool_input: Mapping[str, Any] = field(default_factory=dict)
     episode_id: str | None = None
     agent_id: str | None = None
+
+    def __repr__(self) -> str:
+        """repr with content-bearing values markered (issue #676).
+
+        ``tool_input`` retains bounded content for the payload-inspecting
+        rules, so the dataclass default -- which prints every field -- would
+        print file bodies straight into logs and tracebacks. Every display
+        path goes through here, so this is where the no-leak invariant lives.
+        """
+        return (
+            f"ToolRequest(tool_name={self.tool_name!r}, "
+            f"action={self.action!r}, resource={self.resource!r}, "
+            f"tool_input={_redact_for_display(self.tool_input)!r}, "
+            f"episode_id={self.episode_id!r}, agent_id={self.agent_id!r})"
+        )
 
     @property
     def signature(self) -> str:
@@ -151,11 +174,11 @@ class ToolRequest:
         raising. The gate must not be the reason a host crashes.
         """
         data: Mapping[str, Any] = tool_input if isinstance(tool_input, Mapping) else {}
-        # Redact ONCE and read the resource out of the redacted copy. Reading
+        # Cap ONCE and read the resource out of the capped copy. Reading
         # it from the raw mapping would leave an oversized value unbounded in
         # ``resource`` while ``tool_input`` was truncated, so the truncation
         # would be trivially bypassed by the very field a policy matches on.
-        safe = _redact(data)
+        safe = _prepare_tool_input(data)
         if agent_id is None:
             raw_agent = data.get("agent_id")
             if isinstance(raw_agent, str) and raw_agent.strip():
@@ -182,9 +205,10 @@ class ToolRequest:
 
 
 #: Input keys whose values are CONTENT the agent is about to send somewhere,
-#: not a structural description of the request. Their values are replaced with
-#: a marker so a rule can still see that content was supplied, without this
-#: object carrying a file body in memory or in its repr.
+#: not a structural description of the request. Their values are retained on
+#: ``tool_input`` (bounded) so a payload-inspecting rule can guard them, and
+#: replaced with a marker only for display -- :meth:`ToolRequest.__repr__` --
+#: so a printed request never carries a file body (issue #676).
 _CONTENT_KEYS = frozenset(
     {
         "content",
@@ -223,7 +247,11 @@ _REDACT_DEPTH = 3
 
 
 def _redact_value(value: Any, depth: int) -> Any:
-    """Redact one tool-input value, walking dicts/lists up to ``depth`` levels."""
+    """Redact one value for DISPLAY: content keys markered, caps applied.
+
+    Only :func:`_redact_for_display` calls this; the retained copy on a
+    request is built by :func:`_cap_value`, which keeps content (issue #676).
+    """
     if isinstance(value, Mapping):
         if depth <= 0:
             return _CONTENT_MARKER
@@ -243,23 +271,55 @@ def _redact_value(value: Any, depth: int) -> Any:
     return value
 
 
-def _redact(data: Mapping[str, Any]) -> dict[str, Any]:
+def _cap_value(value: Any, depth: int) -> Any:
+    """Copy ``value`` with the structural caps applied, content left intact.
+
+    This is the retained copy a request carries: strings past
+    :data:`_MAX_RESOURCE_CHARS` are truncated and containers past
+    :data:`_REDACT_DEPTH` collapse to the marker, but content-key values are
+    NOT markered -- the payload-inspecting security rules must see the text
+    they are asked to guard (issue #676).
+    """
+    if isinstance(value, Mapping):
+        if depth <= 0:
+            return _CONTENT_MARKER
+        return {key: _cap_value(item, depth - 1) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        if depth <= 0:
+            return _CONTENT_MARKER
+        items = [_cap_value(item, depth - 1) for item in value]
+        return tuple(items) if isinstance(value, tuple) else items
+    if isinstance(value, str) and len(value) > _MAX_RESOURCE_CHARS:
+        return value[:_MAX_RESOURCE_CHARS] + "...<truncated>"
+    return value
+
+
+def _prepare_tool_input(data: Mapping[str, Any]) -> dict[str, Any]:
+    """Copy ``data`` with the structural caps applied, content retained.
+
+    The walk is recursive (dicts and lists, bounded by
+    :data:`_REDACT_DEPTH`): content nested under a structural key -- an
+    unknown tool's ``{"notebook": {"content": ...}}``, an ``edits`` list, an
+    MCP-served tool -- survives capped as well, and at the depth limit a
+    container collapses to the marker rather than being kept. Content that
+    must not reach a display surface is filtered by
+    :func:`_redact_for_display`, which :meth:`ToolRequest.__repr__` applies.
+    """
+    return {key: _cap_value(value, _REDACT_DEPTH) for key, value in data.items()}
+
+
+def _redact_for_display(data: Mapping[str, Any]) -> dict[str, Any]:
     """Copy ``data`` with content-bearing values replaced by a marker.
 
-    SNAGLINE's privacy invariant is that detectors reason about hashes, timings
-    and counts -- never prompt or response content (README, "No content
-    retention"). Holding a whole ``tool_input`` verbatim on a request object
-    that a custom rule can inspect would quietly break that: ``Write.content``
-    and ``Edit.new_string`` are the file bodies a host is about to write, and
-    they would sit in ``ToolRequest.tool_input`` and in its ``repr``. Keys are
-    preserved and values replaced, so ``"content" in request.tool_input`` still
-    answers "was content supplied?" without answering "what was it?".
+    SNAGLINE's privacy invariant is that nothing prints a tool payload:
+    ``Write.content`` and ``Edit.new_string`` are the file bodies a host is
+    about to write, and the request's ``repr`` is what ends up in logs and
+    tracebacks (issue #676). Keys are preserved and values replaced, so
+    ``"content" in request.tool_input`` still answers "was content
+    supplied?" without answering "what was it?".
 
-    The walk is recursive (dicts and lists, bounded by :data:`_REDACT_DEPTH`):
-    content nested under a structural key -- an unknown tool's
-    ``{"notebook": {"content": ...}}``, an ``edits`` list, an MCP-served tool --
-    is redacted too, and the size cap applies to nested strings as well. At the
-    depth limit a container collapses to the marker rather than being kept.
+    Applied to the already-capped ``tool_input``, so the walk is bounded by
+    construction.
     """
     return {
         key: _CONTENT_MARKER
