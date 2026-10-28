@@ -471,24 +471,30 @@ def test_glob_resource_is_the_path_not_the_glob_pattern() -> None:
 # --- content redaction ------------------------------------------------------
 
 
-def test_content_bearing_input_is_not_retained() -> None:
-    """``Write.content`` is a file body; it must not sit in the request."""
+def test_content_bearing_input_is_retained_but_never_printed() -> None:
+    """``Write.content`` is inspectable by the rules but never in the repr.
+
+    Content-bearing values are retained (bounded) so the payload-inspecting
+    security rules can guard them (issue #676); the no-leak invariant lives
+    in the repr, which is what reaches logs and tracebacks.
+    """
     secret = "AWS_SECRET_ACCESS_KEY=hunter2"
     request = ToolRequest.from_tool_input(
         "Write", {"file_path": "/a", "content": secret}
     )
     assert secret not in repr(request)
-    assert secret not in str(request.tool_input)
     assert request.tool_input["file_path"] == "/a", "structure is kept"
     assert "content" in request.tool_input, "the key still answers 'was it supplied?'"
-    assert request.tool_input["content"] != secret
+    # The retained copy is the bounded original, not the marker.
+    assert request.tool_input["content"] == secret
 
 
-def test_edit_input_is_redacted_but_the_path_survives() -> None:
+def test_edit_input_is_inspectable_but_the_path_survives() -> None:
     request = ToolRequest.from_tool_input(
         "Edit", {"file_path": "/a", "new_string": "top secret"}
     )
     assert request.resource == "/a"
+    assert request.tool_input["new_string"] == "top secret"
     assert "top secret" not in repr(request)
 
 
@@ -499,8 +505,8 @@ def test_bash_command_is_not_treated_as_content() -> None:
     assert request.tool_input["command"] == "rm -rf /etc"
 
 
-def test_nested_content_is_redacted() -> None:
-    """Content under a structural key must not survive either."""
+def test_nested_content_is_retained_but_never_printed() -> None:
+    """Content under a structural key is inspectable but not in the repr."""
     request = ToolRequest.from_tool_input(
         "SomeNewTool",
         {
@@ -510,12 +516,13 @@ def test_nested_content_is_redacted() -> None:
     )
     assert "TOP SECRET FILE BODY" not in repr(request)
     assert "ANOTHER SECRET" not in repr(request)
-    assert request.tool_input["notebook"]["content"] == "<content redacted>"
-    assert request.tool_input["payload"]["new_string"] == "<content redacted>"
+    # Content survives for the rules to inspect (issue #676).
+    assert request.tool_input["notebook"]["content"] == "TOP SECRET FILE BODY"
+    assert request.tool_input["payload"]["new_string"] == "ANOTHER SECRET"
 
 
-def test_content_nested_in_a_list_is_redacted() -> None:
-    """A MultiEdit-style list of edits keeps no bodies."""
+def test_content_nested_in_a_list_is_retained() -> None:
+    """A MultiEdit-style list of edits keeps its bodies out of the repr only."""
     request = ToolRequest.from_tool_input(
         "Scratchpad",
         {"changes": [{"old_string": "SECRET-A", "new_string": "SECRET-B"}]},
@@ -523,7 +530,8 @@ def test_content_nested_in_a_list_is_redacted() -> None:
     assert "SECRET-A" not in repr(request)
     assert "SECRET-B" not in repr(request)
     edits = request.tool_input["changes"]
-    assert edits[0]["old_string"] == "<content redacted>"
+    assert edits[0]["old_string"] == "SECRET-A"
+    assert edits[0]["new_string"] == "SECRET-B"
 
 
 def test_oversized_nested_strings_are_truncated() -> None:
