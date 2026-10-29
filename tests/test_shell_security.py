@@ -287,14 +287,22 @@ def test_policy_from_dict_rejects_bad_shell_threats_schema() -> None:
 # --- documented false-positive / false-negative notes as executable checks -
 
 
-def test_documented_false_positive_echo_of_token_may_fire() -> None:
-    """Echoing a destructive token can false-positive; documented in LIMITATIONS."""
-    findings = inspect_command("echo 'do not run: rm -rf /'")
-    # May or may not fire depending on separators; record the actual contract:
-    # if it fires, severity must still be structured and signature-only.
-    for f in findings:
-        assert f.rule_id in BUILTIN_RULE_IDS
-        assert "rm -rf /" not in f.reason
+def test_quoted_destructive_token_is_not_detected() -> None:
+    """A token inside quotes is a documented false negative, not a false positive.
+
+    This records the contract LIMITATIONS states. The previous version of this
+    test iterated over the findings, so with an input that produces none it
+    asserted nothing at all and silently stopped covering the gap.
+    """
+    assert inspect_command("echo 'do not run: rm -rf /'") == ()
+
+
+def test_the_same_token_after_a_separator_is_detected() -> None:
+    """Positive control: the token is only hidden by its quoting, not by the rule."""
+    findings = inspect_command("echo start; rm -rf /")
+    assert [f.rule_id for f in findings] == ["destructive_command", "command_chaining"]
+    assert all(f.rule_id in BUILTIN_RULE_IDS for f in findings)
+    assert all("rm -rf /" not in f.reason for f in findings)
 
 
 def test_documented_false_negative_indirect_assignment() -> None:
