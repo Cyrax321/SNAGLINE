@@ -437,7 +437,8 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=1000,
         help="How many risks received on POST /risks to retain for GET /risks "
-        "[default: 1000].",
+        "[default: 1000]. 0 retains nothing; a negative value is rejected as "
+        "a usage error.",
     )
     p_serve.add_argument(
         "--sink",
@@ -1199,13 +1200,24 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
                 f"{args.tenant}/{args.deployment} (semantic {semantic_model})"
             )
             return 0
-        version = capture_from_jsonl(
-            store,
-            args.trajectory,
-            tenant=args.tenant,
-            deployment=args.deployment,
-            max_versions=args.max_versions,
-        )
+        # Same contract as the plain fit path below: a missing or unreadable
+        # trajectory is a one-line diagnostic and exit 2, not a traceback --
+        # capture_from_jsonl calls fit_baseline_from_jsonl internally
+        # (issue #665).
+        try:
+            version = capture_from_jsonl(
+                store,
+                args.trajectory,
+                tenant=args.tenant,
+                deployment=args.deployment,
+                max_versions=args.max_versions,
+            )
+        except OSError as exc:
+            print(
+                f"snagline baseline: cannot open {args.trajectory}: {exc}",
+                file=sys.stderr,
+            )
+            return 2
         print(
             f"snagline baseline: stored version {version} for "
             f"{args.tenant}/{args.deployment}"
@@ -1407,6 +1419,19 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+    if args.max_risks < 0:
+        # 0 is a real "retain nothing" request and is honoured; only a
+        # negative is invalid, because deque(maxlen=<0>) is unbounded. The
+        # old max(1, max_risks) clamp in make_handler silently turned 0 into
+        # a deque of one, so GET /risks answered with a risk the operator
+        # asked to suppress (issue #668).
+        print(
+            "snagline serve: --max-risks must be a non-negative number of "
+            f"retained risks, got {args.max_risks}; 0 retains nothing and a "
+            "negative deque maxlen is unbounded",
+            file=sys.stderr,
+        )
+        return 2
     scheme = "https" if (args.certfile or args.keyfile or args.client_ca) else "http"
     print(
         f"snagline serve: listening on {scheme}://{args.host}:{args.port} "
@@ -1445,31 +1470,49 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             if (args.certfile or args.keyfile or args.client_ca)
             else {}
         )
-        serve(
-            Monitor.default(config=cfg, sinks=sinks),
-            host=args.host,
-            port=args.port,
-            auth_token=auth_token,
-            max_body_bytes=args.max_body_bytes,
-            max_risks=args.max_risks,
-            metrics_format=cfg.metrics_format,
-            # Flag, else the layered config (issue #240): the _resolve_*
-            # helpers in http_server re-resolve from env only, so a value
-            # that came from the --config file was silently dropped for
-            # exactly these three knobs. Passing the resolved cfg value
-            # when the flag is unset keeps one layering everywhere.
-            read_timeout=(
-                args.read_timeout
-                if args.read_timeout is not None
-                else cfg.server_read_timeout
-            ),
-            episode_ttl_seconds=(
-                args.episode_ttl_seconds
-                if args.episode_ttl_seconds is not None
-                else cfg.episode_ttl_seconds
-            ),
-            **tls_kwargs,
-        )
+        try:
+            serve(
+                Monitor.default(config=cfg, sinks=sinks),
+                host=args.host,
+                port=args.port,
+                auth_token=auth_token,
+                max_body_bytes=args.max_body_bytes,
+                max_risks=args.max_risks,
+                metrics_format=cfg.metrics_format,
+                # Flag, else the layered config (issue #240): the _resolve_*
+                # helpers in http_server re-resolve from env only, so a value
+                # that came from the --config file was silently dropped for
+                # exactly these three knobs. Passing the resolved cfg value
+                # when the flag is unset keeps one layering everywhere.
+                read_timeout=(
+                    args.read_timeout
+                    if args.read_timeout is not None
+                    else cfg.server_read_timeout
+                ),
+                episode_ttl_seconds=(
+                    args.episode_ttl_seconds
+                    if args.episode_ttl_seconds is not None
+                    else cfg.episode_ttl_seconds
+                ),
+                **tls_kwargs,
+            )
+        except OSError as exc:
+            # The banner already promised a listener, so anything that fails at
+            # bind or handshake time has to be reported as a one-line diagnostic
+            # with a non-zero exit -- not a traceback after a banner that claims
+            # the sidecar is up (issues #587/#599/#666).
+            print(
+                f"snagline serve: cannot start listener on "
+                f"{scheme}://{args.host}:{args.port}: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+        except ValueError as exc:
+            # make_handler's constructor-level contract checks (max_body_bytes,
+            # max_risks): a usage error, surfaced the same way as every other
+            # bad knob, not a traceback.
+            print(f"snagline serve: {exc}", file=sys.stderr)
+            return 2
     return 0
 
 
