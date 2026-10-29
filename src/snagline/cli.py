@@ -1199,13 +1199,25 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
                 f"{args.tenant}/{args.deployment} (semantic {semantic_model})"
             )
             return 0
-        version = capture_from_jsonl(
-            store,
-            args.trajectory,
-            tenant=args.tenant,
-            deployment=args.deployment,
-            max_versions=args.max_versions,
-        )
+        # Same guard the plain fit path (below) and ``baseline retrain`` apply:
+        # capture_from_jsonl() fits from args.trajectory internally, so a
+        # missing/unreadable file otherwise escapes as a FileNotFoundError
+        # traceback (exit 1) instead of the documented one-line diagnostic
+        # (issue #665).
+        try:
+            version = capture_from_jsonl(
+                store,
+                args.trajectory,
+                tenant=args.tenant,
+                deployment=args.deployment,
+                max_versions=args.max_versions,
+            )
+        except OSError as exc:
+            print(
+                f"snagline baseline: cannot open {args.trajectory}: {exc}",
+                file=sys.stderr,
+            )
+            return 2
         print(
             f"snagline baseline: stored version {version} for "
             f"{args.tenant}/{args.deployment}"

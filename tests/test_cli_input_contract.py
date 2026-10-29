@@ -86,6 +86,22 @@ def test_baseline_missing_input_is_a_clean_exit_not_a_traceback():
     assert "Traceback" not in err
 
 
+def test_baseline_store_dir_missing_input_is_a_clean_exit_not_a_traceback():
+    """The --store-dir path fits via capture_from_jsonl(), which read the
+    trajectory unguarded, so the same missing file that exited 2 on the plain
+    fit path raised a FileNotFoundError traceback instead (issue #665)."""
+    with tempfile.TemporaryDirectory() as d:
+        missing = os.path.join(d, "absent.jsonl")
+        store = os.path.join(d, "store")
+        code, err = _run(["baseline", missing, "--store-dir", store])
+    assert code == 2, err
+    assert "cannot open" in err
+    assert missing in err
+    assert "Traceback" not in err
+    # Fitting never happened, so the store was not created.
+    assert not os.path.exists(store)
+
+
 # ---------------------------------------------------------------- #429 ----
 
 

@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `snagline baseline <file> --store-dir` reports a missing or unreadable
+  trajectory as the one-line `snagline baseline: cannot open <path>: <error>`
+  diagnostic and exits 2, the contract the plain fit path and
+  `baseline retrain` already held. The store path fits through
+  `capture_from_jsonl()`, which read the file unguarded, so the same input
+  that exited cleanly without a store escaped as an uncaught
+  `FileNotFoundError` traceback with exit 1 (#665).
 - `policy_from_dict` now rejects an unknown key inside a rule entry and a missing
   `patterns`/`tools` list with a `PolicyError` naming `rules[i].<key>`. Before, a
   typo'd key was ignored and the rule was built with an empty list: a deny rule
