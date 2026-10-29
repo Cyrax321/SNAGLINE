@@ -359,7 +359,13 @@ def instrument_langchain(monitor, client=None) -> bool:
     entrypoint could be found.
     """
     if client is not None:
-        return _patch_target(monitor, client) != 0
+        # Same guard as ``wrap_client``: all four entrypoints are patched on
+        # the instance, so a delegated ``invoke`` -> ``generate`` call is
+        # bracketed by one shared counter and only the outer entrypoint emits
+        # (issue #589). Without it this branch double-counted every chat-model
+        # call while ``wrap_client`` -- the sibling entrypoint the same issue
+        # names -- did not.
+        return _patch_target(monitor, client, guard=_CallGuard()) != 0
     targets, core_present = _global_targets()
     if not core_present:
         # Genuinely absent: the declared dependency is not installed. This is

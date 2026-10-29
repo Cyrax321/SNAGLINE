@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `instrument_langchain(monitor, client=...)` no longer double-counts every
+  chat-model call. Per-client mode patches all four entrypoints
+  (`invoke`/`ainvoke`/`generate`/`agenerate`) on the instance, and
+  `BaseChatModel.invoke` delegates to `self.generate`, so one user-facing call
+  emitted both a `langchain.invoke` and a nested `langchain.generate` event --
+  inflating the loop/cascade detectors and doubling the token totals feeding
+  the runaway/budget envelope. `wrap_client` got the shared re-entrancy guard
+  that suppresses the nested event, but `instrument_langchain`'s `client=`
+  branch -- the other documented per-client entrypoint -- did not, so an
+  operator who reached for it instead got silently wrong counts. Both
+  per-client paths now share the guard; direct calls through the batch
+  entrypoints stay observable (#589).
 - `policy_from_dict` now rejects an unknown key inside a rule entry and a missing
   `patterns`/`tools` list with a `PolicyError` naming `rules[i].<key>`. Before, a
   typo'd key was ignored and the rule was built with an empty list: a deny rule
