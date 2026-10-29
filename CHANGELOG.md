@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- In `EsnCusumDetector.load_state`, restore the fitted readout before rebuilding
+  episodes, ensuring episodes restored from a snapshot inherit the fitted model
+  rather than being created while `_fitted_beta` is still unset (#669).
+- In `EsnCusumDetector._mahalanobis_score`, saturate overflowing latency deviations
+  to 1.0 instead of computing `inf / (inf + dof) = NaN`, preventing `max()` from
+  silently discarding extreme latency anomalies (#670).
 - `policy_from_dict` now rejects an unknown key inside a rule entry and a missing
   `patterns`/`tools` list with a `PolicyError` naming `rules[i].<key>`. Before, a
   typo'd key was ignored and the rule was built with an empty list: a deny rule

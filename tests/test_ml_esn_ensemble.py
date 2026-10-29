@@ -9,6 +9,7 @@ numpy-less environments lives in test_ml_extra_guard.py.
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any
 
 import pytest
@@ -994,3 +995,92 @@ def test_monitor_restore_keeps_a_warm_up_readout_on_the_default_path():
         "the warm-up readout was lost across a Monitor snapshot/restore"
     )
     assert np.allclose(esn._episodes["ep"].beta, esn2._episodes["ep"].beta)
+
+
+def test_669_load_state_restores_fitted_readout_before_rebuilding_episodes():
+    """Issue #669: load_state must restore self._fitted_beta before rebuilding
+    episodes via self._new_state(), so episodes created during restore inherit
+    the fitted readout and residual statistics."""
+    det = _fast()
+    det.fit(_healthy(40))
+    for event in _healthy(10):
+        det.observe(event)
+    snap = det.dump_state()
+    assert snap is not None
+    assert "fitted" in snap
+
+    # A brand-new detector instance without pre-calling fit()
+    reborn = _fast()
+    reborn.load_state(snap)
+    assert reborn._fitted_beta is not None
+    st = reborn._episodes["ep"]
+    assert st.beta is not None, "fitted readout was not propagated to episode"
+    assert np.allclose(st.beta, reborn._fitted_beta)
+
+
+def test_669_load_state_keeps_the_episode_readout_and_context():
+    """Issue #669: A restored episode must keep the readout it had already
+    solved and the pre-advance context its next prediction is judged from."""
+    prof = BaselineProfile()
+    tb = ToolBaseline(tool_name="t")
+    for v in (10.0, 10.1, 10.2):
+        tb.add(v, error=False)
+    prof.tools["t"] = tb
+
+    d = EsnCusumDetector(baseline=prof, warmup_steps=20)
+    for i in range(60):
+        d.observe(_ev(i, "ep1", tool="t", latency=10.0))
+    live = d._episodes["ep1"]
+    assert live.beta is not None
+    assert live.context_prev is not None
+    snap = d.dump_state()
+    assert snap is not None
+
+    restored = EsnCusumDetector(baseline=prof, warmup_steps=20)
+    restored.load_state(snap)
+    got = restored._episodes["ep1"]
+    assert got.beta is not None, "the solved readout was dropped on restore"
+    assert got.context_prev is not None, "the pre-advance context was dropped"
+    assert got.warm_n == live.warm_n
+
+    # End-to-end: warm-up is done and readout is live, so an anomaly scores
+    # instead of returning the warm-up constant 0.0.
+    score = restored._esn_anomaly(
+        got, restored._features(_ev(61, "ep1", tool="t", latency=9000.0))
+    )
+    assert score > 0.0
+
+
+def test_670_the_mahalanobis_score_saturates_instead_of_going_nan():
+    """Issue #670: An overflowing z-score must saturate at 1.0, not produce
+    a NaN that max() silently discards."""
+    prof = BaselineProfile()
+    tb = ToolBaseline(tool_name="t")
+    for v in (10.0, 10.1, 10.2):
+        tb.add(v, error=False)
+    prof.tools["t"] = tb
+
+    d = EsnCusumDetector(baseline=prof)
+    d.observe(_ev(0, "ep1", tool="t", latency=10.0))
+    st = d._episodes["ep1"]
+    for lat in (1e100, 1e308, float("inf")):
+        ev = _ev(1, "ep1", tool="t", latency=lat)
+        score = d._mahalanobis_score(st, ev)
+        assert not math.isnan(score), f"score was NaN for latency {lat}"
+        assert score == pytest.approx(1.0), lat
+
+
+def test_670_a_finite_latency_still_scores_below_one():
+    """Issue #670: Saturation must not flatten the normal range into its cap."""
+    prof = BaselineProfile()
+    tb = ToolBaseline(tool_name="t")
+    for v in (10.0, 10.1, 10.2):
+        tb.add(v, error=False)
+    prof.tools["t"] = tb
+
+    d = EsnCusumDetector(baseline=prof)
+    d.observe(_ev(0, "ep1", tool="t", latency=10.0))
+    st = d._episodes["ep1"]
+    ev = _ev(1, "ep1", tool="t", latency=200.0)
+    score = d._mahalanobis_score(st, ev)
+    assert 0.0 < score < 1.0

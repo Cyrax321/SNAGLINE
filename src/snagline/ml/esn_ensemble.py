@@ -306,15 +306,14 @@ class EsnCusumDetector:
         dropping the episode reservoirs rather than rebuilding them at the
         wrong dimensionality, while the fitted readout is dropped for the same
         reason -- :meth:`_new_state` copies it into new episodes verbatim, so
-        a beta sized for a different reservoir would raise on the next
-        ``observe``. Falling back to warm-up is the documented cold-start
-        behavior, not a silent misconfiguration.
+        The fitted readout is restored *before* the episodes are rebuilt, and
+        each episode's own serialized ``beta`` / ``context_prev`` is applied
+        without requiring the fresh state to hold one already: a fresh
+        ``_EpisodeState`` starts with both as ``None``, so gating the restore
+        on ``st.beta is not None`` silently dropped them and pushed every
+        restored episode back into warm-up to relearn from the live stream
+        (issue #669) -- the exact regression issue #581 closed.
         """
-        if state.get("reservoir_size") == self._w.shape[0]:
-            for ep, raw in state.get("episodes", []):
-                st = self._new_state()
-                self._state_from_dict(st, raw)
-                self._episodes[ep] = st
         fitted = state.get("fitted")
         if fitted is not None and fitted.get("beta") is not None:
             beta = np.array(fitted["beta"], dtype=float)
@@ -323,6 +322,11 @@ class EsnCusumDetector:
                 self._fitted_res_mu = float(fitted.get("res_mu", 0.0))
                 self._fitted_res_sigma = float(fitted.get("res_sigma", 0.0))
                 self._fitted_res_n = int(fitted.get("res_n", 0))
+        if state.get("reservoir_size") == self._w.shape[0]:
+            for ep, raw in state.get("episodes", []):
+                st = self._new_state()
+                self._state_from_dict(st, raw)
+                self._episodes[ep] = st
 
     def _rhs_shape(self) -> tuple[int, ...]:
         return self._w.shape[0] + 1, _FEATURE_DIM
@@ -595,7 +599,18 @@ class EsnCusumDetector:
             dof += 1
         if dof == 0:
             return 0.0
-        return terms / (terms + dof)
+        score = terms / (terms + dof)
+        if not math.isfinite(score):
+            # A latency far enough from the mean overflows z_l ** 2 to inf,
+            # and inf / (inf + dof) is NaN, not ~1.0. CPython's max() returns
+            # its first argument when the second compares NaN, so the
+            # Mahalanobis channel would contribute nothing at exactly the
+            # latency value that should saturate it; saturate explicitly
+            # (issue #670). NaN terms (a NaN latency) carry no evidence
+            # either way, so they score 0 and leave the verdict to the ESN
+            # channel.
+            return 1.0 if terms > 0 else 0.0
+        return score
 
     def _seed_residual_stats(self, st: _EpisodeState) -> None:
         """Seed running residual statistics from the warm-up pairs."""
