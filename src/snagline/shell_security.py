@@ -97,12 +97,15 @@ class ShellThreatConfig:
 # Built-in rules (each independently testable)
 # ---------------------------------------------------------------------------
 
-# Word-ish token: command name at start or after a shell separator.
-_SEP = r"(?:^|[;|&`\n]|\$\(|\(\s*)\s*(?:sudo\s+)?"
+# Word-ish token: an optional path and sudo before the command name, at the
+# start of the command or after a shell separator.
+_SEP = r"(?:^|[;|&`\n]|\$\(|\(\s*)\s*(?:sudo\s+)?(?:[\w./-]*/)?"
 
 _DESTRUCTIVE = re.compile(
     _SEP + r"(?:"
-    r"rm\s+-(?:[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*|[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*)\b"
+    # Both flags may be combined (-rf/-fr) or written as separate tokens
+    # (-r -f), which the old single-token match missed.
+    r"rm\b(?=[^\n;|&]*\s-\w*r)(?=[^\n;|&]*\s-\w*f)"
     r"|mkfs(?:\.\w+)?\b"
     r"|dd\s+.*\bof\s*=\s*/dev/"
     r"|shred\b"
@@ -113,9 +116,10 @@ _DESTRUCTIVE = re.compile(
 )
 
 _PIPE_TO_SHELL = re.compile(
-    r"(?:curl|wget|fetch)\b[^|;]*\|\s*(?:ba)?sh\b"
-    r"|(?:curl|wget|fetch)\b[^|;]*\|\s*(?:ba)?sh\s+-s\b"
-    r"|\b(?:ba)?sh\s+-c\s+.*(?:curl|wget)\b",
+    # `| sudo sh`, `| /bin/sh`, `| zsh` and `| dash` are the same install idiom.
+    r"(?:curl|wget|fetch)\b[^|;]*\|\s*(?:sudo\s+)?(?:[\w./-]*/)?(?:ba|z|da)?sh\b"
+    r"|(?:curl|wget|fetch)\b[^|;]*\|\s*(?:[\w./-]*/)?(?:ba|z|da)?sh\s+-s\b"
+    r"|\b(?:ba|z|da)?sh\s+-c\s+.*(?:curl|wget)\b",
     re.IGNORECASE,
 )
 
@@ -124,7 +128,11 @@ _CHAINING = re.compile(
 )
 
 _UNSAFE_REDIRECT = re.compile(
-    r"(?:^|[\s;|&])(?:>>?|Tee-Object)\s*/(?:dev/sd|dev/nvme|etc/|boot/)",
+    # No separator is required before `>`: `wipe>/dev/sda` writes just as well as
+    # `wipe > /dev/sda`, and `2>/etc/x` carries a file descriptor instead.
+    r"(?:>>?|Tee-Object)\s*/(?:dev/(?:sd|nvme|vd|xvd|hd|disk|mapper)|etc/|boot/)"
+    # POSIX `tee` writes too, with or without flags: `... | tee -a /etc/sudoers`.
+    r"|\btee\b(?:\s+-\w+)*\s+/(?:etc/|boot/|dev/)",
     re.IGNORECASE,
 )
 
