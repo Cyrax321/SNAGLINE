@@ -435,3 +435,35 @@ def test_min_severity_typo_exits_2(capsys):
     assert exc.value.code == 2
     err = capsys.readouterr().err
     assert "invalid choice" in err, f"argparse should reject the typo, got: {err}"
+
+
+def test_main_serve_rejects_negative_max_risks(monkeypatch, capsys):
+    """A negative --max-risks value is rejected as a usage error before startup (#668)."""
+    started: dict = {}
+
+    def _fake_serve(monitor, host="127.0.0.1", port=8787, **kwargs):
+        started.update(kwargs)
+
+    monkeypatch.setattr("snagline.server.http_server.serve", _fake_serve)
+
+    code = main(["serve", "--max-risks", "-1"])
+    assert code == 2
+    assert not started
+    err = capsys.readouterr().err
+    assert "--max-risks" in err
+
+
+def test_main_serve_bind_failure_reports_clean_diagnostic(monkeypatch, capsys):
+    """A bind or startup OSError must report a clean diagnostic and exit 1,
+    without displaying a Python traceback (#666)."""
+
+    def _fail_serve(*args, **kwargs):
+        raise OSError("cannot assign requested address")
+
+    monkeypatch.setattr("snagline.server.http_server.serve", _fail_serve)
+
+    code = main(["serve", "--host", "127.0.0.1", "--port", "0"])
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "snagline serve: cannot start listener" in err
+    assert "Traceback" not in err

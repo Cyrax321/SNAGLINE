@@ -1042,3 +1042,57 @@ def test_events_batch_with_a_bad_id_ingests_nothing() -> None:
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_664_unsupported_method_with_malformed_content_length() -> None:
+    """An unsupported method with malformed Content-Length must yield only
+    a single 400 response, not followed by a second 405 response (#664)."""
+    sink = _RecordingSink()
+    server, base = _start_server(sink)
+    port = server.server_address[1]
+    try:
+        sock = socket.create_connection(("127.0.0.1", port), timeout=5)
+        try:
+            req = (
+                b"PUT /events HTTP/1.1\r\n"
+                b"Host: localhost\r\n"
+                b"Content-Length: abc\r\n"
+                b"Connection: close\r\n\r\n"
+            )
+            sock.sendall(req)
+            resp = b""
+            while chunk := sock.recv(4096):
+                resp += chunk
+        finally:
+            sock.close()
+        assert resp.startswith(b"HTTP/1.0 400") or resp.startswith(b"HTTP/1.1 400")
+        assert b"405" not in resp, "connection received a second status line (405)"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_667_bearer_scheme_case_insensitive() -> None:
+    """Authorization Bearer scheme is case-insensitive per RFC 7235 §2.1 (#667)."""
+    sink = _RecordingSink()
+    server, base = _start_server(sink, auth_token="sekret")
+    try:
+        for scheme in ("bearer", "BEARER", "Bearer"):
+            code = _get(base, "/metrics", headers={"Authorization": f"{scheme} sekret"})
+            assert code == 200, f"scheme {scheme} was rejected"
+        bad_code = _get(base, "/metrics", headers={"Authorization": "bearer wrong"})
+        assert bad_code == 401
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_668_max_risks_zero_retains_nothing() -> None:
+    """--max-risks 0 builds a deque of maxlen=0 and retains nothing (#668)."""
+    from snagline.server.http_server import make_handler
+
+    handler = make_handler(Monitor.default(), max_risks=0)
+    assert getattr(handler, "snagline_risks").maxlen == 0
+
+    with pytest.raises(ValueError, match="non-negative"):
+        make_handler(Monitor.default(), max_risks=-1)

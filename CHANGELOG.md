@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- HTTP server `_method_not_allowed`: unsupported HTTP methods with malformed
+  `Content-Length` headers no longer emit duplicate responses (HTTP 400 followed by
+  HTTP 405) on the same connection (#664).
+- CLI `snagline serve`: socket bind and OS network errors (e.g., `EADDRINUSE`) are now
+  caught and reported to stderr with exit code 1 without dumping Python stack traces (#666).
+- HTTP server authorization: bearer token authentication now accepts the `Bearer`
+  scheme case-insensitively per RFC 6750 / RFC 7235 (e.g. `bearer`, `BEARER`, `Bearer`) (#667).
+- HTTP server and CLI `max_risks`: `--max-risks 0` is now honored to retain zero risks
+  in memory (`maxlen=0`), negative values are rejected at startup with exit code 2, and
+  `make_handler` enforces non-negative `max_risks` with `ValueError` (#668).
 - `policy_from_dict` now rejects an unknown key inside a rule entry and a missing
   `patterns`/`tools` list with a `PolicyError` naming `rules[i].<key>`. Before, a
   typo'd key was ignored and the rule was built with an empty list: a deny rule

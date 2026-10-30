@@ -630,7 +630,9 @@ def make_handler(
             # equality semantics are unchanged.
             token_b = token.encode()
             authz = self.headers.get("Authorization", "")
-            if authz.startswith("Bearer "):
+            # RFC 7235 §2.1: auth-scheme is case-insensitive, so "bearer " and
+            # "BEARER " authenticate identically to "Bearer " (issue #667).
+            if authz[:7].casefold() == "bearer ":
                 return hmac.compare_digest(
                     authz[len("Bearer ") :].strip().encode(), token_b
                 )
@@ -1289,7 +1291,8 @@ def make_handler(
 
         def _method_not_allowed(self) -> None:
             """Answer a route that exists but does not accept this method."""
-            self._drain_body()
+            if not self._drain_body():
+                return
             path = urlsplit(self.path).path
             # Same auth-first ordering as the GET path: /health stays open, and
             # an unauthenticated caller gets the same answer for every path so
@@ -1305,25 +1308,36 @@ def make_handler(
             else:
                 self._respond(404, {"error": "not found"})
 
-        def _drain_body(self) -> None:
+        def _drain_body(self) -> bool:
             """Read and discard a declared request body before answering.
 
             Used on the paths that do not read a body themselves: leaving it
             unread makes the peer see EPIPE/reset instead of the status line
             (the same hazard the 401/413 paths already drain for, #121).
+
+            Returns False if the request was already answered (e.g. 400 for a
+            malformed Content-Length), True if the caller should proceed to
+            answer (issue #664).
             """
             declared = self._parse_content_length()
-            if not declared:
-                # None: a malformed Content-Length was already answered 400.
-                # 0: no body declared.
-                return
-            self._discard_overcap_body(declared)
+            if declared is None:
+                return False
+            if declared > 0:
+                self._discard_overcap_body(declared)
+            if declared == 0 and self._is_chunked():
+                self._drain_chunked_rest()
+            return True
 
     _Handler.snagline_monitor = monitor
     _Handler.snagline_tracker = tracker
     # Bounded: POST /risks is an open-ended ingest point, so retain only the
     # most recent max_risks entries rather than growing without limit.
-    _Handler.snagline_risks = deque(maxlen=max(1, max_risks))
+    # 0 honours the request to retain nothing; negative values are rejected (issue #668).
+    if max_risks < 0:
+        raise ValueError(
+            f"max_risks must be non-negative (0 disables retention), got {max_risks}"
+        )
+    _Handler.snagline_risks = deque(maxlen=max_risks)
     # The deque is read on GET /risks and written on POST /risks from different
     # handler threads; both ends serialize on this lock (issue #543).
     _Handler.snagline_risks_lock = threading.Lock()
