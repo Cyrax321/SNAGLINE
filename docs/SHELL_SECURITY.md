@@ -19,11 +19,11 @@ deliberately separate from the runtime `Monitor` detectors: it never observes
 
 | rule_id | default severity | catches (examples) |
 |---|---|---|
-| `destructive_command` | critical | `rm -rf`, `mkfs`, `dd ... of=/dev/...`, fork bomb |
-| `pipe_to_shell` | critical | `curl ... \| sh`, `wget ... \| bash` |
-| `command_chaining` | warning | `;`, `&&`, `||`, backticks, `$(...)` |
-| `unsafe_redirect` | critical | `> /dev/sda`, `> /etc/...` |
-| `obfuscation` | critical | `base64 -d \| sh`, `eval`, `${IFS}`, `\\xNN` |
+| `destructive_command` | critical | `rm -rf`, `rm -r -f`, `/bin/rm`, `mkfs`, `dd ... of=/dev/...`, fork bomb |
+| `pipe_to_shell` | critical | `curl ... \| sh`, `wget ... \| sudo bash`, `\| dash`, `\| /bin/sh` |
+| `command_chaining` | warning | `;`, `&&`, `\|\|`, backticks, `$(...)` |
+| `unsafe_redirect` | critical | `> /dev/sda`, `>> /dev/vda`, `2> /etc/...`, `\| tee /etc/sudoers` |
+| `obfuscation` | critical | `base64 -d \| sh`, `eval`, `${IFS}`, `\xNN` |
 
 Rules can be enabled, disabled, or severity-overridden through
 `ShellThreatConfig`.
