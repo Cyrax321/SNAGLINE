@@ -1,5 +1,6 @@
 from snagline.dedup import EventDeduplicator
 
+
 def test_dedup_duplicate_detection():
     dedup = EventDeduplicator()
     payload = {"key": "val", "count": 1}

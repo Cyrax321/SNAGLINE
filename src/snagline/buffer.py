@@ -1,14 +1,16 @@
 """Bounded event buffer with eviction policies."""
 
 from __future__ import annotations
-from typing import Any, List
+
+from typing import Any
+
 
 class BoundedEventBuffer:
     def __init__(self, capacity: int = 1000) -> None:
         if capacity <= 0:
             raise ValueError("capacity must be positive")
         self.capacity = capacity
-        self.items: List[Any] = []
+        self.items: list[Any] = []
 
     def push(self, item: Any) -> bool:
         evicted = False
