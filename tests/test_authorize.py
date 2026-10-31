@@ -945,3 +945,16 @@ def test_fail_closed_profile_does_not_short_circuit_allow_agent_tools_issue_683(
     res_unknown = policy.decide(req_unknown)
     assert res_unknown.decision == "deny"
     assert "is unknown" in res_unknown.reason
+
+
+def test_deny_command_glob_truncated_command_rejected_issue_695() -> None:
+    """deny_command_glob rejects truncated commands to prevent glob bypass (#695)."""
+    rule = deny_command_glob("rm -rf*")
+    cmd = "echo " + "a" * 5000 + " ; rm -rf /"
+    req = ToolRequest.from_tool_input("Bash", {"command": cmd})
+
+    assert req.resource.endswith("...<truncated>")
+    verdict = rule(req)
+    assert verdict is not None
+    assert verdict.decision == "deny"
+    assert "truncated" in verdict.reason
