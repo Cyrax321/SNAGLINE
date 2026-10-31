@@ -994,3 +994,30 @@ def test_monitor_restore_keeps_a_warm_up_readout_on_the_default_path():
         "the warm-up readout was lost across a Monitor snapshot/restore"
     )
     assert np.allclose(esn._episodes["ep"].beta, esn2._episodes["ep"].beta)
+
+
+def test_mahalanobis_score_overflowing_latency_saturates_issue_670():
+    """Extreme and infinite latencies must saturate to 1.0 rather than NaN (#670)."""
+    import math
+
+    tb = ToolBaseline(tool_name="bash")
+    for v in (50.0, 100.0, 150.0):
+        tb.add(v, error=False)
+    prof = BaselineProfile()
+    prof.tools["bash"] = tb
+    d = EsnCusumDetector(baseline=prof)
+
+    for lat in (1e100, 1e308, float("inf")):
+        ev = StepEvent(
+            step_id="s",
+            episode_id="ep",
+            timestamp=1.0,
+            action_type="tool_call",
+            action_signature="sig",
+            tool_name="bash",
+            latency_ms=lat,
+            error=False,
+        )
+        score = d._mahalanobis_score(ev)
+        assert score == pytest.approx(1.0)
+        assert not math.isnan(score)
