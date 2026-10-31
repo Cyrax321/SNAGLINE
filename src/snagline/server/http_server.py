@@ -862,6 +862,8 @@ def make_handler(
                 self._post_episodes_end()
             elif route == "/risks":
                 self._post_risks()
+            elif route == "/security/eval":
+                self._post_security_eval()
             else:
                 self._drain_request_body()
                 self._respond(404, {"error": "not found"})
@@ -897,6 +899,44 @@ def make_handler(
                 flush=True,
             )
             self._respond(202, {"status": "received", "trigger": risk.get("trigger")})
+
+        def _post_security_eval(self) -> None:
+            """Evaluate a proposed tool request against security controls."""
+            from snagline.security_evaluation import evaluate_request
+
+            body = self._read_body()
+            if body is None:
+                return
+            try:
+                payload = json.loads(body.decode("utf-8"))
+            except Exception as err:
+                self._respond(400, {"error": f"invalid JSON payload: {err}"})
+                return
+
+            if not isinstance(payload, dict):
+                self._respond(400, {"error": "request body must be a JSON object"})
+                return
+
+            tool_name = payload.get("tool_name")
+            if not tool_name or not isinstance(tool_name, str):
+                self._respond(400, {"error": "tool_name is required and must be a string"})
+                return
+
+            action = payload.get("action", "unknown")
+            resource = payload.get("resource")
+            tool_input = payload.get("tool_input", {})
+
+            try:
+                res = evaluate_request(
+                    tool_name=tool_name,
+                    action=str(action),
+                    resource=str(resource) if resource is not None else None,
+                    tool_input=tool_input if isinstance(tool_input, dict) else {},
+                )
+                self._respond(200, res)
+            except Exception as err:
+                self._respond(500, {"error": f"evaluation error: {err}"})
+
 
         def _post_events(self) -> None:
             body = self._read_body()
