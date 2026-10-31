@@ -172,6 +172,14 @@ def _cycle_tool(i: int) -> str:
 # --------------------------------------------------------------------------
 
 
+def _variant_no(ep: str) -> int:
+    """Extract integer variant suffix from episode id (e.g. 'trigger-02' -> 2)."""
+    try:
+        return int(ep.rsplit("-", 1)[-1])
+    except (ValueError, IndexError):
+        return 0
+
+
 def build_loop(ep: str, rng: random.Random) -> list[dict]:
     """Three identical retry calls inside the 12-signature loop window.
 
@@ -179,8 +187,9 @@ def build_loop(ep: str, rng: random.Random) -> list[dict]:
     statistic never evaluates; args are otherwise unique so only the deliberate
     triple matches the repeat threshold.
     """
+    v = _variant_no(ep)
     b = _Builder(ep, rng)
-    for i in range(4):
+    for i in range(2 + v):
         b.add(_cycle_tool(i), f"q={rng.randrange(10**6)}")
     # The loop: same tool, same args, hence one identical signature x3.
     for _ in range(3):
@@ -191,8 +200,9 @@ def build_loop(ep: str, rng: random.Random) -> list[dict]:
 
 def build_error_cascade(ep: str, rng: random.Random) -> list[dict]:
     """Three consecutive erroring tool calls trip the consecutive rule (3)."""
+    v = _variant_no(ep)
     b = _Builder(ep, rng)
-    for i in range(3):
+    for i in range(2 + v):
         b.add(_cycle_tool(i), f"req={rng.randrange(10**6)}")
     for i in range(3):
         b.add("deploy_service", f"svc-{i}", error=True, error_type="TimeoutError")
@@ -207,8 +217,12 @@ def build_latency_anomaly(ep: str, rng: random.Random) -> list[dict]:
     (5% of 400 = 20ms) sets sigma0. A 2500ms spike yields z = (2500-400)/20 =
     105, cusum ~= 104.5 >> h=5: instant alarm on the first post-warmup step.
     """
+    v = _variant_no(ep)
     b = _Builder(ep, rng)
-    for ms in (400.0, 395.0, 405.0, 398.0, 402.0):
+    latencies = [400.0, 395.0, 405.0, 398.0, 402.0]
+    for _ in range(v):
+        latencies.append(400.0 + (rng.random() - 0.5) * 4.0)
+    for ms in latencies:
         b.add("search_web", f"q={rng.randrange(10**6)}", latency_ms=ms)
     for ms in (2500.0, 2400.0):
         b.add("search_web", f"q={rng.randrange(10**6)}", latency_ms=ms)
@@ -227,17 +241,19 @@ def build_token_runaway(ep: str, rng: random.Random) -> list[dict]:
     bits (in band); latency fields are absent so the CUSUM latency detector
     is inert.
     """
+    v = _variant_no(ep)
     b = _Builder(ep, rng)
-    for i in range(20):
+    warmup = 20 + v
+    for i in range(warmup):
         b.add(
             _cycle_tool(i),
             f"item={rng.randrange(10**6)}",
             tokens_in=700,
             tokens_out=200,
         )
-    for i in range(6):
+    for i in range(6 + (v % 2)):
         b.add(
-            _cycle_tool(20 + i),
+            _cycle_tool(warmup + i),
             f"item={rng.randrange(10**6)}",
             tokens_in=2300,
             tokens_out=300,
@@ -255,15 +271,18 @@ def build_budget_breach(ep: str, rng: random.Random) -> list[dict]:
     frozen mu0=1000/sigma0=50 CUSUM) and cannot alarm. Five-tool cycling
     keeps meltdown in band throughout.
     """
+    v = _variant_no(ep)
     b = _Builder(ep, rng)
-    for i in range(30):
+    pre = 24 + v * 2
+    for i in range(pre):
         b.add(
             _cycle_tool(i), f"row={rng.randrange(10**6)}", tokens_in=800, tokens_out=200
         )
-    b.add(_cycle_tool(30), "bulk_export=huge", tokens_in=21_000, tokens_out=0)
+    breach_tokens = 51_000 - pre * 1000
+    b.add(_cycle_tool(pre), "bulk_export=huge", tokens_in=breach_tokens, tokens_out=0)
     for i in range(2):
         b.add(
-            _cycle_tool(31 + i),
+            _cycle_tool(pre + 1 + i),
             f"row={rng.randrange(10**6)}",
             tokens_in=800,
             tokens_out=200,
@@ -278,7 +297,10 @@ def build_meltdown_low(ep: str, rng: random.Random) -> list[dict]:
     action_signature; unique args keep signatures distinct so only the
     collapse fires once the 20-call window fills (H = 0 < 0.4 bits).
     """
+    v = _variant_no(ep)
     b = _Builder(ep, rng)
+    for i in range(v * 2):
+        b.add(_cycle_tool(i), f"warmup_{i}")
     for i in range(22):
         b.add("scrape_page", f"page_{i}")
     return b.finish_with_output()
@@ -286,8 +308,11 @@ def build_meltdown_low(ep: str, rng: random.Random) -> list[dict]:
 
 def build_meltdown_high(ep: str, rng: random.Random) -> list[dict]:
     """Churn: strict 12-tool cycle puts every full 20-window at ~3.52 bits."""
+    v = _variant_no(ep)
     b = _Builder(ep, rng)
-    for i in range(24):
+    for i in range(v * 2):
+        b.add("single_tool", f"pre_{i}")
+    for i in range(24 + v * 2):
         b.add(CHURN_POOL[i % len(CHURN_POOL)], f"call-{i}-{rng.randrange(10**6)}")
     return b.finish_with_output()
 
@@ -299,10 +324,11 @@ def build_silent_abort(ep: str, rng: random.Random) -> list[dict]:
     the run nothing else can fire (fewer than 20 tool calls, no errors, no
     latency/token telemetry).
     """
+    v = _variant_no(ep)
     b = _Builder(ep, rng)
-    for i in range(5):
+    for i in range(4 + v):
         b.add(_cycle_tool(i), f"k={rng.randrange(10**6)}")
-    b.add("write_report", "draft=v1")  # ends mid-work, never emits output
+    b.add("write_report", f"draft=v{v}")  # ends mid-work, never emits output
     return b.events  # deliberately NOT closed with a message step
 
 
@@ -322,9 +348,11 @@ def build_stagnation(ep: str, rng: random.Random) -> list[dict]:
     total wall 50s <120s so wall_clock_budget stays silent while windows
     complete.
     """
+    v = _variant_no(ep)
     b = _Builder(ep, rng)
     sigs = [(f"st_tool_{i}", f"fixed_{i}") for i in range(6)]
-    for i in range(100):
+    num_steps = 100 + v * 10
+    for i in range(num_steps):
         # Random pick among 6 keeps novelty low but not periodic
         tool, args = sigs[rng.randrange(6)]
         ts = BASE_TS + i * 0.5
@@ -338,7 +366,7 @@ def build_stagnation(ep: str, rng: random.Random) -> list[dict]:
             "__output__",
             f"final-answer-{ep}",
             action_type="message",
-            timestamp=BASE_TS + 100 * 0.5 + 0.5,
+            timestamp=BASE_TS + num_steps * 0.5 + 0.5,
         )
     )
     b._n += 1
@@ -352,15 +380,16 @@ def build_side_effect_duplicate(ep: str, rng: random.Random) -> list[dict]:
     tolerated, second exceeds allowed_repeats=1. Keep total tool calls low
     and args distinct elsewhere so loop/meltdown stay quiet.
     """
+    v = _variant_no(ep)
     b = _Builder(ep, rng)
-    for i in range(3):
+    for i in range(2 + v):
         b.add(_cycle_tool(i), f"init={rng.randrange(10**6)}")
     # First charge
     b.add("charge_card", "amt=10", side_effect=True)
-    b.add(_cycle_tool(3), f"mid={rng.randrange(10**6)}")
+    b.add(_cycle_tool(2 + v), f"mid={rng.randrange(10**6)}")
     # Duplicate charge, same signature
     b.add("charge_card", "amt=10", side_effect=True)
-    b.add(_cycle_tool(4), f"tail={rng.randrange(10**6)}")
+    b.add(_cycle_tool(3 + v), f"tail={rng.randrange(10**6)}")
     return b.finish_with_output()
 
 
@@ -400,7 +429,10 @@ def build_cycle(ep: str, rng: random.Random) -> list[dict]:
     Entropy log2(6)=2.58 inside (0.4, 2.8) so meltdown silent. Total wall
     36s <120s, gap 1.5s, no idle.
     """
+    v = _variant_no(ep)
     b = _Builder(ep, rng)
+    for i in range(v * 2):
+        b.add(_cycle_tool(i), f"pre_{i}")
     cyc = [(f"c_tool_{i}", f"c-arg-{i}") for i in range(6)]
     for i in range(24):
         tool, args = cyc[i % 6]
@@ -418,8 +450,9 @@ def build_stall(ep: str, rng: random.Random) -> list[dict]:
     and meltdown FP; the gate still sees stall covered. To keep healthy
     controls silent we avoid long stalls there.
     """
+    v = _variant_no(ep)
     b = _Builder(ep, rng)
-    for i in range(2):
+    for i in range(1 + v):
         b.add(_cycle_tool(i), f"warm={rng.randrange(10**6)}")
     for _ in range(25):
         b.add("stalled_tool", "repeat-id-99")
@@ -488,20 +521,21 @@ def build_idle_gap(ep: str, rng: random.Random) -> list[dict]:
     ~22.5s before the final message). Keep tool entropy inside band and
     signatures unique so loop/meltdown/stagnation stay silent.
     """
+    v = _variant_no(ep)
     b = _Builder(ep, rng)
-    for i in range(5):
+    for i in range(4 + v):
         b.add(_cycle_tool(i), f"q={rng.randrange(10**6)}")
     # Create a gap by bumping the next event's timestamp by 15s.
     # _Builder uses i*1.5, so we manually adjust the timestamp of the next
     # event after building it.
-    b.add(_cycle_tool(5), f"gap={rng.randrange(10**6)}")
+    b.add(_cycle_tool(4 + v), f"gap={rng.randrange(10**6)}")
     # Adjust last event's timestamp to be 15s after previous
     prev_ts = b.events[-2]["timestamp"]
     b.events[-1]["timestamp"] = prev_ts + 15.0
     # Shift subsequent events to keep monotonic gaps
     gap_base = b.events[-1]["timestamp"]
     for i in range(3):
-        b.add(_cycle_tool(6 + i), f"q={rng.randrange(10**6)}")
+        b.add(_cycle_tool(5 + v + i), f"q={rng.randrange(10**6)}")
         b.events[-1]["timestamp"] = gap_base + (i + 1) * STEP_GAP_S
     # Final output message must stay after the gap, at +1.5s
     b.add("__output__", f"final-answer-{ep}", action_type="message")
@@ -515,8 +549,9 @@ def build_wall_clock_budget(ep: str, rng: random.Random) -> list[dict]:
     85 steps at 1.5s gaps = 126s wall, triggers breach once. No idle gaps.
     Keep 5-tool cycle for meltdown silence, no side_effect, no compaction.
     """
+    v = _variant_no(ep)
     b = _Builder(ep, rng)
-    for i in range(85):
+    for i in range(82 + v * 4):
         b.add(_cycle_tool(i), f"w={rng.randrange(10**6)}")
     return b.finish_with_output()
 
