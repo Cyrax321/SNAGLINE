@@ -480,6 +480,16 @@ def findings_at_or_above(
 # ---------------------------------------------------------------------------
 
 
+def _is_truncated(val: Any) -> bool:
+    if isinstance(val, str):
+        return val.endswith("...<truncated>") or len(val) > 4096
+    if isinstance(val, Mapping):
+        return any(_is_truncated(v) for v in val.values())
+    if isinstance(val, (list, tuple, set, frozenset)):
+        return any(_is_truncated(item) for item in val)
+    return False
+
+
 def as_authorize_rule(config: SecretSecurityConfig | None = None):
     """Build a ``snagline.authorize.Rule`` from secret detection findings.
 
@@ -490,13 +500,11 @@ def as_authorize_rule(config: SecretSecurityConfig | None = None):
     cfg = config or SecretSecurityConfig()
 
     def _rule(request: ToolRequest) -> RuleVerdict | None:
-        if request.resource and (
-            request.resource.endswith("...<truncated>") or len(request.resource) > 4096
-        ):
+        if _is_truncated(request.resource) or _is_truncated(request.tool_input):
             return RuleVerdict(
                 rule_id="secret_exposure",
                 decision=cfg.decision,
-                reason="resource exceeds maximum length or is truncated",
+                reason="resource or payload exceeds maximum length or is truncated",
             )
 
         hits: list[SecretFinding] = []
