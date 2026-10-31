@@ -100,6 +100,7 @@ import hmac
 import json
 import logging
 import math
+import re
 import ssl
 import sys
 import threading
@@ -146,6 +147,14 @@ METRICS_FORMATS = ("prometheus", "classic")
 # ids are identifiers, never content; the cap keeps memory bounded even if a
 # host streams unlimited unique ids through one long-lived sidecar process.
 _MAX_TRACKED_EPISODES = 10_000
+
+# RFC 9110 §8.6 pins Content-Length = 1*DIGIT (issue #723).
+# Bare int() accepts leading '+' and '_' digit separators, admitting invalid framing.
+_CONTENT_LENGTH_RE = re.compile(r"^[0-9]+$")
+
+# RFC 9112 §7.1 pins chunk-size = 1*HEXDIG (issue #723).
+# Bare int(..., 16) accepts '+' and '_' digit separators, which hang or smuggle.
+_CHUNK_SIZE_RE = re.compile(rb"^[0-9a-fA-F]+$")
 
 # Over-cap POSTs are drained and discarded before the 413 goes out, but only
 # within this much above max_body_bytes (issue #121): reading the body lets a
@@ -1056,7 +1065,8 @@ def make_handler(
             An absent Content-Length header is treated as length 0 -- the body
             is bodyless unless it is framed as ``Transfer-Encoding: chunked``,
             which ``_read_body`` decodes separately (issue #434). A present
-            but non-numeric or negative value is answered
+            value must match RFC 9110 §8.6 1*DIGIT (issue #723); non-numeric,
+            signed (+/-), underscore-separated, or negative values are answered
             with 400 {"error": "invalid Content-Length"} and the caller
             must return without reading any body bytes. Shared by ``do_POST``
             and ``_read_body`` so every entry point fails the same way.
@@ -1065,7 +1075,7 @@ def make_handler(
             if raw is None:
                 return 0
             text = raw.strip() if isinstance(raw, str) else str(raw).strip()
-            if text == "":
+            if not _CONTENT_LENGTH_RE.match(text):
                 self._respond(400, {"error": "invalid Content-Length"})
                 return None
             try:
@@ -1151,8 +1161,12 @@ def make_handler(
                 line = self.rfile.readline(_MAX_FRAME_LINE_BYTES)
                 if not line:
                     return b"".join(parts)  # client hung up; keep what arrived
+                token = line.strip().split(b";", 1)[0].strip()
+                if not _CHUNK_SIZE_RE.match(token):
+                    self._respond(400, {"error": "invalid chunk size"})
+                    return None
                 try:
-                    size = int(line.strip().split(b";", 1)[0], 16)
+                    size = int(token, 16)
                 except ValueError:
                     self._respond(400, {"error": "invalid chunk size"})
                     return None
@@ -1217,8 +1231,11 @@ def make_handler(
                 line = self.rfile.readline(_MAX_FRAME_LINE_BYTES)
                 if not line:
                     return
+                token = line.strip().split(b";", 1)[0].strip()
+                if not _CHUNK_SIZE_RE.match(token):
+                    return  # broken framing: nothing more to drain usefully
                 try:
-                    size = int(line.strip().split(b";", 1)[0], 16)
+                    size = int(token, 16)
                 except ValueError:
                     return  # broken framing: nothing more to drain usefully
                 if size <= 0:
