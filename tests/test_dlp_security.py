@@ -508,10 +508,29 @@ def test_inspect_payload_frozenset_and_set() -> None:
         "set_values": {"123-45-6789"},
         "frozenset_values": frozenset({"4111-1111-1111-1111"}),
     }
-    findings = inspect_payload(payload)
-    rules = {f.rule_id for f in findings}
+    findings_fs = inspect_payload(payload)
+    rules = {f.rule_id for f in findings_fs}
     assert "us_ssn" in rules
     assert "credit_card" in rules
+
+
+def test_inspect_payload_set_ordering_deterministic_issue_698() -> None:
+    """Set and frozenset element paths are deterministically ordered (#698)."""
+    s = {
+        "call me at 555-123-4567",
+        "card 4111 1111 1111 1111",
+        "reach me at a@b.com",
+    }
+    findings = inspect_payload({"f": s})
+    paths_and_rules = [(f.path, f.rule_id) for f in findings]
+    assert paths_and_rules == [
+        ("f[0]", "phone_number"),
+        ("f[1]", "credit_card"),
+        ("f[2]", "email_address"),
+    ]
+
+    findings_fs = inspect_payload({"f": frozenset(s)})
+    assert [(f.path, f.rule_id) for f in findings_fs] == paths_and_rules
 
 
 def test_secrets_integration_retains_distinct_signatures() -> None:
