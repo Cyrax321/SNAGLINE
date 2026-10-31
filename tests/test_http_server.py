@@ -590,6 +590,45 @@ def test_received_risks_are_bounded() -> None:
         server.server_close()
 
 
+def test_received_risks_max_risks_zero_retains_nothing() -> None:
+    """--max-risks 0 builds a deque of maxlen=0 and retains no risks (issue #668)."""
+    server, base = _start_server(_RecordingSink(), max_risks=0)
+    try:
+        for i in range(3):
+            req = urllib.request.Request(
+                base + "/risks",
+                data=json.dumps(
+                    {
+                        "episode_id": "ep",
+                        "step_id": str(i),
+                        "score": 0.9,
+                        "trigger": "loop",
+                        "detail": "d",
+                        "timestamp": float(i),
+                    }
+                ).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                assert resp.status == 202
+        with urllib.request.urlopen(base + "/risks", timeout=5) as resp:
+            risks = json.loads(resp.read())["risks"]
+        assert risks == []
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_make_handler_rejects_negative_max_risks() -> None:
+    """make_handler raises ValueError when max_risks is negative (issue #668)."""
+    from snagline.monitor import Monitor
+    from snagline.server.http_server import make_handler
+
+    with pytest.raises(ValueError, match="max_risks must be non-negative"):
+        make_handler(Monitor.default(), max_risks=-1)
+
+
 # --- request origin (issue #388) --------------------------------------------
 # Authenticating the token does not authenticate the sender: ``snagline serve``
 # defaults to no token, and a page the operator is visiting can POST to the

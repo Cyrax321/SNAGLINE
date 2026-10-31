@@ -303,6 +303,22 @@ def test_main_serve_rejects_a_non_positive_max_body_bytes(monkeypatch, capsys, b
     assert "unlimited" in err
 
 
+def test_main_serve_rejects_negative_max_risks(capsys, monkeypatch):
+    """Negative --max-risks is rejected before serve() is called (issue #668)."""
+    started: dict = {}
+
+    def _fake_serve(monitor, host="127.0.0.1", port=8787, **kwargs):
+        started.update(kwargs)
+
+    monkeypatch.setattr("snagline.server.http_server.serve", _fake_serve)
+
+    code = main(["serve", "--max-risks", "-1"])
+    assert code == 2
+    assert not started
+    err = capsys.readouterr().err
+    assert "--max-risks must be non-negative" in err
+
+
 def test_main_serve_reads_auth_token_from_the_environment(monkeypatch):
     """The token must be settable without putting it in argv, where every other
     process on the box can read it out of ps."""
