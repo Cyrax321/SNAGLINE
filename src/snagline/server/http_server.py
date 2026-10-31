@@ -1329,7 +1329,8 @@ def make_handler(
 
         def _method_not_allowed(self) -> None:
             """Answer a route that exists but does not accept this method."""
-            self._drain_body()
+            if not self._drain_body():
+                return
             path = urlsplit(self.path).path
             # Same auth-first ordering as the GET path: /health stays open, and
             # an unauthenticated caller gets the same answer for every path so
@@ -1345,19 +1346,23 @@ def make_handler(
             else:
                 self._respond(404, {"error": "not found"})
 
-        def _drain_body(self) -> None:
+        def _drain_body(self) -> bool:
             """Read and discard a declared request body before answering.
 
             Used on the paths that do not read a body themselves: leaving it
             unread makes the peer see EPIPE/reset instead of the status line
             (the same hazard the 401/413 paths already drain for, #121).
+
+            Returns False if the body was malformed and an error response
+            was already written to the wire; returns True otherwise (issue #664).
             """
             declared = self._parse_content_length()
-            if not declared:
+            if declared is None:
                 # None: a malformed Content-Length was already answered 400.
-                # 0: no body declared.
-                return
-            self._discard_overcap_body(declared)
+                return False
+            if declared > 0:
+                self._discard_overcap_body(declared)
+            return True
 
     _Handler.snagline_monitor = monitor
     _Handler.snagline_tracker = tracker
