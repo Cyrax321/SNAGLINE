@@ -364,6 +364,14 @@ def as_authorize_rule(config: ShellThreatConfig | None = None):
         )
         if not is_exec:
             return None
+        if request.resource and (
+            request.resource.endswith("...<truncated>") or len(request.resource) > 4096
+        ):
+            return RuleVerdict(
+                rule_id="shell_threats",
+                decision=cfg.decision,
+                reason="command exceeds maximum length or is truncated",
+            )
         # Prefer full command from tool_input if available to avoid truncation
         # bypasses when request.resource was bounded (issue #650).
         cmd = request.resource or ""
