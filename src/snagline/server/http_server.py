@@ -631,9 +631,7 @@ def make_handler(
             token_b = token.encode()
             authz = self.headers.get("Authorization", "")
             if authz[:7].lower() == "bearer ":
-                return hmac.compare_digest(
-                    authz[7:].strip().encode(), token_b
-                )
+                return hmac.compare_digest(authz[7:].strip().encode(), token_b)
             header = self.headers.get("X-Snagline-Token")
             if header is None:
                 return False
@@ -919,7 +917,9 @@ def make_handler(
 
             tool_name = payload.get("tool_name")
             if not tool_name or not isinstance(tool_name, str):
-                self._respond(400, {"error": "tool_name is required and must be a string"})
+                self._respond(
+                    400, {"error": "tool_name is required and must be a string"}
+                )
                 return
 
             action = payload.get("action", "unknown")
@@ -936,7 +936,6 @@ def make_handler(
                 self._respond(200, res)
             except Exception as err:
                 self._respond(500, {"error": f"evaluation error: {err}"})
-
 
         def _post_events(self) -> None:
             body = self._read_body()

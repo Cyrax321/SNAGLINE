@@ -608,17 +608,29 @@ def _build_parser() -> argparse.ArgumentParser:
         "eval",
         help="Evaluate a proposed tool request against security policies (offline).",
     )
-    p_eval.add_argument("--tool", required=True, help="Tool name to evaluate (e.g. 'Bash', 'Read').")
-    p_eval.add_argument("--action", default="unknown", help="Action type (e.g. 'execute', 'read').")
-    p_eval.add_argument("--resource", default=None, help="Resource target (command string, path, url).")
-    p_eval.add_argument("--policy", default=None, help="Path to a security policy YAML/JSON file.")
-    p_eval.add_argument("--json", action="store_true", help="Print machine-readable JSON output.")
+    p_eval.add_argument(
+        "--tool", required=True, help="Tool name to evaluate (e.g. 'Bash', 'Read')."
+    )
+    p_eval.add_argument(
+        "--action", default="unknown", help="Action type (e.g. 'execute', 'read')."
+    )
+    p_eval.add_argument(
+        "--resource", default=None, help="Resource target (command string, path, url)."
+    )
+    p_eval.add_argument(
+        "--policy", default=None, help="Path to a security policy YAML/JSON file."
+    )
+    p_eval.add_argument(
+        "--json", action="store_true", help="Print machine-readable JSON output."
+    )
 
     p_val = sub.add_parser(
         "validate-policy",
         help="Validate a security policy file schema.",
     )
-    p_val.add_argument("policy_file", help="Path to the security policy file to validate.")
+    p_val.add_argument(
+        "policy_file", help="Path to the security policy file to validate."
+    )
 
     return parser
 
@@ -1664,7 +1676,9 @@ def _cmd_eval(args: argparse.Namespace) -> int:
         if res.get("findings"):
             print(f"Findings ({len(res['findings'])}):")
             for f in res["findings"]:
-                print(f"  - [{f.get('severity', 'info')}] {f.get('rule_id')}: {f.get('reason')}")
+                print(
+                    f"  - [{f.get('severity', 'info')}] {f.get('rule_id')}: {f.get('reason')}"
+                )
     return 0 if res["decision"] == "allow" else (1 if res["decision"] == "ask" else 2)
 
 

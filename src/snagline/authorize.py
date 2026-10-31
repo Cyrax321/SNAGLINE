@@ -602,11 +602,13 @@ class Policy:
                 # Paired with the narrowed decision so the strictness sort
                 # below never has to re-narrow an Optional field.
                 opinions.append((verdict.decision, verdict))
-                rule_findings.append({
-                    "rule_id": verdict.rule_id,
-                    "decision": verdict.decision,
-                    "reason": verdict.reason,
-                })
+                rule_findings.append(
+                    {
+                        "rule_id": verdict.rule_id,
+                        "decision": verdict.decision,
+                        "reason": verdict.reason,
+                    }
+                )
 
         if not opinions:
             # Name the default in the reason. "no rule matched" reads like a
