@@ -17,6 +17,10 @@ class DiagnosticMetrics:
     timings: Dict[str, List[float]] = field(default_factory=dict)
     max_samples: int = DEFAULT_MAX_SAMPLES
 
+    def __post_init__(self) -> None:
+        if isinstance(self.max_samples, bool) or not isinstance(self.max_samples, int) or self.max_samples <= 0:
+            raise ValueError("max_samples must be a positive integer")
+
     def record_counter(self, name: str, increment: int = 1) -> None:
         """Increment named counter by specified non-negative amount."""
         if not name:
@@ -32,7 +36,7 @@ class DiagnosticMetrics:
         if name not in self.timings:
             self.timings[name] = []
         series = self.timings[name]
-        if len(series) >= self.max_samples:
+        while len(series) >= self.max_samples and series:
             series.pop(0)
         series.append(value)
 
