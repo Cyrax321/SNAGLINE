@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from snagline.config import Config
 from snagline.detectors.silent_abort import SilentAbortDetector
 from snagline.events import StepEvent
 from snagline.monitor import Monitor
@@ -160,3 +161,17 @@ def test_dump_state_still_records_the_types_for_diagnostics():
     assert stock.finalize("ep") is not None, (
         "stock config treats assistant_message as just another tool call"
     )
+
+
+def test_init_reads_config_silent_abort_output_action_types_issue_686() -> None:
+    """SilentAbortDetector(config=cfg) must honor cfg.silent_abort_output_action_types (#686)."""
+    cfg = Config(silent_abort_output_action_types=frozenset({"tool_result", "finish"}))
+    detector = SilentAbortDetector(config=cfg)
+    assert detector.output_action_types == frozenset({"tool_result", "finish"})
+
+    # Explicit argument still takes precedence over config
+    override_detector = SilentAbortDetector(
+        output_action_types={"custom_output"},
+        config=cfg,
+    )
+    assert override_detector.output_action_types == frozenset({"custom_output"})
