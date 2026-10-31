@@ -538,11 +538,25 @@ def format_table(report: ScoreReport) -> str:
                 lines.append(
                     f"  {trig}: median={med_str} min={min(s.latencies)} max={max(s.latencies)}"
                 )
+
+    # Detector attribution clarification (issue #606)
+    lines.append(
+        "  note: 'goal_drift' benchmarks structural GoalDriftDetector; "
+        "semantic_goal_drift is evaluated separately in tests/test_drift_goal_drift.py"
+    )
     return "\n".join(lines)
 
 
 def report_to_json(report: ScoreReport) -> dict:
     return {
+        "metadata": {
+            "notes": {
+                "goal_drift": (
+                    "benchmarks structural GoalDriftDetector; "
+                    "semantic_goal_drift evaluated in tests/test_drift_goal_drift.py"
+                ),
+            }
+        },
         "per_trigger": {
             trig: {
                 "tp": s.tp,
