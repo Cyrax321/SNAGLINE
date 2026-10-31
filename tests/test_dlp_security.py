@@ -527,3 +527,55 @@ def test_secrets_integration_retains_distinct_signatures() -> None:
     signatures = [f.value_signature for f in secret_findings]
     assert len(set(signatures)) == 2
     assert all(len(sig) == 64 for sig in signatures)
+
+
+def test_inspect_payload_set_determinism() -> None:
+    """Ensure set and frozenset elements produce stable paths and finding order (issue #698)."""
+    s = {
+        "call me at 555-123-4567",
+        "card 4111 1111 1111 1111",
+        "reach me at a@b.com",
+    }
+    findings = inspect_payload({"f": s})
+    assert len(findings) == 3
+    # Sorted order of the strings:
+    # 1. "call me at 555-123-4567" -> phone_number
+    # 2. "card 4111 1111 1111 1111" -> credit_card
+    # 3. "reach me at a@b.com" -> email_address
+    assert findings[0].path == "f[0]"
+    assert findings[0].rule_id == "phone_number"
+    assert findings[1].path == "f[1]"
+    assert findings[1].rule_id == "credit_card"
+    assert findings[2].path == "f[2]"
+    assert findings[2].rule_id == "email_address"
+
+    # Frozenset must exhibit the same deterministic labelling
+    fs = frozenset(s)
+    fs_findings = inspect_payload({"f": fs})
+    assert tuple((f.path, f.rule_id) for f in fs_findings) == tuple(
+        (f.path, f.rule_id) for f in findings
+    )
+
+
+def test_inspect_payload_preserves_list_and_tuple_order() -> None:
+    """Verify list and tuple preserve their original index order."""
+    items = [
+        "reach me at a@b.com",
+        "call me at 555-123-4567",
+    ]
+    findings = inspect_payload({"items": items})
+    assert len(findings) == 2
+    assert findings[0].path == "items[0]"
+    assert findings[0].rule_id == "email_address"
+    assert findings[1].path == "items[1]"
+    assert findings[1].rule_id == "phone_number"
+
+
+def test_inspect_payload_mixed_type_set() -> None:
+    """Verify sets with non-string and mixed types do not raise TypeError."""
+    s = {1, 42, "reach me at a@b.com"}
+    findings = inspect_payload(s)
+    assert len(findings) == 1
+    # 'int' sorts before 'str', so 1 is [0], 42 is [1], and 'reach me...' is [2]
+    assert findings[0].path == "[2]"
+    assert findings[0].rule_id == "email_address"
