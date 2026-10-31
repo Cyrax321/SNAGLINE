@@ -92,3 +92,54 @@ def test_adversarial_secret_exfiltration_detection():
         findings = inspect_secrets(payload)
         assert len(findings) >= 1, f"Failed to detect credential pattern: {payload}"
 
+
+def test_inspection_does_not_execute_commands(monkeypatch):
+    import subprocess
+    import os
+
+    called = False
+
+    def fake_exec(*args, **kwargs):
+        nonlocal called
+        called = True
+        raise RuntimeError("Command execution was attempted!")
+
+    monkeypatch.setattr(subprocess, "Popen", fake_exec)
+    monkeypatch.setattr(subprocess, "run", fake_exec)
+    monkeypatch.setattr(os, "system", fake_exec)
+
+    # Run inspection over destructive and adversarial commands
+    findings = inspect_command("rm -rf / && mkfs.ext4 /dev/sda")
+    assert len(findings) >= 1
+    assert called is False, "Inspection must never invoke shell execution!"
+
+
+def test_security_profile_fail_closed_boundary():
+    # Security policy with fail_closed profile denies unknown tools and rule errors
+    def crashing_rule(req):
+        raise RuntimeError("Rule crash!")
+
+    strict_policy = Policy(profile="fail_closed", rules=(crashing_rule,))
+    res = strict_policy.decide(ToolRequest("UnknownTool", "execute"))
+    assert res.decision == "deny"
+
+    res_crash = strict_policy.decide(ToolRequest("Read", "read", "file.txt"))
+    assert res_crash.decision == "deny"
+
+
+def test_monitor_pipeline_hard_fail_open_guarantee():
+    from snagline.monitor import Monitor
+    from snagline.events import StepEvent
+
+    # Runtime monitor must never fail or raise even when detector crashes
+    class CrashingDetector:
+        def step(self, event):
+            raise RuntimeError("Detector exploded!")
+
+    monitor = Monitor(detectors=[CrashingDetector()], sinks=[], fail_open=True)
+    event = StepEvent("step-1", "ep-1", 1700000000.0, "read", "sig-1", tool_name="Read")
+    # Should not raise exception
+    risks = monitor.ingest(event)
+    assert risks is None or isinstance(risks, list)
+
+
