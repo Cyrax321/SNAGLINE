@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import re
+from typing import Any
 
 import pytest
 
@@ -535,3 +536,44 @@ def test_edge_cases_and_coverage_branches() -> None:
         rule(ToolRequest(tool_name="Read", action="read", resource=None, tool_input={}))
         is None
     )
+
+
+def test_inspect_and_redact_mapping_cyclic_containers() -> None:
+    """Issue #679: inspect_tool_input and redact_mapping must not raise RecursionError on cycles."""
+    token = "ghp_" + "111111111111111111111111111111111111"
+    d: dict[str, Any] = {"token": token}
+    d["self"] = d
+    lst: list[Any] = ["safe", token]
+    lst.append(lst)
+    d["cyclic_list"] = lst
+
+    # inspect_tool_input must inspect without infinite loop
+    findings = inspect_tool_input(d)
+    rule_ids = {f.rule_id for f in findings}
+    assert "github_token" in rule_ids
+
+    # redact_mapping must prune cycles without RecursionError
+    redacted = redact_mapping(d)
+    assert redacted["token"] == "[REDACTED:github_token]"
+    assert redacted["self"] == "<cyclic>"
+    assert redacted["cyclic_list"][0] == "safe"
+    assert redacted["cyclic_list"][1] == "[REDACTED:github_token]"
+    assert redacted["cyclic_list"][2] == "<cyclic>"
+
+
+def test_inspect_and_redact_mapping_deeply_nested() -> None:
+    """Issue #679: deeply nested containers beyond max_depth are bounded gracefully."""
+    token = "ghp_" + "111111111111111111111111111111111111"
+    curr: Any = {"secret": token}
+    for _ in range(50):
+        curr = {"nested": curr}
+
+    findings = inspect_tool_input(curr, max_depth=10)
+    assert findings == ()
+
+    redacted = redact_mapping(curr, max_depth=10)
+    step = redacted
+    for _ in range(10):
+        assert isinstance(step, dict) and "nested" in step
+        step = step["nested"]
+    assert step == "<truncated>"

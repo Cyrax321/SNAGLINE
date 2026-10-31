@@ -311,11 +311,15 @@ def inspect_text(
     return tuple(findings)
 
 
+_MAX_TRAVERSAL_DEPTH = 32
+
+
 def inspect_tool_input(
     tool_input: Mapping[str, Any],
     config: SecretSecurityConfig | None = None,
     *,
     extra_rules: Sequence[tuple[str, SecretRuleFn]] = (),
+    max_depth: int = _MAX_TRAVERSAL_DEPTH,
 ) -> tuple[SecretFinding, ...]:
     """Recursively scan string values inside ``tool_input`` for exposed secrets."""
     if not isinstance(tool_input, Mapping):
@@ -323,24 +327,41 @@ def inspect_tool_input(
 
     cfg = config or SecretSecurityConfig()
     findings: list[SecretFinding] = []
+    visited_containers: set[int] = set()
 
-    def _walk(val: Any) -> None:
+    def _walk(val: Any, depth: int = 0) -> None:
+        if depth >= max_depth:
+            return
         if isinstance(val, str):
             findings.extend(inspect_text(val, cfg, extra_rules=extra_rules))
         elif isinstance(val, Mapping):
+            obj_id = id(val)
+            if obj_id in visited_containers:
+                return
+            visited_containers.add(obj_id)
             try:
-                items = list(val.values())
-            except (RuntimeError, TypeError):
-                items = []
-            for v in items:
-                _walk(v)
+                try:
+                    items = list(val.values())
+                except (RuntimeError, TypeError):
+                    items = []
+                for v in items:
+                    _walk(v, depth + 1)
+            finally:
+                visited_containers.remove(obj_id)
         elif isinstance(val, (list, tuple, set, frozenset)):
+            obj_id = id(val)
+            if obj_id in visited_containers:
+                return
+            visited_containers.add(obj_id)
             try:
-                items = list(val)
-            except (RuntimeError, TypeError):
-                items = []
-            for item in items:
-                _walk(item)
+                try:
+                    items = list(val)
+                except (RuntimeError, TypeError):
+                    items = []
+                for item in items:
+                    _walk(item, depth + 1)
+            finally:
+                visited_containers.remove(obj_id)
 
     _walk(tool_input)
     # Deduplicate findings by secret_signature and rule_id
@@ -421,19 +442,83 @@ def redact_secrets(
     return result
 
 
-def _redact_value(val: Any, mask: str | None, cfg: SecretSecurityConfig) -> Any:
+def _redact_value(
+    val: Any,
+    mask: str | None,
+    cfg: SecretSecurityConfig,
+    depth: int = 0,
+    seen: set[int] | None = None,
+    max_depth: int = _MAX_TRAVERSAL_DEPTH,
+) -> Any:
+    if depth >= max_depth:
+        return "<truncated>"
     if isinstance(val, str):
         return redact_secrets(val, mask, cfg)
     if isinstance(val, Mapping):
-        return {k: _redact_value(v, mask, cfg) for k, v in val.items()}
+        visited = seen if seen is not None else set()
+        obj_id = id(val)
+        if obj_id in visited:
+            return "<cyclic>"
+        visited.add(obj_id)
+        try:
+            return {
+                k: _redact_value(v, mask, cfg, depth + 1, visited, max_depth)
+                for k, v in val.items()
+            }
+        finally:
+            visited.remove(obj_id)
     if isinstance(val, list):
-        return [_redact_value(item, mask, cfg) for item in val]
+        visited = seen if seen is not None else set()
+        obj_id = id(val)
+        if obj_id in visited:
+            return "<cyclic>"
+        visited.add(obj_id)
+        try:
+            return [
+                _redact_value(item, mask, cfg, depth + 1, visited, max_depth)
+                for item in val
+            ]
+        finally:
+            visited.remove(obj_id)
     if isinstance(val, tuple):
-        return tuple(_redact_value(item, mask, cfg) for item in val)
+        visited = seen if seen is not None else set()
+        obj_id = id(val)
+        if obj_id in visited:
+            return "<cyclic>"
+        visited.add(obj_id)
+        try:
+            return tuple(
+                _redact_value(item, mask, cfg, depth + 1, visited, max_depth)
+                for item in val
+            )
+        finally:
+            visited.remove(obj_id)
     if isinstance(val, set):
-        return {_redact_value(item, mask, cfg) for item in val}
+        visited = seen if seen is not None else set()
+        obj_id = id(val)
+        if obj_id in visited:
+            return "<cyclic>"
+        visited.add(obj_id)
+        try:
+            return {
+                _redact_value(item, mask, cfg, depth + 1, visited, max_depth)
+                for item in val
+            }
+        finally:
+            visited.remove(obj_id)
     if isinstance(val, frozenset):
-        return frozenset(_redact_value(item, mask, cfg) for item in val)
+        visited = seen if seen is not None else set()
+        obj_id = id(val)
+        if obj_id in visited:
+            return "<cyclic>"
+        visited.add(obj_id)
+        try:
+            return frozenset(
+                _redact_value(item, mask, cfg, depth + 1, visited, max_depth)
+                for item in val
+            )
+        finally:
+            visited.remove(obj_id)
     return val
 
 
@@ -441,13 +526,19 @@ def redact_mapping(
     mapping: Mapping[str, Any],
     mask: str | None = None,
     config: SecretSecurityConfig | None = None,
+    *,
+    max_depth: int = _MAX_TRAVERSAL_DEPTH,
 ) -> dict[str, Any]:
     """Recursively redact secrets across dictionary values."""
     if not isinstance(mapping, Mapping):
         return {}
 
     cfg = config or SecretSecurityConfig()
-    return {k: _redact_value(v, mask, cfg) for k, v in mapping.items()}
+    seen: set[int] = {id(mapping)}
+    return {
+        k: _redact_value(v, mask, cfg, depth=1, seen=seen, max_depth=max_depth)
+        for k, v in mapping.items()
+    }
 
 
 def strongest_severity(
