@@ -73,6 +73,12 @@ VALID_PROFILES = frozenset({PROFILE_FAIL_CLOSED, PROFILE_PERMISSIVE, "strict"})
 #: it just arrives with ``action="unknown"``.
 _TOOL_RESOURCES: dict[str, tuple[tuple[str, ...], str]] = {
     "Bash": (("command",), "execute"),
+    "bash": (("command",), "execute"),
+    "sh": (("command",), "execute"),
+    "terminal": (("command",), "execute"),
+    "exec": (("command",), "execute"),
+    "cmd": (("command",), "execute"),
+    "shell": (("command",), "execute"),
     "Read": (("file_path",), "read"),
     "Write": (("file_path",), "write"),
     "Edit": (("file_path",), "write"),
