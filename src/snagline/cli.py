@@ -1423,6 +1423,12 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+    if args.max_risks < 0:
+        print(
+            f"snagline serve: --max-risks must be non-negative, got {args.max_risks}",
+            file=sys.stderr,
+        )
+        return 2
     scheme = "https" if (args.certfile or args.keyfile or args.client_ca) else "http"
     print(
         f"snagline serve: listening on {scheme}://{args.host}:{args.port} "
