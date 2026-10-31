@@ -1942,10 +1942,31 @@ $$('a[href^="#"]').forEach(function(a){
     addLine('  <span class="ac">serve</span>     - Run the sidecar HTTP server (POST /events, GET /health)');
     addLine('  <span class="ac">hook</span>      - Universal command-hook bridge for external agent processes');
     addLine('  <span class="ac">baseline</span>  - Fit or retrain a persisted healthy per-tool baseline');
+    addLine('  <span class="ac">eval</span>      - Evaluate a proposed tool request against security policies');
+    addLine('  <span class="ac">validate-policy</span> - Validate a security policy file schema');
     addLine('  <span class="ac">clear</span>     - Clear terminal screen buffer');
     addLine('<span class="dm">This terminal animates the six real commands above and also responds to a demo-only </span><span class="ac">audit</span><span class="dm"> preset that visualizes the detector suite and fail-open guarantees; it is not a real snagline command (there is no `snagline audit`).</span>');
     addLine('<span class="dm">Tip: Click the preset tabs above or type any command and press Enter!</span>');
     setBadge('help', 'var(--ink-2)', false);
+  }
+
+  function runEval(){
+    stopCurrent();
+    currentCmd = 'eval';
+    setActiveTab('');
+    addLine('<span class="ts">' + getTimeStr() + '</span> <span class="dm">$</span> snagline eval --tool Read --action read', 'cmd-echo');
+    addLine('<span class="dm">[security]</span> evaluating tool request Read (action=read)');
+    addLine('<span class="dm">[security]</span> Decision: <span class="ac" style="color:var(--green)">ALLOW</span> (score: 5.0/100)');
+    setBadge('evaluated', 'var(--green)', false);
+  }
+
+  function runValidatePolicy(){
+    stopCurrent();
+    currentCmd = 'validate-policy';
+    setActiveTab('');
+    addLine('<span class="ts">' + getTimeStr() + '</span> <span class="dm">$</span> snagline validate-policy config.yaml', 'cmd-echo');
+    addLine('<span class="dm">[security]</span> Policy validated: 0 errors');
+    setBadge('valid', 'var(--green)', false);
   }
 
   /* ───── COMMAND: CLEAR ───── */
@@ -1982,6 +2003,10 @@ $$('a[href^="#"]').forEach(function(a){
       runHook();
     } else if(main === 'baseline'){
       runBaseline();
+    } else if(main === 'eval'){
+      runEval();
+    } else if(main === 'validate-policy'){
+      runValidatePolicy();
     } else if(main === 'audit' || main === 'status'){
       runAudit();
     } else if(main === 'clear' || main === 'cls'){
