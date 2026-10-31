@@ -7,40 +7,46 @@ fields, types, tool restrictions, and detector parameters while rejecting unknow
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Literal, Optional, Set
+from typing import Any
 
 from snagline.authorize import Decision
 
+
 class PolicyValidationError(ValueError):
     """Raised when a security policy configuration fails schema validation."""
+
     pass
+
 
 @dataclass
 class AgentRuleSpec:
     """Per-agent execution constraints."""
-    allowed_tools: List[str] = field(default_factory=list)
-    denied_tools: List[str] = field(default_factory=list)
-    ask_tools: List[str] = field(default_factory=list)
+
+    allowed_tools: list[str] = field(default_factory=list)
+    denied_tools: list[str] = field(default_factory=list)
+    ask_tools: list[str] = field(default_factory=list)
+
 
 @dataclass
 class SecurityPolicySchema:
     """Validated security policy specification."""
+
     version: str = "1.0"
     name: str = "default_security_policy"
-    profile: Optional[str] = None
+    profile: str | None = None
     default_decision: Decision = "allow"
-    allowed_tools: List[str] = field(default_factory=list)
-    denied_tools: List[str] = field(default_factory=list)
-    ask_tools: List[str] = field(default_factory=list)
-    allowed_roots: List[str] = field(default_factory=list)
-    agent_rules: Dict[str, AgentRuleSpec] = field(default_factory=dict)
-    detector_settings: Dict[str, Any] = field(default_factory=dict)
+    allowed_tools: list[str] = field(default_factory=list)
+    denied_tools: list[str] = field(default_factory=list)
+    ask_tools: list[str] = field(default_factory=list)
+    allowed_roots: list[str] = field(default_factory=list)
+    agent_rules: dict[str, AgentRuleSpec] = field(default_factory=dict)
+    detector_settings: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
-KNOWN_POLICY_FIELDS: Set[str] = {
+KNOWN_POLICY_FIELDS: set[str] = {
     "version",
     "name",
     "profile",
@@ -53,17 +59,19 @@ KNOWN_POLICY_FIELDS: Set[str] = {
     "detector_settings",
 }
 
-KNOWN_AGENT_FIELDS: Set[str] = {
+KNOWN_AGENT_FIELDS: set[str] = {
     "allowed_tools",
     "denied_tools",
     "ask_tools",
 }
 
 
-def validate_policy_dict(raw: Dict[str, Any]) -> SecurityPolicySchema:
+def validate_policy_dict(raw: dict[str, Any]) -> SecurityPolicySchema:
     """Strictly validate a raw policy dictionary against the security schema."""
     if not isinstance(raw, dict):
-        raise PolicyValidationError(f"Policy must be a mapping; got {type(raw).__name__}")
+        raise PolicyValidationError(
+            f"Policy must be a mapping; got {type(raw).__name__}"
+        )
 
     # 1. Unknown fields check
     for k in raw:
@@ -80,17 +88,23 @@ def validate_policy_dict(raw: Dict[str, Any]) -> SecurityPolicySchema:
     # 3. Profile & Default decision validation
     profile = raw.get("profile")
     if profile is not None and profile not in ("fail_closed", "permissive", "strict"):
-        raise PolicyValidationError(f"Invalid profile {profile!r}; expected 'fail_closed', 'permissive', or 'strict'")
+        raise PolicyValidationError(
+            f"Invalid profile {profile!r}; expected 'fail_closed', 'permissive', or 'strict'"
+        )
 
     default_decision = raw.get("default_decision", "allow")
     if default_decision not in ("allow", "ask", "deny"):
-        raise PolicyValidationError(f"Invalid default_decision {default_decision!r}; expected 'allow', 'ask', or 'deny'")
+        raise PolicyValidationError(
+            f"Invalid default_decision {default_decision!r}; expected 'allow', 'ask', or 'deny'"
+        )
 
     # 4. List fields validation
-    def _validate_str_list(field_name: str) -> List[str]:
+    def _validate_str_list(field_name: str) -> list[str]:
         val = raw.get(field_name, [])
         if not isinstance(val, list) or not all(isinstance(x, str) for x in val):
-            raise PolicyValidationError(f"Field {field_name!r} must be a list of strings")
+            raise PolicyValidationError(
+                f"Field {field_name!r} must be a list of strings"
+            )
         return list(val)
 
     allowed_tools = _validate_str_list("allowed_tools")
@@ -104,34 +118,53 @@ def validate_policy_dict(raw: Dict[str, Any]) -> SecurityPolicySchema:
     ask_set = set(ask_tools)
 
     if overlap := allow_set.intersection(deny_set):
-        raise PolicyValidationError(f"Conflicting tool rules: {sorted(overlap)} in both allowed and denied")
+        raise PolicyValidationError(
+            f"Conflicting tool rules: {sorted(overlap)} in both allowed and denied"
+        )
     if overlap := allow_set.intersection(ask_set):
-        raise PolicyValidationError(f"Conflicting tool rules: {sorted(overlap)} in both allowed and ask")
+        raise PolicyValidationError(
+            f"Conflicting tool rules: {sorted(overlap)} in both allowed and ask"
+        )
     if overlap := deny_set.intersection(ask_set):
-        raise PolicyValidationError(f"Conflicting tool rules: {sorted(overlap)} in both denied and ask")
+        raise PolicyValidationError(
+            f"Conflicting tool rules: {sorted(overlap)} in both denied and ask"
+        )
 
     # 6. Agent rules validation
     agent_rules_raw = raw.get("agent_rules", {})
     if not isinstance(agent_rules_raw, dict):
-        raise PolicyValidationError("'agent_rules' must be a mapping of agent_id to rules")
+        raise PolicyValidationError(
+            "'agent_rules' must be a mapping of agent_id to rules"
+        )
 
-    agent_rules: Dict[str, AgentRuleSpec] = {}
+    agent_rules: dict[str, AgentRuleSpec] = {}
     for agent_id, spec_dict in agent_rules_raw.items():
         if not isinstance(spec_dict, dict):
-            raise PolicyValidationError(f"Rule for agent {agent_id!r} must be a mapping")
+            raise PolicyValidationError(
+                f"Rule for agent {agent_id!r} must be a mapping"
+            )
         for ak in spec_dict:
             if ak not in KNOWN_AGENT_FIELDS:
-                raise PolicyValidationError(f"Unknown field in agent {agent_id!r} rule: {ak!r}")
+                raise PolicyValidationError(
+                    f"Unknown field in agent {agent_id!r} rule: {ak!r}"
+                )
 
         a_allowed = spec_dict.get("allowed_tools", [])
         a_denied = spec_dict.get("denied_tools", [])
         a_ask = spec_dict.get("ask_tools", [])
 
-        if not all(isinstance(x, list) and all(isinstance(s, str) for s in x) for x in (a_allowed, a_denied, a_ask)):
-            raise PolicyValidationError(f"Tool lists for agent {agent_id!r} must be lists of strings")
+        if not all(
+            isinstance(x, list) and all(isinstance(s, str) for s in x)
+            for x in (a_allowed, a_denied, a_ask)
+        ):
+            raise PolicyValidationError(
+                f"Tool lists for agent {agent_id!r} must be lists of strings"
+            )
 
         if overlap := set(a_allowed).intersection(set(a_denied)):
-            raise PolicyValidationError(f"Conflicting tools for agent {agent_id!r}: {sorted(overlap)}")
+            raise PolicyValidationError(
+                f"Conflicting tools for agent {agent_id!r}: {sorted(overlap)}"
+            )
 
         agent_rules[agent_id] = AgentRuleSpec(
             allowed_tools=list(a_allowed),
@@ -163,7 +196,7 @@ def load_security_policy(source: str | Any) -> SecurityPolicySchema:
     import json
     from pathlib import Path
 
-    raw: Dict[str, Any]
+    raw: dict[str, Any]
     if isinstance(source, dict):
         raw = source
     elif isinstance(source, (str, Path)):
@@ -178,11 +211,14 @@ def load_security_policy(source: str | Any) -> SecurityPolicySchema:
             try:
                 raw = json.loads(content)
             except Exception as err:
-                raise PolicyValidationError(f"Invalid JSON in policy source: {err}") from err
+                raise PolicyValidationError(
+                    f"Invalid JSON in policy source: {err}"
+                ) from err
         else:
             # Attempt yaml parsing if pyyaml is installed, otherwise lightweight key-value parser
             try:
                 import yaml  # type: ignore
+
                 raw = yaml.safe_load(content)
             except ImportError:
                 # Basic key-value parser for simple YAML specs
@@ -193,9 +229,13 @@ def load_security_policy(source: str | Any) -> SecurityPolicySchema:
                         k, v = line.split(":", 1)
                         raw[k.strip()] = v.strip()
             except Exception as err:
-                raise PolicyValidationError(f"Invalid YAML in policy source: {err}") from err
+                raise PolicyValidationError(
+                    f"Invalid YAML in policy source: {err}"
+                ) from err
     else:
-        raise PolicyValidationError(f"Unsupported policy source type: {type(source).__name__}")
+        raise PolicyValidationError(
+            f"Unsupported policy source type: {type(source).__name__}"
+        )
 
     return validate_policy_dict(raw)
 
@@ -204,11 +244,10 @@ def compile_policy(schema: SecurityPolicySchema) -> Any:
     """Compile a validated SecurityPolicySchema into an executable Authorization Policy."""
     from snagline.authorize import (
         Policy,
-        allow_tools,
-        deny_tools,
-        ask_tools,
         RuleVerdict,
-        ToolRequest,
+        allow_tools,
+        ask_tools,
+        deny_tools,
     )
 
     rules = []
@@ -220,7 +259,9 @@ def compile_policy(schema: SecurityPolicySchema) -> Any:
                 rules.append(
                     lambda req, aid=agent_id, names=d_names: RuleVerdict(
                         rule_id=f"agent_{aid}_deny",
-                        decision="deny" if req.agent_id == aid and req.tool_name in names else None,
+                        decision="deny"
+                        if req.agent_id == aid and req.tool_name in names
+                        else None,
                         reason=f"Tool {req.tool_name!r} denied for agent {aid!r}",
                     )
                 )
@@ -229,7 +270,9 @@ def compile_policy(schema: SecurityPolicySchema) -> Any:
                 rules.append(
                     lambda req, aid=agent_id, names=ask_names: RuleVerdict(
                         rule_id=f"agent_{aid}_ask",
-                        decision="ask" if req.agent_id == aid and req.tool_name in names else None,
+                        decision="ask"
+                        if req.agent_id == aid and req.tool_name in names
+                        else None,
                         reason=f"Tool {req.tool_name!r} requires approval for agent {aid!r}",
                     )
                 )
@@ -238,7 +281,9 @@ def compile_policy(schema: SecurityPolicySchema) -> Any:
                 rules.append(
                     lambda req, aid=agent_id, names=a_names: RuleVerdict(
                         rule_id=f"agent_{aid}_allow",
-                        decision="allow" if req.agent_id == aid and req.tool_name in names else None,
+                        decision="allow"
+                        if req.agent_id == aid and req.tool_name in names
+                        else None,
                         reason=f"Tool {req.tool_name!r} explicitly allowed for agent {aid!r}",
                     )
                 )
@@ -257,5 +302,3 @@ def compile_policy(schema: SecurityPolicySchema) -> Any:
         profile=schema.profile,
         policy_id=schema.name,
     )
-
-

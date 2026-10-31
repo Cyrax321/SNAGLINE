@@ -1,11 +1,11 @@
 import json
 from pathlib import Path
+
 import pytest
 
 from snagline.authorize import ToolRequest
 from snagline.security_policy import (
     PolicyValidationError,
-    SecurityPolicySchema,
     compile_policy,
     load_security_policy,
     validate_policy_dict,

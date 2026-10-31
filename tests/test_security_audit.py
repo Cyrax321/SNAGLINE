@@ -1,14 +1,11 @@
 import concurrent.futures
 import json
-import os
 from pathlib import Path
-import pytest
 
 from snagline.authorize import Policy, ToolRequest, allow_tools, deny_tools
 from snagline.security_audit import (
-    AuditLogError,
-    AuditRecord,
     GENESIS_HASH,
+    AuditRecord,
     SecurityAuditLog,
     verify_audit_log_file,
 )
