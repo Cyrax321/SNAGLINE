@@ -531,6 +531,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sp.add_argument(
         "trajectory",
+        nargs="?",
+        default=None,
         metavar="trajectory|retrain",
         help="Path to a .jsonl trajectory of a healthy run, or the literal "
         "keyword 'retrain' to refit from the newest JSONL window and bump "
@@ -1103,6 +1105,13 @@ def _cmd_baseline(args: argparse.Namespace) -> int:
             return 2
         store = BaselineStore(args.store_dir, max_versions=limit)
         return _list_stored_versions(store, args.tenant, args.deployment)
+
+    if not getattr(args, "trajectory", None):
+        print(
+            "snagline baseline: error: the following arguments are required: trajectory|retrain",
+            file=sys.stderr,
+        )
+        return 2
 
     if getattr(args, "trajectory", None) == "retrain":
         return _cmd_baseline_retrain(args)

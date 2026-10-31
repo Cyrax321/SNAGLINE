@@ -435,3 +435,33 @@ def test_min_severity_typo_exits_2(capsys):
     assert exc.value.code == 2
     err = capsys.readouterr().err
     assert "invalid choice" in err, f"argparse should reject the typo, got: {err}"
+
+
+def test_baseline_list_versions_without_trajectory_positional_arg(capsys, tmp_path):
+    """Ensure snagline baseline --list-versions does not require a dummy trajectory positional arg (#704)."""
+    store_dir = tmp_path / "store"
+    store_dir.mkdir()
+
+    # 1. Valid --list-versions with --store-dir but NO trajectory positional arg
+    rc = main(["baseline", "--store-dir", str(store_dir), "--list-versions"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "no stored versions" in out
+
+    # 2. --list-versions without --store-dir reports intended diagnostic and exits 2
+    rc_no_store = main(["baseline", "--list-versions"])
+    assert rc_no_store == 2
+    err_no_store = capsys.readouterr().err
+    assert "--list-versions requires --store-dir" in err_no_store
+
+    # 3. Neither trajectory nor --list-versions reports required positional arg error and exits 2
+    rc_missing = main(["baseline"])
+    assert rc_missing == 2
+    err_missing = capsys.readouterr().err
+    assert "the following arguments are required: trajectory|retrain" in err_missing
+
+    # 4. Only --store-dir without --list-versions and without trajectory exits 2
+    rc_store_only = main(["baseline", "--store-dir", str(store_dir)])
+    assert rc_store_only == 2
+    err_store_only = capsys.readouterr().err
+    assert "the following arguments are required: trajectory|retrain" in err_store_only
