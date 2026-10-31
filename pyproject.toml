@@ -93,6 +93,10 @@ check_untyped_defs = true
 # --- Coverage (issue #11) ------------------------------------------------------
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# src/ and the repo root are import roots so a bare `pytest` works in a fresh
+# checkout without an editable install (issue #687): tests import `snagline`
+# from src/ and `benchmarks` from the root.
+pythonpath = ["src", "."]
 addopts = "--cov=snagline --cov-fail-under=80"
 
 [tool.coverage.run]

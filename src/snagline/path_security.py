@@ -165,6 +165,12 @@ def _is_windows_path(path: str) -> bool:
     return os.name == "nt" or bool(_WINDOWS_DRIVE_RE.match(path))
 
 
+def _is_absolute(path: str) -> bool:
+    """True when ``path`` is absolute (POSIX ``/`` or a Windows drive letter)."""
+    clean = path.replace("\\", "/")
+    return bool(_WINDOWS_DRIVE_RE.match(clean)) or clean.startswith("/")
+
+
 def _is_subpath(target: str, root: str, *, case_insensitive: bool = False) -> bool:
     """Check if normalized ``target`` is inside or equal to normalized ``root``."""
     t = target.lower() if case_insensitive else target
@@ -257,9 +263,13 @@ def rule_path_traversal(
     )
     escapes_norm = norm_path.startswith("../") or norm_path == ".."
 
-    # If base_dir is configured, check if normalized path escapes base_dir
+    # If base_dir is configured, check if a *relative* input path escapes it
+    # once resolved. An absolute path never resolves against base_dir -- it is
+    # not escaping the base, it simply never lived relative to it -- so
+    # flagging it here both mislabels the finding and pre-empts
+    # rule_allowed_roots, the actual confinement gate (issue #678).
     escapes_base = False
-    if config.base_dir:
+    if config.base_dir and not _is_absolute(path):
         norm_base = normalize_lexical_path(config.base_dir)
         escapes_base = not _is_subpath(
             norm_path,

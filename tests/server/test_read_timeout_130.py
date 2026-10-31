@@ -162,13 +162,14 @@ def test_fast_body_still_succeeds_with_short_timeout():
 
 def test_cli_mentions_read_timeout_next_to_max_body(monkeypatch):
     """Ensure the knob is documented next to --max-body-bytes."""
-    import pathlib
     import subprocess
     import sys
 
-    snagline_bin = pathlib.Path(sys.executable).parent / "snagline"
+    # Invoke the CLI portably via the module path, like every other CLI test in
+    # the suite, so the test does not depend on a `snagline` script sitting next
+    # to the interpreter (an editable install) -- issue #680.
     result = subprocess.run(
-        [str(snagline_bin), "serve", "--help"],
+        [sys.executable, "-m", "snagline", "serve", "--help"],
         capture_output=True,
         text=True,
         timeout=5,
