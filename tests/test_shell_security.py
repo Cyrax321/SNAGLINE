@@ -442,3 +442,18 @@ def test_as_authorize_rule_inspects_common_execution_tools_issue_684() -> None:
     verdict_custom = rule(req_custom)
     assert verdict_custom is not None
     assert verdict_custom.decision == "deny"
+
+
+def test_as_authorize_rule_truncated_command_rejected_issue_695() -> None:
+    """Oversized/truncated command resources must be denied rather than scanned partially (#695)."""
+    from snagline.authorize import ToolRequest
+
+    rule = as_authorize_rule()
+    cmd = "echo " + "a" * 5000 + " ; rm -rf /"
+    req = ToolRequest.from_tool_input("Bash", {"command": cmd})
+
+    assert req.resource.endswith("...<truncated>")
+    verdict = rule(req)
+    assert verdict is not None
+    assert verdict.decision == "deny"
+    assert "truncated" in verdict.reason
