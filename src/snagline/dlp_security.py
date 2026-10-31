@@ -380,8 +380,22 @@ def inspect_payload(
                     extra_rules=extra_rules,
                 )
             )
-    elif isinstance(payload, (list, tuple, set, frozenset)):
+    elif isinstance(payload, (list, tuple)):
         for idx, item in enumerate(payload):
+            sub_path = f"{path}[{idx}]" if path else f"[{idx}]"
+            findings.extend(
+                inspect_payload(
+                    item,
+                    cfg,
+                    path=sub_path,
+                    extra_rules=extra_rules,
+                )
+            )
+    elif isinstance(payload, (set, frozenset)):
+        # Sets iterate in hash-table order (PYTHONHASHSEED dependent). Sort
+        # elements by stable representation to ensure deterministic path indexes (#698).
+        sorted_items = sorted(payload, key=lambda x: (type(x).__name__, repr(x)))
+        for idx, item in enumerate(sorted_items):
             sub_path = f"{path}[{idx}]" if path else f"[{idx}]"
             findings.extend(
                 inspect_payload(
