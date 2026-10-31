@@ -136,3 +136,21 @@ class McpSecurityGateway:
                 "matched_rules": [],
             }
 
+
+def get_mcp_eval_tool_schema() -> Dict[str, Any]:
+    """Return MCP tools/list compatible definition for snagline_evaluate_tool."""
+    return {
+        "name": "snagline_evaluate_tool",
+        "description": "Pre-execution security inspection for tool requests; returns allow/ask/deny decision.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Target tool name to evaluate"},
+                "arguments": {"type": "object", "description": "Arguments to pass to target tool"},
+                "agent_id": {"type": "string", "description": "Optional agent identifier for policy lookup"},
+            },
+            "required": ["name", "arguments"],
+        },
+    }
+
+
