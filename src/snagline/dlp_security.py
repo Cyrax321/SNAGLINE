@@ -492,6 +492,16 @@ def strongest_severity(findings: Sequence[DlpFinding]) -> DlpSeverity | None:
 _EGRESS_ACTIONS = frozenset({"network", "egress", "post", "send", "write", "unknown"})
 
 
+def _is_truncated(val: Any) -> bool:
+    if isinstance(val, str):
+        return val.endswith("...<truncated>") or len(val) > 4096
+    if isinstance(val, Mapping):
+        return any(_is_truncated(v) for v in val.values())
+    if isinstance(val, (list, tuple, set, frozenset)):
+        return any(_is_truncated(item) for item in val)
+    return False
+
+
 def as_authorize_rule(
     config: DlpSecurityConfig | None = None,
     *,
@@ -506,13 +516,11 @@ def as_authorize_rule(
         if request.action not in actions:
             return None
 
-        if request.resource and (
-            request.resource.endswith("...<truncated>") or len(request.resource) > 4096
-        ):
+        if _is_truncated(request.resource) or _is_truncated(request.tool_input):
             return RuleVerdict(
                 rule_id="dlp",
                 decision=cfg.decision,
-                reason="resource exceeds maximum length or is truncated",
+                reason="resource or payload exceeds maximum length or is truncated",
             )
 
         # Inspect tool_input as payload; also inspect resource if present
