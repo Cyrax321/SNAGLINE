@@ -46,7 +46,7 @@ import argparse
 import json
 import os
 import sys
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -315,25 +315,28 @@ class EpisodeOutcome:
     episode_id: str
     label_triggers: frozenset[str] | None
     predicted: set[str] = field(default_factory=set)
+    first_detected_step: dict[str, int] = field(default_factory=dict)
 
 
 def reduce_risks(
     risks: Sequence[FailureRisk],
     episode_id: str,
     label_triggers: frozenset[str] | None,
+    step_ordinals: Mapping[str, int] | None = None,
 ) -> EpisodeOutcome:
     """Reduce an episode's emitted risks to an outcome.
 
     Applies loop-family arbitration (issue #604): when stall or cycle fires,
     it declares via FailureRisk.supersedes and FailureRisk.superseded_step_ids
     that it replaces earlier coarse loop findings describing the same repeated
-    actions.
+    actions. Records first detected step for latency tracking (#607).
     """
     retired_step_ids: set[str] = set()
     for risk in risks:
         if risk.superseded_step_ids:
             retired_step_ids.update(risk.superseded_step_ids)
 
+    ordinals = step_ordinals or {}
     outcome = EpisodeOutcome(episode_id, label_triggers)
     for risk in risks:
         trig = risk_to_label_trigger(risk)
@@ -342,6 +345,8 @@ def reduce_risks(
         if getattr(risk, "superseded_by", ()):
             continue
         outcome.predicted.add(trig)
+        if trig not in outcome.first_detected_step:
+            outcome.first_detected_step[trig] = ordinals.get(risk.step_id, 0)
     return outcome
 
 
@@ -366,7 +371,10 @@ def replay_episode(
     # Finalize pass: judges silent-abort-style completion checks, then tears
     # down per-episode state.
     monitor.end_episode(episode.episode_id)
-    return reduce_risks(collector.risks, episode.episode_id, episode.label_triggers)
+    step_ordinals = {event.step_id: idx for idx, event in enumerate(episode.events)}
+    return reduce_risks(
+        collector.risks, episode.episode_id, episode.label_triggers, step_ordinals
+    )
 
 
 # --------------------------------------------------------------------------
@@ -379,6 +387,15 @@ class TriggerStats:
     tp: int = 0
     fp: int = 0
     fn: int = 0
+    latencies: list[int] = field(default_factory=list)
+
+    @property
+    def median_latency(self) -> float | None:
+        if not self.latencies:
+            return None
+        import statistics
+
+        return float(statistics.median(self.latencies))
 
     @property
     def precision(self) -> float:
@@ -444,7 +461,10 @@ def score(outcomes: Sequence[EpisodeOutcome]) -> ScoreReport:
         label = outcome.label_triggers
         pred = outcome.predicted
         for trig in label & pred:
-            stats.setdefault(trig, TriggerStats()).tp += 1
+            s = stats.setdefault(trig, TriggerStats())
+            s.tp += 1
+            if trig in outcome.first_detected_step:
+                s.latencies.append(outcome.first_detected_step[trig])
         for trig in label - pred:
             stats.setdefault(trig, TriggerStats()).fn += 1
         for trig in pred - label:
@@ -505,6 +525,19 @@ def format_table(report: ScoreReport) -> str:
     else:
         lines.append("  (none)")
     lines.append(f"healthy controls that fired: {report.healthy_fired}")
+
+    # Latency tracking across triggers (issue #607)
+    has_latencies = any(s.latencies for s in report.per_trigger.values())
+    if has_latencies:
+        lines.append("detection latency (median steps to first alert):")
+        for trig in SHIPPED_TRIGGERS:
+            s = report.per_trigger.get(trig)
+            if s and s.latencies:
+                med = s.median_latency
+                med_str = f"{med:.1f}" if med is not None else "n/a"
+                lines.append(
+                    f"  {trig}: median={med_str} min={min(s.latencies)} max={max(s.latencies)}"
+                )
     return "\n".join(lines)
 
 
@@ -518,6 +551,9 @@ def report_to_json(report: ScoreReport) -> dict:
                 "precision": round(s.precision, 6),
                 "recall": round(s.recall, 6),
                 "f1": round(s.f1, 6),
+                "median_latency": s.median_latency,
+                "min_latency": min(s.latencies) if s.latencies else None,
+                "max_latency": max(s.latencies) if s.latencies else None,
             }
             for trig, s in sorted(report.per_trigger.items())
         },
