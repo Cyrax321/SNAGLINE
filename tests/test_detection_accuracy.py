@@ -873,3 +873,20 @@ def test_detection_latency_tracking_issue_607(harness) -> None:
     assert (
         data["per_trigger"]["stagnation"]["median_latency"] == stag_stats.median_latency
     )
+
+
+def test_goal_drift_structural_attribution_clarified_issue_606(harness) -> None:
+    """Benchmark table and JSON output must clarify goal_drift benchmarks GoalDriftDetector (#606)."""
+    fixtures_dir = Path("benchmarks/fixtures")
+    outcomes = [
+        harness.replay_episode(ep, fixtures_dir)
+        for ep in harness.iter_fixtures(fixtures_dir)
+    ]
+    report = harness.score(outcomes)
+
+    table = harness.format_table(report)
+    assert "note: 'goal_drift' benchmarks structural GoalDriftDetector" in table
+
+    data = harness.report_to_json(report)
+    assert "metadata" in data and "notes" in data["metadata"]
+    assert "GoalDriftDetector" in data["metadata"]["notes"]["goal_drift"]
