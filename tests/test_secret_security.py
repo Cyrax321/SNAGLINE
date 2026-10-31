@@ -355,6 +355,19 @@ def test_as_authorize_rule_rejects_truncated_resource() -> None:
     assert "truncated" in verdict.reason
 
 
+def test_as_authorize_rule_rejects_truncated_tool_input_issue_696() -> None:
+    """Oversized/truncated tool_input values must be denied (#696)."""
+    tail = "AKIA" + "Q" * 16
+    long_req = ToolRequest.from_tool_input(
+        "McpTool", {"description": "x" * 5000 + " " + tail}
+    )
+    rule = as_authorize_rule()
+    verdict = rule(long_req)
+    assert verdict is not None
+    assert verdict.decision == "deny"
+    assert "truncated" in verdict.reason
+
+
 def test_redact_secrets_literal_braces_in_mask() -> None:
     sample = "key is AKIAIOSFODNN7EXAMPLE"
     redacted = redact_secrets(sample, mask="{CUSTOM_TAG}:{rule_id}")
