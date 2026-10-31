@@ -59,3 +59,80 @@ class McpToolRequest:
             tool_input=dict(self.arguments),
             agent_id=self.agent_id,
         )
+
+
+class McpSecurityGateway:
+    """Evaluates incoming MCP tool calls against SNAGLINE security authorization controls."""
+
+    def __init__(
+        self,
+        policy: Any = None,
+        policy_path: Any = None,
+        scoring_engine: Any = None,
+        fail_closed: bool = True,
+    ) -> None:
+        self.policy = policy
+        self.policy_path = policy_path
+        self.scoring_engine = scoring_engine
+        self.fail_closed = fail_closed
+
+    def evaluate(
+        self,
+        name: str,
+        arguments: Mapping[str, Any],
+        agent_id: Optional[str] = None,
+        context: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Evaluate MCP tool call and return structured decision."""
+        from snagline.security_evaluation import evaluate_request
+
+        mcp_req = McpToolRequest(
+            name=name,
+            arguments=arguments,
+            agent_id=agent_id,
+            context=context or {},
+        )
+        tool_req = mcp_req.to_tool_request()
+
+        try:
+            eval_res = evaluate_request(
+                tool_name=tool_req.tool_name,
+                action=tool_req.action,
+                resource=tool_req.resource,
+                tool_input=tool_req.tool_input,
+                policy=self.policy,
+                policy_path=self.policy_path,
+                scoring_engine=self.scoring_engine,
+            )
+            decision = eval_res["decision"]
+            allowed = (decision == "allow")
+            return {
+                "decision": decision,
+                "allowed": allowed,
+                "reason": eval_res["reason"],
+                "tool_name": name,
+                "security_score": eval_res["security_score"],
+                "findings": eval_res["findings"],
+                "matched_rules": eval_res["matched_rules"],
+            }
+        except Exception as err:
+            if self.fail_closed:
+                return {
+                    "decision": "deny",
+                    "allowed": False,
+                    "reason": f"Security gateway evaluation error (fail-closed): {err}",
+                    "tool_name": name,
+                    "security_score": 100.0,
+                    "findings": [],
+                    "matched_rules": ["gateway_error_fail_closed"],
+                }
+            return {
+                "decision": "allow",
+                "allowed": True,
+                "reason": f"Security gateway evaluation error (fail-open): {err}",
+                "tool_name": name,
+                "security_score": 0.0,
+                "findings": [],
+                "matched_rules": [],
+            }
+
