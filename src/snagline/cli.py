@@ -604,6 +604,22 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Sentence-transformers model for --semantic [default: %(default)s].",
     )
 
+    p_eval = sub.add_parser(
+        "eval",
+        help="Evaluate a proposed tool request against security policies (offline).",
+    )
+    p_eval.add_argument("--tool", required=True, help="Tool name to evaluate (e.g. 'Bash', 'Read').")
+    p_eval.add_argument("--action", default="unknown", help="Action type (e.g. 'execute', 'read').")
+    p_eval.add_argument("--resource", default=None, help="Resource target (command string, path, url).")
+    p_eval.add_argument("--policy", default=None, help="Path to a security policy YAML/JSON file.")
+    p_eval.add_argument("--json", action="store_true", help="Print machine-readable JSON output.")
+
+    p_val = sub.add_parser(
+        "validate-policy",
+        help="Validate a security policy file schema.",
+    )
+    p_val.add_argument("policy_file", help="Path to the security policy file to validate.")
+
     return parser
 
 
@@ -1605,9 +1621,54 @@ def _cmd_bench() -> int:
     return 0
 
 
+def _cmd_eval(args: argparse.Namespace) -> int:
+    from snagline.security_evaluation import evaluate_request
+
+    try:
+        res = evaluate_request(
+            tool_name=args.tool,
+            action=args.action,
+            resource=args.resource,
+            policy_path=args.policy,
+        )
+    except Exception as err:
+        print(f"snagline eval: error: {err}", file=sys.stderr)
+        return 2
+
+    if args.json:
+        print(json.dumps(res, indent=2))
+    else:
+        print(f"Decision: {res['decision'].upper()}")
+        print(f"Security Score: {res['security_score']:.1f}/100")
+        print(f"Reason: {res['reason']}")
+        if res.get("findings"):
+            print(f"Findings ({len(res['findings'])}):")
+            for f in res["findings"]:
+                print(f"  - [{f.get('severity', 'info')}] {f.get('rule_id')}: {f.get('reason')}")
+    return 0 if res["decision"] == "allow" else (1 if res["decision"] == "ask" else 2)
+
+
+def _cmd_validate_policy(args: argparse.Namespace) -> int:
+    from snagline.security_policy import load_security_policy
+
+    try:
+        schema = load_security_policy(args.policy_file)
+        print(f"Policy {schema.name!r} (v{schema.version}) is valid.")
+        return 0
+    except Exception as err:
+        print(f"snagline validate-policy: error: {err}", file=sys.stderr)
+        return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+
+    if args.command == "eval":
+        return _cmd_eval(args)
+
+    if args.command == "validate-policy":
+        return _cmd_validate_policy(args)
 
     if args.command == "replay":
         counter = _CountingSink()
