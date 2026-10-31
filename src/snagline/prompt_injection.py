@@ -153,18 +153,21 @@ def as_authorize_rule(
     cfg = config or PromptInjectionConfig()
 
     def _rule(request: Any) -> Optional[RuleVerdict]:
-        findings = inspect_tool_input(request.tool_input, cfg)
+        findings: List[PromptInjectionFinding] = []
+        if getattr(request, "resource", None):
+            findings.extend(inspect_text(str(request.resource), cfg))
+        if getattr(request, "tool_input", None):
+            findings.extend(inspect_tool_input(request.tool_input, cfg))
+
         if not findings:
             return None
 
         highest = max(findings, key=lambda f: SEVERITY_ORDER.get(f.severity, 0))
         reason = f"Prompt injection indicator detected ({highest.rule_id}): {highest.reason}"
-        metadata = {"findings": [f.to_dict() for f in findings]}
         return RuleVerdict(
-            decision=on_match,
             rule_id=f"prompt_injection_{highest.rule_id}",
+            decision=on_match,
             reason=reason,
-            metadata=metadata,
         )
 
     return _rule
