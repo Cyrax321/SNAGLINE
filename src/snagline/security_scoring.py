@@ -168,3 +168,26 @@ class SecurityScoringEngine:
             rule_ids=rule_ids,
         )
 
+    def as_authorize_rule(self) -> Any:
+        """Create a pre-execution authorization rule driven by security risk score."""
+        from snagline.authorize import RuleVerdict
+
+        def _rule(request: Any) -> Optional[RuleVerdict]:
+            result = self.evaluate(
+                tool_name=request.tool_name,
+                action=request.action,
+                resource=str(request.resource) if request.resource else None,
+            )
+            if result.decision == "allow":
+                return None
+
+            reason = f"Security risk score {result.score:.1f}/100 exceeds threshold: {result.decision}"
+            return RuleVerdict(
+                rule_id="security_scoring",
+                decision=result.decision,
+                reason=reason,
+            )
+
+        return _rule
+
+
