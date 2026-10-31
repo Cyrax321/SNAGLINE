@@ -483,6 +483,20 @@ def test_as_authorize_rule_rejects_truncated_resource() -> None:
     assert "truncated" in verdict.reason
 
 
+def test_as_authorize_rule_rejects_truncated_tool_input_issue_696() -> None:
+    """Oversized/truncated tool_input values must be denied in dlp (#696)."""
+    long_req = ToolRequest(
+        tool_name="HttpEgress",
+        action="network",
+        tool_input={"payload": "a" * 5000 + "...<truncated>"},
+    )
+    rule = as_authorize_rule()
+    verdict = rule(long_req)
+    assert verdict is not None
+    assert verdict.decision == "deny"
+    assert "truncated" in verdict.reason
+
+
 def test_redact_text_literal_braces_in_mask() -> None:
     text = "User SSN is 123-45-6789"
     redacted = redact_text(text, mask="{CUSTOM_TAG}:{rule_id}")
