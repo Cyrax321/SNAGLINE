@@ -162,16 +162,20 @@ def test_fast_body_still_succeeds_with_short_timeout():
 
 def test_cli_mentions_read_timeout_next_to_max_body(monkeypatch):
     """Ensure the knob is documented next to --max-body-bytes."""
-    import pathlib
+    import os
     import subprocess
     import sys
 
-    snagline_bin = pathlib.Path(sys.executable).parent / "snagline"
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(
+        filter(None, ["src", ".", env.get("PYTHONPATH", "")])
+    )
     result = subprocess.run(
-        [str(snagline_bin), "serve", "--help"],
+        [sys.executable, "-m", "snagline", "serve", "--help"],
         capture_output=True,
         text=True,
         timeout=5,
+        env=env,
     )
     help_text = result.stdout + result.stderr
     assert "--max-body-bytes" in help_text
