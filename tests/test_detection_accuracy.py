@@ -812,3 +812,50 @@ def test_format_table_extra_trigger_widens_the_column(harness) -> None:
     # at the header's TP offset.
     assert extra[: offset - 1].strip() == "a_very_long_unshipped_trigger_name"
     assert extra[offset : offset + 4].strip() == "1"
+
+
+# --------------------------------------------------------------------------
+# Fixture generator drift guard (issue #615)
+# --------------------------------------------------------------------------
+
+_COMMITTED_FIXTURES_DIR = _REPO_ROOT / "benchmarks" / "fixtures"
+_CORPUS_FILES = (
+    "labeled_episodes.jsonl",
+    "healthy_controls.jsonl",
+    "goal_drift_baseline.json",
+)
+
+
+def test_committed_corpus_matches_the_generator(tmp_path: Path) -> None:
+    """Issue #615: verify benchmarks/fixtures/ matches generate_fixtures.py.
+
+    generate_fixtures.py is deterministic and claims to produce the committed
+    accuracy corpus byte-for-byte. Regenerate into a temp directory and assert
+    that every generated file matches the committed version exactly.
+    """
+    if str(_REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(_REPO_ROOT))
+    from benchmarks.fixtures import generate_fixtures as gen
+
+    ret = gen.main(["--out", str(tmp_path)])
+    assert ret == 0
+
+    for name in _CORPUS_FILES:
+        committed = (_COMMITTED_FIXTURES_DIR / name).read_bytes()
+        generated = (tmp_path / name).read_bytes()
+        assert generated == committed, (
+            f"{name} no longer matches the generator; regenerate and commit it"
+        )
+
+    # If generation_manifest.json is present, skip comparing environment-dependent
+    # fields (commit_sha, platform, python_version) and verify self-description.
+    manifest_path = tmp_path / "generation_manifest.json"
+    if manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if "episodes" in manifest:
+            labeled_count = len(
+                (tmp_path / "labeled_episodes.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            )
+            assert manifest["episodes"] == labeled_count
