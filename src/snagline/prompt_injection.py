@@ -142,3 +142,31 @@ def inspect_tool_input(
     _walk(tool_input)
     return findings
 
+
+def as_authorize_rule(
+    config: Optional[PromptInjectionConfig] = None,
+    on_match: Any = "deny",
+) -> Any:
+    """Return an authorization rule evaluating tool requests for prompt injections."""
+    from snagline.authorize import RuleVerdict
+
+    cfg = config or PromptInjectionConfig()
+
+    def _rule(request: Any) -> Optional[RuleVerdict]:
+        findings = inspect_tool_input(request.tool_input, cfg)
+        if not findings:
+            return None
+
+        highest = max(findings, key=lambda f: SEVERITY_ORDER.get(f.severity, 0))
+        reason = f"Prompt injection indicator detected ({highest.rule_id}): {highest.reason}"
+        metadata = {"findings": [f.to_dict() for f in findings]}
+        return RuleVerdict(
+            decision=on_match,
+            rule_id=f"prompt_injection_{highest.rule_id}",
+            reason=reason,
+            metadata=metadata,
+        )
+
+    return _rule
+
+
