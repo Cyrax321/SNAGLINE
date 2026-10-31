@@ -343,10 +343,19 @@ def as_authorize_rule(config: ShellThreatConfig | None = None):
     cfg = config or ShellThreatConfig()
 
     def _rule(request: ToolRequest) -> RuleVerdict | None:
-        if request.action != "execute" or not request.resource:
+        if request.action != "execute":
+            return None
+        # Prefer full command from tool_input if available to avoid truncation
+        # bypasses when request.resource was bounded (issue #650).
+        cmd = request.resource or ""
+        if isinstance(request.tool_input, dict):
+            raw = request.tool_input.get("command")
+            if isinstance(raw, str) and len(raw) > len(cmd):
+                cmd = raw
+        if not cmd:
             return None
         hits = findings_at_or_above(
-            inspect_command(request.resource, cfg),
+            inspect_command(cmd, cfg),
             cfg.min_severity,
         )
         if not hits:
