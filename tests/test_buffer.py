@@ -1,5 +1,6 @@
 from snagline.buffer import BoundedEventBuffer
 
+
 def test_buffer_capacity_eviction():
     buf = BoundedEventBuffer(capacity=2)
     assert not buf.push("a")

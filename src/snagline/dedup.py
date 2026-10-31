@@ -5,14 +5,17 @@ duplicate consecutive transmissions.
 """
 
 from __future__ import annotations
+
 import hashlib
 import json
-from typing import Any, Set
+from typing import Any
+
 
 class EventDeduplicator:
     """In-memory payload deduplication filter."""
+
     def __init__(self) -> None:
-        self._seen_hashes: Set[str] = set()
+        self._seen_hashes: set[str] = set()
 
     def is_duplicate(self, payload: Any) -> bool:
         """Check if payload digest has already been observed."""

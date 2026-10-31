@@ -4,17 +4,19 @@ Provides in-memory performance profiling and event step rate counters.
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
 
 DEFAULT_WINDOW_SECONDS = 120
 DEFAULT_MAX_SAMPLES = 1000
 
+
 @dataclass
 class DiagnosticMetrics:
     """In-memory telemetry metric container with counter and timing series."""
-    counters: Dict[str, int] = field(default_factory=dict)
-    timings: Dict[str, List[float]] = field(default_factory=dict)
+
+    counters: dict[str, int] = field(default_factory=dict)
+    timings: dict[str, list[float]] = field(default_factory=dict)
     max_samples: int = DEFAULT_MAX_SAMPLES
 
     def record_counter(self, name: str, increment: int = 1) -> None:
@@ -36,7 +38,7 @@ class DiagnosticMetrics:
             series.pop(0)
         series.append(value)
 
-    def percentile(self, name: str, p: float) -> Optional[float]:
+    def percentile(self, name: str, p: float) -> float | None:
         """Compute p-th percentile from recorded timing values via linear interpolation."""
         series = self.timings.get(name)
         if not series or not (0.0 <= p <= 100.0):
