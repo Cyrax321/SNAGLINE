@@ -496,6 +496,8 @@ class Policy:
     rule_error_decision: Decision | None = None
     unknown_tool_decision: Decision | None = None
     profile: str | None = None
+    audit_log: Any = None
+    policy_id: str = "default"
 
     def __post_init__(self) -> None:
         if self.profile is not None and self.profile not in VALID_PROFILES:
@@ -537,25 +539,49 @@ class Policy:
             if self.unknown_tool_decision is None:
                 object.__setattr__(self, "unknown_tool_decision", "deny")
 
+    def _record_audit(
+        self,
+        request: ToolRequest,
+        result: DecisionResult,
+        rule_findings: list[dict[str, Any]] | None = None,
+    ) -> None:
+        if self.audit_log is None:
+            return
+        try:
+            self.audit_log.append(
+                decision=result.decision,
+                tool_name=request.tool_name,
+                policy_id=self.policy_id,
+                rule_findings=rule_findings or [],
+                request_meta={"action": request.action, "resource": request.resource},
+            )
+        except Exception:
+            if getattr(self.audit_log, "fail_closed", False):
+                raise
+
     def decide(self, request: ToolRequest) -> DecisionResult:
         """Evaluate every rule and return the strictest verdict."""
+        result: DecisionResult
         if request.action == "unknown":
             override = self.unknown_tool_decision
             if override is not None:
                 # Short-circuits the rules: the operator has said what to do
                 # with tools we do not recognise, and that outranks whatever
                 # the rules would have made of it.
-                return DecisionResult(
+                result = DecisionResult(
                     override,
                     f"tool {request.tool_name!r} is unknown; "
                     f"policy unknown_tool_decision is {override!r}",
                     (),
                 )
+                self._record_audit(request, result)
+                return result
             # Otherwise fall through and run the rules: an operator may have
             # named that tool explicitly, and an explicit rule is better
             # knowledge than our own ignorance of the tool set.
 
         opinions: list[tuple[Decision, RuleVerdict]] = []
+        rule_findings: list[dict[str, Any]] = []
         for index, rule in enumerate(self.rules):
             try:
                 verdict = rule(request)
@@ -565,15 +591,22 @@ class Policy:
                     if self.rule_error_decision is not None
                     else self.default_decision
                 )
-                return DecisionResult(
+                result = DecisionResult(
                     fallback,
                     f"rule {index} raised {type(exc).__name__}: {exc}",
                     (),
                 )
+                self._record_audit(request, result)
+                return result
             if verdict is not None and verdict.decision is not None:
                 # Paired with the narrowed decision so the strictness sort
                 # below never has to re-narrow an Optional field.
                 opinions.append((verdict.decision, verdict))
+                rule_findings.append({
+                    "rule_id": verdict.rule_id,
+                    "decision": verdict.decision,
+                    "reason": verdict.reason,
+                })
 
         if not opinions:
             # Name the default in the reason. "no rule matched" reads like a
@@ -581,12 +614,14 @@ class Policy:
             # matched; policy default_decision is 'deny'" tells them this is an
             # allowlist and the tool is simply not on it. (The unknown-tool
             # case already returned at the top of this method.)
-            return DecisionResult(
+            result = DecisionResult(
                 self.default_decision,
                 f"no rule matched; policy default_decision is "
                 f"{self.default_decision!r}",
                 (),
             )
+            self._record_audit(request, result)
+            return result
 
         # Strictest wins, so rule order cannot change the outcome. ``max`` keeps
         # first-seen order among ties, which makes the reported reason stable
@@ -596,7 +631,9 @@ class Policy:
             verdict.rule_id
             for _, verdict in sorted(opinions, key=lambda pair: -_rank(pair[0]))
         )
-        return DecisionResult(best_decision, best.reason, ordered)
+        result = DecisionResult(best_decision, best.reason, ordered)
+        self._record_audit(request, result, rule_findings)
+        return result
 
 
 def decide(request: ToolRequest, policy: Policy) -> DecisionResult:
