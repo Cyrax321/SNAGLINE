@@ -93,6 +93,7 @@ check_untyped_defs = true
 # --- Coverage (issue #11) ------------------------------------------------------
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src", "."]
 addopts = "--cov=snagline --cov-fail-under=80"
 
 [tool.coverage.run]
