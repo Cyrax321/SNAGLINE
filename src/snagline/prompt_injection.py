@@ -7,28 +7,31 @@ tool execution or step ingestion.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import re
-from typing import Any, Dict, List, Literal, Mapping, Optional, Set, Tuple
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from typing import Any, Literal
 
 InjectionSeverity = Literal["low", "medium", "high", "critical"]
 
-SEVERITY_ORDER: Dict[InjectionSeverity, int] = {
+SEVERITY_ORDER: dict[InjectionSeverity, int] = {
     "low": 10,
     "medium": 20,
     "high": 30,
     "critical": 40,
 }
 
+
 @dataclass(frozen=True)
 class PromptInjectionFinding:
     """Structured indicator returned when an untrusted payload triggers a pattern."""
+
     rule_id: str
     severity: InjectionSeverity
     reason: str
     matched_indicator: str
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "rule_id": self.rule_id,
             "severity": self.severity,
@@ -36,18 +39,27 @@ class PromptInjectionFinding:
             "matched_indicator": self.matched_indicator,
         }
 
+
 @dataclass
 class PromptInjectionConfig:
     """Configuration knobs for prompt injection detection."""
-    disabled_rules: Set[str] = field(default_factory=set)
+
+    disabled_rules: set[str] = field(default_factory=set)
     min_severity: InjectionSeverity = "medium"
-    trusted_keys: Set[str] = field(
-        default_factory=lambda: {"trusted", "trusted_input", "system_prompt", "developer_message"}
+    trusted_keys: set[str] = field(
+        default_factory=lambda: {
+            "trusted",
+            "trusted_input",
+            "system_prompt",
+            "developer_message",
+        }
     )
-    custom_patterns: List[Tuple[str, InjectionSeverity, str, str]] = field(default_factory=list)
+    custom_patterns: list[tuple[str, InjectionSeverity, str, str]] = field(
+        default_factory=list
+    )
 
 
-DEFAULT_PATTERNS: List[Tuple[str, InjectionSeverity, str, str]] = [
+DEFAULT_PATTERNS: list[tuple[str, InjectionSeverity, str, str]] = [
     (
         "rule_instruction_override",
         "critical",
@@ -82,15 +94,15 @@ DEFAULT_PATTERNS: List[Tuple[str, InjectionSeverity, str, str]] = [
 
 
 def inspect_text(
-    text: str, config: Optional[PromptInjectionConfig] = None
-) -> List[PromptInjectionFinding]:
+    text: str, config: PromptInjectionConfig | None = None
+) -> list[PromptInjectionFinding]:
     """Scan untrusted text against configured prompt injection heuristics."""
     if not text or not isinstance(text, str):
         return []
 
     cfg = config or PromptInjectionConfig()
     min_rank = SEVERITY_ORDER.get(cfg.min_severity, 20)
-    findings: List[PromptInjectionFinding] = []
+    findings: list[PromptInjectionFinding] = []
 
     all_patterns = list(DEFAULT_PATTERNS) + list(cfg.custom_patterns)
 
@@ -118,14 +130,14 @@ def inspect_text(
 
 def inspect_tool_input(
     tool_input: Mapping[str, Any],
-    config: Optional[PromptInjectionConfig] = None,
-) -> List[PromptInjectionFinding]:
+    config: PromptInjectionConfig | None = None,
+) -> list[PromptInjectionFinding]:
     """Recursively scan tool input parameters for prompt injection indicators."""
     if not tool_input or not isinstance(tool_input, Mapping):
         return []
 
     cfg = config or PromptInjectionConfig()
-    findings: List[PromptInjectionFinding] = []
+    findings: list[PromptInjectionFinding] = []
 
     def _walk(obj: Any, key_name: str = "") -> None:
         if key_name in cfg.trusted_keys:
@@ -144,7 +156,7 @@ def inspect_tool_input(
 
 
 def as_authorize_rule(
-    config: Optional[PromptInjectionConfig] = None,
+    config: PromptInjectionConfig | None = None,
     on_match: Any = "deny",
 ) -> Any:
     """Return an authorization rule evaluating tool requests for prompt injections."""
@@ -152,8 +164,8 @@ def as_authorize_rule(
 
     cfg = config or PromptInjectionConfig()
 
-    def _rule(request: Any) -> Optional[RuleVerdict]:
-        findings: List[PromptInjectionFinding] = []
+    def _rule(request: Any) -> RuleVerdict | None:
+        findings: list[PromptInjectionFinding] = []
         if getattr(request, "resource", None):
             findings.extend(inspect_text(str(request.resource), cfg))
         if getattr(request, "tool_input", None):
@@ -163,7 +175,9 @@ def as_authorize_rule(
             return None
 
         highest = max(findings, key=lambda f: SEVERITY_ORDER.get(f.severity, 0))
-        reason = f"Prompt injection indicator detected ({highest.rule_id}): {highest.reason}"
+        reason = (
+            f"Prompt injection indicator detected ({highest.rule_id}): {highest.reason}"
+        )
         return RuleVerdict(
             rule_id=f"prompt_injection_{highest.rule_id}",
             decision=on_match,
@@ -171,5 +185,3 @@ def as_authorize_rule(
         )
 
     return _rule
-
-

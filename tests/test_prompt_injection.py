@@ -1,5 +1,3 @@
-import pytest
-
 from snagline.authorize import Policy, ToolRequest
 from snagline.prompt_injection import (
     PromptInjectionConfig,
@@ -14,7 +12,10 @@ def test_instruction_override_detected():
     findings = inspect_text(text)
     assert len(findings) >= 1
     assert any(f.rule_id == "rule_instruction_override" for f in findings)
-    assert any("ignore all previous instructions" in f.matched_indicator.lower() for f in findings)
+    assert any(
+        "ignore all previous instructions" in f.matched_indicator.lower()
+        for f in findings
+    )
 
 
 def test_secret_exfiltration_detected():
@@ -78,7 +79,9 @@ def test_as_authorize_rule_integration():
     rule = as_authorize_rule(on_match="deny")
     policy = Policy(rules=(rule,), default_decision="allow")
 
-    clean_req = ToolRequest("Read", "read", {"path": "main.py", "content": "normal content"})
+    clean_req = ToolRequest(
+        "Read", "read", {"path": "main.py", "content": "normal content"}
+    )
     assert policy.decide(clean_req).decision == "allow"
 
     malicious_req = ToolRequest(

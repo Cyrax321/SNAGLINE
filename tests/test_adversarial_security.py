@@ -1,8 +1,7 @@
-import pytest
-
 from snagline.authorize import Policy, ToolRequest
-from snagline.path_security import PathSecurityConfig, as_authorize_rule as path_rule
-from snagline.shell_security import as_authorize_rule as shell_rule, inspect_command
+from snagline.path_security import PathSecurityConfig
+from snagline.path_security import as_authorize_rule as path_rule
+from snagline.shell_security import inspect_command
 
 
 def test_adversarial_destructive_shell_patterns():
@@ -30,7 +29,9 @@ def test_adversarial_pipe_to_shell():
     ]
     for cmd in pipeline_attacks:
         findings = inspect_command(cmd)
-        assert any("pipe" in f.rule_id or "chaining" in f.rule_id for f in findings), f"Failed to detect pipeline attack: {cmd}"
+        assert any("pipe" in f.rule_id or "chaining" in f.rule_id for f in findings), (
+            f"Failed to detect pipeline attack: {cmd}"
+        )
 
 
 def test_adversarial_path_traversal_evasion():
@@ -94,8 +95,8 @@ def test_adversarial_secret_exfiltration_detection():
 
 
 def test_inspection_does_not_execute_commands(monkeypatch):
-    import subprocess
     import os
+    import subprocess
 
     called = False
 
@@ -128,8 +129,8 @@ def test_security_profile_fail_closed_boundary():
 
 
 def test_monitor_pipeline_hard_fail_open_guarantee():
-    from snagline.monitor import Monitor
     from snagline.events import StepEvent
+    from snagline.monitor import Monitor
 
     # Runtime monitor must never fail or raise even when detector crashes
     class CrashingDetector:
@@ -141,5 +142,3 @@ def test_monitor_pipeline_hard_fail_open_guarantee():
     # Should not raise exception
     risks = monitor.ingest(event)
     assert risks is None or isinstance(risks, list)
-
-

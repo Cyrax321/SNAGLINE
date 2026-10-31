@@ -7,20 +7,23 @@ contributing factors and policy threshold integration.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Mapping, Optional
+from typing import Any
 
 from snagline.authorize import Decision
+
 
 @dataclass(frozen=True)
 class SecurityFactor:
     """Individual component contributing to the composite security risk score."""
+
     name: str
     impact: float
     reason: str
-    rule_id: Optional[str] = None
+    rule_id: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "impact": round(self.impact, 2),
@@ -28,15 +31,17 @@ class SecurityFactor:
             "rule_id": self.rule_id,
         }
 
+
 @dataclass(frozen=True)
 class SecurityScoreResult:
     """Composite security evaluation outcome."""
+
     score: float
     decision: Decision
-    factors: List[SecurityFactor] = field(default_factory=list)
-    rule_ids: List[str] = field(default_factory=list)
+    factors: list[SecurityFactor] = field(default_factory=list)
+    rule_ids: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "score": round(self.score, 2),
             "decision": self.decision,
@@ -45,7 +50,7 @@ class SecurityScoreResult:
         }
 
 
-DEFAULT_TOOL_SENSITIVITIES: Dict[str, float] = {
+DEFAULT_TOOL_SENSITIVITIES: dict[str, float] = {
     "bash": 35.0,
     "terminal": 35.0,
     "sh": 35.0,
@@ -65,7 +70,7 @@ DEFAULT_TOOL_SENSITIVITIES: Dict[str, float] = {
     "ls": 5.0,
 }
 
-FINDING_SEVERITY_IMPACTS: Dict[str, float] = {
+FINDING_SEVERITY_IMPACTS: dict[str, float] = {
     "low": 10.0,
     "medium": 25.0,
     "high": 50.0,
@@ -80,7 +85,7 @@ class SecurityScoringEngine:
         self,
         ask_threshold: float = 40.0,
         deny_threshold: float = 75.0,
-        tool_sensitivities: Optional[Mapping[str, float]] = None,
+        tool_sensitivities: Mapping[str, float] | None = None,
         unknown_tool_sensitivity: float = 25.0,
         fail_closed: bool = False,
     ) -> None:
@@ -93,7 +98,7 @@ class SecurityScoringEngine:
         self.unknown_tool_sensitivity = float(unknown_tool_sensitivity)
         self.fail_closed = fail_closed
 
-        self.tool_sensitivities: Dict[str, float] = dict(DEFAULT_TOOL_SENSITIVITIES)
+        self.tool_sensitivities: dict[str, float] = dict(DEFAULT_TOOL_SENSITIVITIES)
         if tool_sensitivities:
             for k, v in tool_sensitivities.items():
                 self.tool_sensitivities[k.lower()] = float(v)
@@ -102,12 +107,12 @@ class SecurityScoringEngine:
         self,
         tool_name: str,
         action: str = "unknown",
-        resource: Optional[str] = None,
-        findings: Optional[List[Dict[str, Any]]] = None,
+        resource: str | None = None,
+        findings: list[dict[str, Any]] | None = None,
     ) -> SecurityScoreResult:
         """Evaluate a tool invocation and calculate its composite security risk score."""
-        factors: List[SecurityFactor] = []
-        rule_ids: List[str] = []
+        factors: list[SecurityFactor] = []
+        rule_ids: list[str] = []
 
         # 1. Base Tool Sensitivity Factor
         t_key = tool_name.strip().lower()
@@ -176,7 +181,7 @@ class SecurityScoringEngine:
         """Create a pre-execution authorization rule driven by security risk score."""
         from snagline.authorize import RuleVerdict
 
-        def _rule(request: Any) -> Optional[RuleVerdict]:
+        def _rule(request: Any) -> RuleVerdict | None:
             result = self.evaluate(
                 tool_name=request.tool_name,
                 action=request.action,
@@ -193,5 +198,3 @@ class SecurityScoringEngine:
             )
 
         return _rule
-
-

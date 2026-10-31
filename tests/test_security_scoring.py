@@ -2,8 +2,6 @@ import pytest
 
 from snagline.authorize import Policy, ToolRequest
 from snagline.security_scoring import (
-    SecurityFactor,
-    SecurityScoreResult,
     SecurityScoringEngine,
 )
 
@@ -30,7 +28,13 @@ def test_security_scoring_findings_impact():
     # Bash tool (35) + medium finding (25) = 60 -> ask
     res = engine.evaluate(
         tool_name="Bash",
-        findings=[{"rule_id": "rule_suspicious_redirect", "severity": "medium", "reason": "Redirect detected"}],
+        findings=[
+            {
+                "rule_id": "rule_suspicious_redirect",
+                "severity": "medium",
+                "reason": "Redirect detected",
+            }
+        ],
     )
     assert res.score >= 50.0
     assert res.decision == "ask"
@@ -39,7 +43,13 @@ def test_security_scoring_findings_impact():
     # Bash tool (35) + critical finding (80) = raw 115 -> clamped/scaled > 75 -> deny
     res_crit = engine.evaluate(
         tool_name="Bash",
-        findings=[{"rule_id": "rule_destructive", "severity": "critical", "reason": "Destructive rm command"}],
+        findings=[
+            {
+                "rule_id": "rule_destructive",
+                "severity": "critical",
+                "reason": "Destructive rm command",
+            }
+        ],
     )
     assert res_crit.score >= 75.0
     assert res_crit.decision == "deny"

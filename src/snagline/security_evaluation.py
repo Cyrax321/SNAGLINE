@@ -7,29 +7,30 @@ the underlying tool.
 
 from __future__ import annotations
 
-import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any
 
 from snagline.authorize import (
     Decision,
     Policy,
     ToolRequest,
 )
-from snagline.prompt_injection import inspect_text as inspect_injection, inspect_tool_input as inspect_input_injection
-from snagline.security_policy import load_security_policy, compile_policy
+from snagline.prompt_injection import inspect_text as inspect_injection
+from snagline.prompt_injection import inspect_tool_input as inspect_input_injection
+from snagline.security_policy import compile_policy, load_security_policy
 from snagline.security_scoring import SecurityScoringEngine
 
 
 def evaluate_request(
     tool_name: str,
     action: str = "unknown",
-    resource: Optional[str] = None,
-    tool_input: Optional[Mapping[str, Any]] = None,
-    policy: Optional[Policy] = None,
-    policy_path: Optional[str | Path] = None,
-    scoring_engine: Optional[SecurityScoringEngine] = None,
-) -> Dict[str, Any]:
+    resource: str | None = None,
+    tool_input: Mapping[str, Any] | None = None,
+    policy: Policy | None = None,
+    policy_path: str | Path | None = None,
+    scoring_engine: SecurityScoringEngine | None = None,
+) -> dict[str, Any]:
     """Inspect and evaluate a proposed tool invocation against security controls."""
     if not tool_name:
         raise ValueError("tool_name is required for security evaluation")
@@ -48,7 +49,7 @@ def evaluate_request(
         active_policy = Policy(default_decision="allow")
 
     # 2. Run Inspector Findings
-    findings: List[Dict[str, Any]] = []
+    findings: list[dict[str, Any]] = []
 
     # Prompt injection inspection
     if res_str:
@@ -60,28 +61,34 @@ def evaluate_request(
 
     # Shell threat inspection
     try:
-        from snagline.shell_security import inspect_command, ShellThreatConfig
+        from snagline.shell_security import inspect_command
+
         if action == "execute" and res_str:
             for sf in inspect_command(res_str):
-                findings.append({
-                    "rule_id": sf.rule_id,
-                    "severity": sf.severity,
-                    "reason": sf.reason,
-                    "command_signature": sf.command_signature,
-                })
+                findings.append(
+                    {
+                        "rule_id": sf.rule_id,
+                        "severity": sf.severity,
+                        "reason": sf.reason,
+                        "command_signature": sf.command_signature,
+                    }
+                )
     except ImportError:
         pass
 
     # Secret exposure inspection
     try:
         from snagline.secret_security import inspect_text as inspect_secret
+
         if res_str:
             for match in inspect_secret(res_str):
-                findings.append({
-                    "rule_id": match.rule_id,
-                    "severity": match.severity,
-                    "reason": f"Secret pattern matched: {match.rule_id}",
-                })
+                findings.append(
+                    {
+                        "rule_id": match.rule_id,
+                        "severity": match.severity,
+                        "reason": f"Secret pattern matched: {match.rule_id}",
+                    }
+                )
     except ImportError:
         pass
 
