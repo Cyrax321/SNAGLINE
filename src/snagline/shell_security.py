@@ -114,12 +114,23 @@ class ShellThreatConfig:
 # Built-in rules (each independently testable)
 # ---------------------------------------------------------------------------
 
-# Word-ish token: command name at start or after a shell separator.
-_SEP = r"(?:^|[;|&`\n]|\$\(|\(\s*)\s*(?:sudo\s+)?"
+# Word-ish token: command name at start or after a shell separator (issue #650).
+# Allows optional sudo and path-qualified executables (e.g. /bin/rm).
+_SEP = r"(?:^|[;|&`\n]|\$\(|\(\s*)\s*(?:sudo\s+)?(?:/[\w.-]+/)*"
+
+_RM_FLAGS = (
+    r"rm\s+(?:-[a-zA-Z0-9_-]+\s+)*"
+    r"(?:"
+    r"-[a-zA-Z]*[rf][a-zA-Z]*[rf][a-zA-Z]*"
+    r"|-[a-zA-Z]*r[a-zA-Z]*(?:\s+-[a-zA-Z0-9_-]+)*\s+-[a-zA-Z]*f[a-zA-Z]*"
+    r"|-[a-zA-Z]*f[a-zA-Z]*(?:\s+-[a-zA-Z0-9_-]+)*\s+-[a-zA-Z]*r[a-zA-Z]*"
+    r"|--(?:recursive\s+(?:-[a-zA-Z0-9_-]+\s+)*--force|force\s+(?:-[a-zA-Z0-9_-]+\s+)*--recursive)"
+    r")\b"
+)
 
 _DESTRUCTIVE = re.compile(
     _SEP + r"(?:"
-    r"rm\s+-(?:[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*|[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*)\b"
+    rf"{_RM_FLAGS}"
     r"|mkfs(?:\.\w+)?\b"
     r"|dd\s+.*\bof\s*=\s*/dev/"
     r"|shred\b"
@@ -129,19 +140,24 @@ _DESTRUCTIVE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+_SHELL_INTERP = r"(?:sudo\s+)?(?:/[\w.-]+/)*(?:ba|z|da)?sh\b"
+
 _PIPE_TO_SHELL = re.compile(
-    r"(?:curl|wget|fetch)\b[^|;]*\|\s*(?:ba)?sh\b"
-    r"|(?:curl|wget|fetch)\b[^|;]*\|\s*(?:ba)?sh\s+-s\b"
-    r"|\b(?:ba)?sh\s+-c\s+.*(?:curl|wget)\b",
+    rf"(?:curl|wget|fetch)\b[^|;]*\|\s*{_SHELL_INTERP}"
+    rf"|(?:curl|wget|fetch)\b[^|;]*\|\s*{_SHELL_INTERP}\s+-s\b"
+    rf"|\b{_SHELL_INTERP}\s+-c\s+.*(?:curl|wget)\b",
     re.IGNORECASE,
 )
 
 _CHAINING = re.compile(
-    r"(?:;|\n|&&|\|\||`|\$\([^)]+\)|\|\s*(?:ba)?sh\b)",
+    rf"(?:;|\n|&&|\|\||`|\$\([^)]+\)|\|\s*{_SHELL_INTERP})",
 )
 
+_UNSAFE_DEST = r"/(?:dev/(?:sd|nvme|vd)|etc/|boot/)"
+
 _UNSAFE_REDIRECT = re.compile(
-    r"(?:^|[\s;|&])(?:>>?|Tee-Object)\s*/(?:dev/sd|dev/nvme|etc/|boot/)",
+    rf"(?:>>?|[0-9]+>>?|Tee-Object)\s*{_UNSAFE_DEST}"
+    rf"|\|\s*(?:sudo\s+)?(?:/[\w.-]+/)*tee(?:\s+-[a-zA-Z]+)*\s+{_UNSAFE_DEST}",
     re.IGNORECASE,
 )
 
