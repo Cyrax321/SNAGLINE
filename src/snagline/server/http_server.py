@@ -1361,9 +1361,12 @@ def make_handler(
 
     _Handler.snagline_monitor = monitor
     _Handler.snagline_tracker = tracker
+    if max_risks < 0:
+        raise ValueError(f"max_risks must be non-negative, got {max_risks}")
     # Bounded: POST /risks is an open-ended ingest point, so retain only the
-    # most recent max_risks entries rather than growing without limit.
-    _Handler.snagline_risks = deque(maxlen=max(1, max_risks))
+    # most recent max_risks entries rather than growing without limit (issue #668).
+    # Setting max_risks=0 retains nothing (deque maxlen=0).
+    _Handler.snagline_risks = deque(maxlen=max_risks)
     # The deque is read on GET /risks and written on POST /risks from different
     # handler threads; both ends serialize on this lock (issue #543).
     _Handler.snagline_risks_lock = threading.Lock()
