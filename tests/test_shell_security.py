@@ -416,3 +416,29 @@ def test_extra_rules_and_empty_strongest() -> None:
     )
     assert all(f.rule_id != "custom_rule" for f in quiet)
     assert strongest_severity(()) is None
+
+
+def test_as_authorize_rule_inspects_common_execution_tools_issue_684() -> None:
+    """as_authorize_rule must inspect common execution tools like bash, sh, terminal, etc. (#684)."""
+    from snagline.authorize import ToolRequest
+
+    rule = as_authorize_rule()
+
+    # Framework tools with lowercase names
+    for tool in ("bash", "sh", "terminal", "exec", "cmd", "shell"):
+        req = ToolRequest.from_tool_input(tool, {"command": "rm -rf /"})
+        verdict = rule(req)
+        assert verdict is not None, f"expected verdict for tool {tool!r}"
+        assert verdict.decision == "deny"
+        assert "shell_threats" in verdict.rule_id
+
+    # Custom tool with action unknown but command input
+    req_custom = ToolRequest(
+        tool_name="custom_runner",
+        action="unknown",
+        resource="rm -rf /",
+        tool_input={"command": "rm -rf /"},
+    )
+    verdict_custom = rule(req_custom)
+    assert verdict_custom is not None
+    assert verdict_custom.decision == "deny"
