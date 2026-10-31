@@ -115,8 +115,8 @@ class ShellThreatConfig:
 # ---------------------------------------------------------------------------
 
 # Word-ish token: command name at start or after a shell separator (issue #650).
-# Allows optional sudo and path-qualified executables (e.g. /bin/rm).
-_SEP = r"(?:^|[;|&`\n]|\$\(|\(\s*)\s*(?:sudo\s+)?(?:/[\w.-]+/)*"
+# Allows optional sudo and path-qualified executables (e.g. /bin/rm, /usr/bin/rm).
+_SEP = r"(?:^|[;|&`\n]|\$\(|\(\s*)\s*(?:sudo\s+)?(?:(?:/[a-zA-Z0-9_.-]+)+/)?\s*"
 
 _RM_FLAGS = (
     r"rm\s+(?:-[a-zA-Z0-9_-]+\s+)*"
@@ -140,7 +140,7 @@ _DESTRUCTIVE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
-_SHELL_INTERP = r"(?:sudo\s+)?(?:/[\w.-]+/)*(?:ba|z|da)?sh\b"
+_SHELL_INTERP = r"(?:sudo\s+)?(?:(?:/[a-zA-Z0-9_.-]+)+/)?(?:ba|z|da)?sh\b"
 
 _PIPE_TO_SHELL = re.compile(
     rf"(?:curl|wget|fetch)\b[^|;]*\|\s*{_SHELL_INTERP}"
@@ -157,7 +157,7 @@ _UNSAFE_DEST = r"/(?:dev/(?:sd|nvme|vd)|etc/|boot/)"
 
 _UNSAFE_REDIRECT = re.compile(
     rf"(?:>>?|[0-9]+>>?|Tee-Object)\s*{_UNSAFE_DEST}"
-    rf"|\|\s*(?:sudo\s+)?(?:/[\w.-]+/)*tee(?:\s+-[a-zA-Z]+)*\s+{_UNSAFE_DEST}",
+    rf"|\|\s*(?:sudo\s+)?(?:(?:/[a-zA-Z0-9_.-]+)+/)?tee(?:\s+-[a-zA-Z]+)*\s+{_UNSAFE_DEST}",
     re.IGNORECASE,
 )
 
