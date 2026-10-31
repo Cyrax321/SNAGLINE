@@ -917,3 +917,31 @@ def test_raising_rule_with_fail_closed_profile_contributes_deny_issue_653() -> N
     assert result.decision == "deny"
     assert "rule 0 raised RuntimeError: custom rule bug" in result.reason
     assert "rule_0" in result.matched_rules
+
+
+def test_fail_closed_profile_does_not_short_circuit_allow_agent_tools_issue_683() -> (
+    None
+):
+    """Explicit rules like allow_agent_tools take precedence over unknown_tool_decision (#683)."""
+    policy = Policy(
+        profile="fail_closed",
+        rules=[allow_agent_tools({"my_agent": ["custom_tool"]})],
+    )
+    req = ToolRequest.from_tool_input("custom_tool", {}, agent_id="my_agent")
+    res = policy.decide(req)
+
+    assert res.decision == "allow"
+    assert "custom_tool" in res.reason
+    assert res.matched_rules == ("agent_allowlists",)
+
+    # When request carries another agent, allow_agent_tools denies
+    req_other = ToolRequest.from_tool_input("custom_tool", {}, agent_id="other_agent")
+    res_other = policy.decide(req_other)
+    assert res_other.decision == "deny"
+    assert "no configured tool allowlist" in res_other.reason
+
+    # When tool is unknown and no rule matches, unknown_tool_decision (deny) applies
+    req_unknown = ToolRequest.from_tool_input("completely_unknown", {})
+    res_unknown = policy.decide(req_unknown)
+    assert res_unknown.decision == "deny"
+    assert "is unknown" in res_unknown.reason
