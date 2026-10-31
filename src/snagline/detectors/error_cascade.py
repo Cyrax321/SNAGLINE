@@ -168,10 +168,23 @@ class ErrorCascadeDetector:
         # A 0 threshold is rejected by Config validation (issue #322); guard
         # anyway, since Config is a plain mutable dataclass a host can
         # reconfigure after construction.
-        if consecutive_alarm:
-            graded = _graded_cascade_score(consecutive, self.consecutive_threshold)
+        # When both consecutive_alarm and density_alarm are satisfied, pick the
+        # stronger severity band so a deepening density cascade is not
+        # demoted or silenced by a concurrent lower-band consecutive streak (issue #703).
+        score_consecutive = (
+            _graded_cascade_score(consecutive, self.consecutive_threshold)
+            if consecutive_alarm
+            else 0.0
+        )
+        score_density = (
+            _graded_cascade_score(total, self.error_threshold) if density_alarm else 0.0
+        )
+        if score_consecutive >= score_density:
+            graded = score_consecutive
+            detail = f"{consecutive} consecutive errors"
         else:
-            graded = _graded_cascade_score(total, self.error_threshold)
+            graded = score_density
+            detail = f"{total} errors in last {len(w)} steps"
         # Dedupe on the *band*, not on a single boolean (issue #538, following
         # ``LoopDetector``): a cascade that deepens past the band it already
         # alerted on is new information, not a repeat. A plain flag latched at
@@ -184,16 +197,10 @@ class ErrorCascadeDetector:
             return None
 
         self._fired[event.episode_id] = graded
-        if consecutive_alarm:
-            score = graded
-            detail = f"{consecutive} consecutive errors"
-        else:
-            score = graded
-            detail = f"{total} errors in last {len(w)} steps"
         return FailureRisk(
             event.episode_id,
             event.step_id,
-            score,
+            graded,
             "error_cascade",
             detail,
             event.timestamp,
