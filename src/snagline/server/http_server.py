@@ -630,9 +630,9 @@ def make_handler(
             # equality semantics are unchanged.
             token_b = token.encode()
             authz = self.headers.get("Authorization", "")
-            if authz.startswith("Bearer "):
+            if authz[:7].lower() == "bearer ":
                 return hmac.compare_digest(
-                    authz[len("Bearer ") :].strip().encode(), token_b
+                    authz[7:].strip().encode(), token_b
                 )
             header = self.headers.get("X-Snagline-Token")
             if header is None:
