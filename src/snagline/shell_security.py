@@ -343,7 +343,26 @@ def as_authorize_rule(config: ShellThreatConfig | None = None):
     cfg = config or ShellThreatConfig()
 
     def _rule(request: ToolRequest) -> RuleVerdict | None:
-        if request.action != "execute":
+        is_exec = request.action == "execute" or (
+            request.action == "unknown"
+            and (
+                request.tool_name.lower()
+                in {
+                    "bash",
+                    "sh",
+                    "terminal",
+                    "exec",
+                    "cmd",
+                    "shell",
+                    "execute_code",
+                }
+                or (
+                    isinstance(request.tool_input, dict)
+                    and "command" in request.tool_input
+                )
+            )
+        )
+        if not is_exec:
             return None
         # Prefer full command from tool_input if available to avoid truncation
         # bypasses when request.resource was bounded (issue #650).
