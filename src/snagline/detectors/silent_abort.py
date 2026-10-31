@@ -48,11 +48,11 @@ class SilentAbortDetector:
         output_action_types: frozenset[str] | set[str] | None = None,
         config: Config | None = None,
     ) -> None:
-        del config  # thresholds live here only for symmetry with other detectors
+        cfg = config or Config()
         self.output_action_types = (
             frozenset(output_action_types)
             if output_action_types is not None
-            else _DEFAULT_OUTPUT_TYPES
+            else frozenset(cfg.silent_abort_output_action_types)
         )
         self._last: dict[str, StepEvent] = {}
 
