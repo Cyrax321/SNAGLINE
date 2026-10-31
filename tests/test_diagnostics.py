@@ -1,3 +1,4 @@
+import pytest
 from snagline.diagnostics import DiagnosticMetrics
 
 def test_diagnostic_metrics_counters():
@@ -26,3 +27,15 @@ def test_diagnostic_metrics_percentile():
     assert metrics.percentile("lat", 0.0) == 10.0
     assert metrics.percentile("lat", 100.0) == 50.0
     assert metrics.percentile("missing", 50.0) is None
+
+def test_diagnostic_metrics_invalid_max_samples():
+    for invalid_val in [0, -1, -100, float("nan"), float("inf"), float("-inf"), 3.14, True, False, "1000", None]:
+        with pytest.raises(ValueError, match="max_samples must be a positive integer"):
+            DiagnosticMetrics(max_samples=invalid_val)  # type: ignore
+
+def test_diagnostic_metrics_valid_max_samples_boundary():
+    metrics = DiagnosticMetrics(max_samples=1)
+    metrics.record_timing("lat", 10.0)
+    metrics.record_timing("lat", 20.0)
+    assert metrics.timings["lat"] == [20.0]
+
