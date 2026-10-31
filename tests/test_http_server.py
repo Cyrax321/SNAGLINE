@@ -491,7 +491,25 @@ def test_get_metrics_requires_token_when_configured() -> None:
         assert _get(base, "/metrics") == 401
         assert _get(base, "/metrics", {"Authorization": "Bearer wrong"}) == 401
         assert _get(base, "/metrics", {"Authorization": "Bearer secret"}) == 200
+        assert _get(base, "/metrics", {"Authorization": "bearer secret"}) == 200
+        assert _get(base, "/metrics", {"Authorization": "BEARER secret"}) == 200
         assert _get(base, "/metrics", {"X-Snagline-Token": "secret"}) == 200
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_authorization_bearer_scheme_is_case_insensitive() -> None:
+    """RFC 7235 §2.1 auth-scheme is case-insensitive; bearer/BEARER/Bearer accepted (issue #667)."""
+    server, base = _start_server(_RecordingSink(), auth_token="my-token-123")
+    try:
+        assert _get(base, "/metrics", {"Authorization": "bearer my-token-123"}) == 200
+        assert _get(base, "/metrics", {"Authorization": "BEARER my-token-123"}) == 200
+        assert _get(base, "/metrics", {"Authorization": "Bearer my-token-123"}) == 200
+        assert _get(base, "/metrics", {"Authorization": "bEaReR my-token-123"}) == 200
+        # Incorrect scheme or token fails
+        assert _get(base, "/metrics", {"Authorization": "basic my-token-123"}) == 401
+        assert _get(base, "/metrics", {"Authorization": "bearer invalid"}) == 401
     finally:
         server.shutdown()
         server.server_close()
