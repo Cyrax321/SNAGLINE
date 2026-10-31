@@ -582,22 +582,37 @@ class Policy:
 
         opinions: list[tuple[Decision, RuleVerdict]] = []
         rule_findings: list[dict[str, Any]] = []
+        rule_errors: list[tuple[int, Exception]] = []
         for index, rule in enumerate(self.rules):
             try:
                 verdict = rule(request)
             except Exception as exc:  # noqa: BLE001 - a rule must not wedge the host
-                fallback = (
-                    self.rule_error_decision
-                    if self.rule_error_decision is not None
-                    else self.default_decision
-                )
-                result = DecisionResult(
-                    fallback,
-                    f"rule {index} raised {type(exc).__name__}: {exc}",
-                    (),
-                )
-                self._record_audit(request, result)
-                return result
+                rule_errors.append((index, exc))
+                if self.rule_error_decision is not None:
+                    verdict = RuleVerdict(
+                        f"rule_{index}",
+                        self.rule_error_decision,
+                        f"rule {index} raised {type(exc).__name__}: {exc}",
+                    )
+                    opinions.append((self.rule_error_decision, verdict))
+                    rule_findings.append(
+                        {
+                            "rule_id": f"rule_{index}",
+                            "decision": self.rule_error_decision,
+                            "reason": f"rule {index} raised {type(exc).__name__}: {exc}",
+                            "error": True,
+                        }
+                    )
+                else:
+                    rule_findings.append(
+                        {
+                            "rule_id": f"rule_{index}",
+                            "decision": None,
+                            "reason": f"rule {index} raised {type(exc).__name__}: {exc}",
+                            "error": True,
+                        }
+                    )
+                continue
             if verdict is not None and verdict.decision is not None:
                 # Paired with the narrowed decision so the strictness sort
                 # below never has to re-narrow an Optional field.
@@ -611,6 +626,18 @@ class Policy:
                 )
 
         if not opinions:
+            # If a rule raised and rule_error_decision is None, fall back to default_decision
+            # while preserving the rule error message in the reason.
+            if rule_errors:
+                first_idx, first_exc = rule_errors[0]
+                result = DecisionResult(
+                    self.default_decision,
+                    f"rule {first_idx} raised {type(first_exc).__name__}: {first_exc}",
+                    (),
+                )
+                self._record_audit(request, result, rule_findings)
+                return result
+
             # Name the default in the reason. "no rule matched" reads like a
             # bug to an operator staring at a deny they did not write; "no rule
             # matched; policy default_decision is 'deny'" tells them this is an
