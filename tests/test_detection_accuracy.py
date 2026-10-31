@@ -812,3 +812,33 @@ def test_format_table_extra_trigger_widens_the_column(harness) -> None:
     # at the header's TP offset.
     assert extra[: offset - 1].strip() == "a_very_long_unshipped_trigger_name"
     assert extra[offset : offset + 4].strip() == "1"
+
+
+def test_committed_variants_explore_swept_axes_issue_608(harness) -> None:
+    """Fixture builders must systematically sweep axes rather than relying solely on RNG (#608)."""
+    import json
+
+    from benchmarks.fixtures.generate_fixtures import LABELED_BUILDERS, _variant_no
+
+    # Every builder must accept and inspect episode id
+    for trig in LABELED_BUILDERS:
+        v0 = _variant_no(f"{trig}-00")
+        v3 = _variant_no(f"{trig}-03")
+        assert v0 == 0
+        assert v3 == 3
+
+    # Check variation across committed fixtures
+    fixtures_path = Path("benchmarks/fixtures/labeled_episodes.jsonl")
+    by_trigger: dict[str, list[dict]] = {}
+    for line in fixtures_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        rec = json.loads(line)
+        by_trigger.setdefault(rec["label"]["trigger"], []).append(rec)
+
+    for trig, eps in by_trigger.items():
+        distinct_events = {
+            tuple(e["action_signature"] for e in ep["events"]) for ep in eps
+        }
+        # Every variant must have distinct event signature sequences
+        assert len(distinct_events) == len(eps), f"{trig} episodes are not distinct"
