@@ -157,3 +157,105 @@ def validate_policy_dict(raw: Dict[str, Any]) -> SecurityPolicySchema:
         detector_settings=dict(detector_settings),
     )
 
+
+def load_security_policy(source: str | Any) -> SecurityPolicySchema:
+    """Load and strictly validate security policy from JSON/YAML or mapping."""
+    import json
+    from pathlib import Path
+
+    raw: Dict[str, Any]
+    if isinstance(source, dict):
+        raw = source
+    elif isinstance(source, (str, Path)):
+        p = Path(source)
+        if p.exists() and p.is_file():
+            content = p.read_text(encoding="utf-8")
+        else:
+            content = str(source)
+
+        content = content.strip()
+        if content.startswith("{"):
+            try:
+                raw = json.loads(content)
+            except Exception as err:
+                raise PolicyValidationError(f"Invalid JSON in policy source: {err}") from err
+        else:
+            # Attempt yaml parsing if pyyaml is installed, otherwise lightweight key-value parser
+            try:
+                import yaml  # type: ignore
+                raw = yaml.safe_load(content)
+            except ImportError:
+                # Basic key-value parser for simple YAML specs
+                raw = {}
+                for line in content.splitlines():
+                    line = line.strip()
+                    if line and not line.startswith("#") and ":" in line:
+                        k, v = line.split(":", 1)
+                        raw[k.strip()] = v.strip()
+            except Exception as err:
+                raise PolicyValidationError(f"Invalid YAML in policy source: {err}") from err
+    else:
+        raise PolicyValidationError(f"Unsupported policy source type: {type(source).__name__}")
+
+    return validate_policy_dict(raw)
+
+
+def compile_policy(schema: SecurityPolicySchema) -> Any:
+    """Compile a validated SecurityPolicySchema into an executable Authorization Policy."""
+    from snagline.authorize import (
+        Policy,
+        allow_tools,
+        deny_tools,
+        ask_tools,
+        RuleVerdict,
+        ToolRequest,
+    )
+
+    rules = []
+    # 1. Per-agent rules take highest precedence
+    if schema.agent_rules:
+        for agent_id, a_spec in schema.agent_rules.items():
+            if a_spec.denied_tools:
+                d_names = frozenset(a_spec.denied_tools)
+                rules.append(
+                    lambda req, aid=agent_id, names=d_names: RuleVerdict(
+                        rule_id=f"agent_{aid}_deny",
+                        decision="deny" if req.agent_id == aid and req.tool_name in names else None,
+                        reason=f"Tool {req.tool_name!r} denied for agent {aid!r}",
+                    )
+                )
+            if a_spec.ask_tools:
+                ask_names = frozenset(a_spec.ask_tools)
+                rules.append(
+                    lambda req, aid=agent_id, names=ask_names: RuleVerdict(
+                        rule_id=f"agent_{aid}_ask",
+                        decision="ask" if req.agent_id == aid and req.tool_name in names else None,
+                        reason=f"Tool {req.tool_name!r} requires approval for agent {aid!r}",
+                    )
+                )
+            if a_spec.allowed_tools:
+                a_names = frozenset(a_spec.allowed_tools)
+                rules.append(
+                    lambda req, aid=agent_id, names=a_names: RuleVerdict(
+                        rule_id=f"agent_{aid}_allow",
+                        decision="allow" if req.agent_id == aid and req.tool_name in names else None,
+                        reason=f"Tool {req.tool_name!r} explicitly allowed for agent {aid!r}",
+                    )
+                )
+
+    # 2. Global explicit rules
+    if schema.denied_tools:
+        rules.append(deny_tools(*schema.denied_tools))
+    if schema.ask_tools:
+        rules.append(ask_tools(*schema.ask_tools))
+    if schema.allowed_tools:
+        rules.append(allow_tools(*schema.allowed_tools))
+
+    return Policy(
+        rules=tuple(rules),
+        default_decision=schema.default_decision,
+        profile=schema.profile,
+        policy_id=schema.name,
+    )
+
+
