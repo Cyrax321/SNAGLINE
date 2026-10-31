@@ -488,3 +488,29 @@ def test_as_authorize_rule_truncated_or_overlong_resource_rejected() -> None:
     verdict_overlong = rule(req_overlong)
     assert verdict_overlong is not None
     assert verdict_overlong.decision == "deny"
+
+
+def test_valid_absolute_path_in_allowed_roots_not_flagged_as_traversal_issue_678() -> (
+    None
+):
+    """Setting base_dir must not flag legitimate absolute paths inside allowed_roots as traversal (#678)."""
+    cfg = PathSecurityConfig(
+        base_dir="/workspace",
+        allowed_roots=("/workspace", "/tmp"),
+    )
+    # Legitimate absolute file access in /tmp
+    findings = inspect_path("/tmp/scratch.txt", cfg)
+    assert not any(f.rule_id == "path_traversal" for f in findings)
+    assert len(findings) == 0
+
+    # Relative path escaping base_dir is still caught as path_traversal
+    rel_findings = inspect_path("../outside.txt", cfg)
+    assert any(f.rule_id == "path_traversal" for f in rel_findings)
+
+    # Windows-style drive path with base_dir
+    win_cfg = PathSecurityConfig(
+        base_dir="C:/workspace",
+        allowed_roots=("C:/workspace", "D:/scratch"),
+    )
+    win_findings = inspect_path("D:/scratch/test.txt", win_cfg)
+    assert not any(f.rule_id == "path_traversal" for f in win_findings)
