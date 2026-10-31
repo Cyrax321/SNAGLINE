@@ -310,11 +310,6 @@ class EsnCusumDetector:
         ``observe``. Falling back to warm-up is the documented cold-start
         behavior, not a silent misconfiguration.
         """
-        if state.get("reservoir_size") == self._w.shape[0]:
-            for ep, raw in state.get("episodes", []):
-                st = self._new_state()
-                self._state_from_dict(st, raw)
-                self._episodes[ep] = st
         fitted = state.get("fitted")
         if fitted is not None and fitted.get("beta") is not None:
             beta = np.array(fitted["beta"], dtype=float)
@@ -323,6 +318,11 @@ class EsnCusumDetector:
                 self._fitted_res_mu = float(fitted.get("res_mu", 0.0))
                 self._fitted_res_sigma = float(fitted.get("res_sigma", 0.0))
                 self._fitted_res_n = int(fitted.get("res_n", 0))
+        if state.get("reservoir_size") == self._w.shape[0]:
+            for ep, raw in state.get("episodes", []):
+                st = self._new_state()
+                self._state_from_dict(st, raw)
+                self._episodes[ep] = st
 
     def _rhs_shape(self) -> tuple[int, ...]:
         return self._w.shape[0] + 1, _FEATURE_DIM
@@ -535,7 +535,9 @@ class EsnCusumDetector:
             st.res_m2 += delta * (residual - st.res_mu)
         return anomaly
 
-    def _mahalanobis_score(self, st: _EpisodeState, event: StepEvent) -> float:
+    def _mahalanobis_score(
+        self, st: _EpisodeState | StepEvent, event: StepEvent | None = None
+    ) -> float:
         """Diagonal-covariance Mahalanobis score vs BaselineProfile, [0, 1).
 
         Computed over the standardized latency and error terms of the
@@ -558,6 +560,10 @@ class EsnCusumDetector:
         the signal once and let the CUSUM decay on the healthy steps that
         follow, while the ESN residual anomaly still contributes per step.
         """
+        if isinstance(st, StepEvent) and event is None:
+            event = st
+            st = self._episodes.get(event.episode_id) or self._new_state()
+
         if self._baseline is None:
             return 0.0
         key = event.tool_name or "default"
@@ -595,7 +601,10 @@ class EsnCusumDetector:
             dof += 1
         if dof == 0:
             return 0.0
-        return terms / (terms + dof)
+        if not math.isfinite(terms) or terms >= 1e16:
+            return 1.0
+        score = terms / (terms + dof)
+        return 1.0 if not math.isfinite(score) else score
 
     def _seed_residual_stats(self, st: _EpisodeState) -> None:
         """Seed running residual statistics from the warm-up pairs."""
