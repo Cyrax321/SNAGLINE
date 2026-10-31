@@ -876,3 +876,44 @@ def test_path_security_rule_from_dict_validation() -> None:
                 ]
             }
         )
+
+
+def test_raising_rule_does_not_abort_subsequent_rules_issue_653() -> None:
+    """A crashing rule must not abort evaluation or erase explicit denies (#653)."""
+
+    def boom(_req: ToolRequest):
+        raise RuntimeError("custom rule bug")
+
+    policy = Policy(rules=(boom, deny_tools("Bash")), default_decision="allow")
+    req = ToolRequest.from_tool_input("Bash", {"command": "rm -rf /"})
+    result = policy.decide(req)
+
+    assert result.decision == "deny"
+    assert result.matched_rules == ("deny_tools",)
+    assert "tool 'Bash' is denied" in result.reason
+
+    # Test reverse rule ordering: strictest verdict still wins
+    policy_rev = Policy(rules=(deny_tools("Bash"), boom), default_decision="allow")
+    result_rev = policy_rev.decide(req)
+    assert result_rev.decision == "deny"
+    assert result_rev.matched_rules == ("deny_tools",)
+
+
+def test_raising_rule_with_fail_closed_profile_contributes_deny_issue_653() -> None:
+    """When rule_error_decision is deny (e.g. fail_closed), a crashing rule contributes deny."""
+
+    def boom(_req: ToolRequest):
+        raise RuntimeError("custom rule bug")
+
+    policy = Policy(
+        rules=(boom, allow_tools("Read")),
+        rule_error_decision="deny",
+        default_decision="allow",
+    )
+    req = ToolRequest.from_tool_input("Read", {"file_path": "/safe"})
+    result = policy.decide(req)
+
+    # Deny from the crashing rule outranks allow from allow_tools
+    assert result.decision == "deny"
+    assert "rule 0 raised RuntimeError: custom rule bug" in result.reason
+    assert "rule_0" in result.matched_rules
