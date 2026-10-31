@@ -257,9 +257,12 @@ def rule_path_traversal(
     )
     escapes_norm = norm_path.startswith("../") or norm_path == ".."
 
-    # If base_dir is configured, check if normalized path escapes base_dir
+    # If base_dir is configured, check if relative path escapes base_dir
     escapes_base = False
-    if config.base_dir:
+    is_absolute = clean_raw.startswith("/") or bool(
+        re.match(r"^[a-zA-Z]:[/\\]", clean_raw)
+    )
+    if config.base_dir and not is_absolute:
         norm_base = normalize_lexical_path(config.base_dir)
         escapes_base = not _is_subpath(
             norm_path,
