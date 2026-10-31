@@ -1,11 +1,9 @@
-import pytest
-
 from snagline.adapters.mcp_gateway import (
     McpSecurityGateway,
     McpToolRequest,
     get_mcp_eval_tool_schema,
 )
-from snagline.authorize import Policy, allow_tools, deny_tools, ask_tools
+from snagline.authorize import Policy, ask_tools
 
 
 def test_mcp_tool_request_normalization():

@@ -6,12 +6,13 @@ pipeline before the host executes them.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Dict, Mapping, Optional
+from typing import Any
 
 from snagline.authorize import ToolRequest
 
-ACTION_MAP: Dict[str, str] = {
+ACTION_MAP: dict[str, str] = {
     "read_file": "read",
     "read": "read",
     "view": "read",
@@ -35,9 +36,10 @@ RESOURCE_KEYS = ("command", "path", "file_path", "uri", "url", "file", "target")
 @dataclass
 class McpToolRequest:
     """Standardized MCP tool request container."""
+
     name: str
     arguments: Mapping[str, Any] = field(default_factory=dict)
-    agent_id: Optional[str] = None
+    agent_id: str | None = None
     context: Mapping[str, Any] = field(default_factory=dict)
 
     def to_tool_request(self) -> ToolRequest:
@@ -46,7 +48,7 @@ class McpToolRequest:
         action = ACTION_MAP.get(lower_name, "unknown")
 
         # Extract primary resource string from arguments
-        resource: Optional[str] = None
+        resource: str | None = None
         for key in RESOURCE_KEYS:
             if key in self.arguments and isinstance(self.arguments[key], str):
                 resource = self.arguments[key]
@@ -80,9 +82,9 @@ class McpSecurityGateway:
         self,
         name: str,
         arguments: Mapping[str, Any],
-        agent_id: Optional[str] = None,
-        context: Optional[Mapping[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        agent_id: str | None = None,
+        context: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Evaluate MCP tool call and return structured decision."""
         from snagline.security_evaluation import evaluate_request
 
@@ -105,7 +107,7 @@ class McpSecurityGateway:
                 scoring_engine=self.scoring_engine,
             )
             decision = eval_res["decision"]
-            allowed = (decision == "allow")
+            allowed = decision == "allow"
             return {
                 "decision": decision,
                 "allowed": allowed,
@@ -137,7 +139,7 @@ class McpSecurityGateway:
             }
 
 
-def get_mcp_eval_tool_schema() -> Dict[str, Any]:
+def get_mcp_eval_tool_schema() -> dict[str, Any]:
     """Return MCP tools/list compatible definition for snagline_evaluate_tool."""
     return {
         "name": "snagline_evaluate_tool",
@@ -145,12 +147,19 @@ def get_mcp_eval_tool_schema() -> Dict[str, Any]:
         "inputSchema": {
             "type": "object",
             "properties": {
-                "name": {"type": "string", "description": "Target tool name to evaluate"},
-                "arguments": {"type": "object", "description": "Arguments to pass to target tool"},
-                "agent_id": {"type": "string", "description": "Optional agent identifier for policy lookup"},
+                "name": {
+                    "type": "string",
+                    "description": "Target tool name to evaluate",
+                },
+                "arguments": {
+                    "type": "object",
+                    "description": "Arguments to pass to target tool",
+                },
+                "agent_id": {
+                    "type": "string",
+                    "description": "Optional agent identifier for policy lookup",
+                },
             },
             "required": ["name", "arguments"],
         },
     }
-
-
