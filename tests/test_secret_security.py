@@ -171,6 +171,20 @@ def test_redact_secrets_custom_mask() -> None:
     assert redacted == "key is ***aws_access_key***"
 
 
+def test_redact_secrets_preserves_surrounding_structure_issue_697() -> None:
+    """Captured secret span is redacted rather than the entire regex match (#697)."""
+    url = "curl https://alice:SuperSecret123@api.example.com/v1/data"
+    redacted_url = redact_secrets(url)
+    assert (
+        redacted_url
+        == "curl https://alice:[REDACTED:uri_basic_auth]@api.example.com/v1/data"
+    )
+
+    assignment = 'db_password = "hunter2hunter2"'
+    redacted_assign = redact_secrets(assignment)
+    assert redacted_assign == 'db_password = "[REDACTED:generic_credential_assignment]"'
+
+
 def test_redact_mapping_recursive() -> None:
     payload = {
         "user": "alice",
