@@ -842,3 +842,34 @@ def test_committed_variants_explore_swept_axes_issue_608(harness) -> None:
         }
         # Every variant must have distinct event signature sequences
         assert len(distinct_events) == len(eps), f"{trig} episodes are not distinct"
+
+
+def test_detection_latency_tracking_issue_607(harness) -> None:
+    """Benchmark must track and report step latency from onset to detection (#607)."""
+    fixtures_dir = Path("benchmarks/fixtures")
+    outcomes = [
+        harness.replay_episode(ep, fixtures_dir)
+        for ep in harness.iter_fixtures(fixtures_dir)
+    ]
+    report = harness.score(outcomes)
+
+    # Stagnation and wall_clock_budget have non-trivial detection latencies
+    stag_stats = report.per_trigger["stagnation"]
+    assert stag_stats.tp > 0
+    assert len(stag_stats.latencies) == stag_stats.tp
+    assert stag_stats.median_latency is not None and stag_stats.median_latency >= 50
+
+    wall_stats = report.per_trigger["wall_clock_budget"]
+    assert wall_stats.tp > 0
+    assert wall_stats.median_latency is not None and wall_stats.median_latency >= 60
+
+    # Formatted table and JSON output include latency metrics
+    table = harness.format_table(report)
+    assert "detection latency (median steps to first alert):" in table
+    assert "stagnation: median=" in table
+
+    data = harness.report_to_json(report)
+    assert "median_latency" in data["per_trigger"]["stagnation"]
+    assert (
+        data["per_trigger"]["stagnation"]["median_latency"] == stag_stats.median_latency
+    )
