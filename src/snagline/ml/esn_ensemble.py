@@ -560,20 +560,29 @@ class EsnCusumDetector:
         the signal once and let the CUSUM decay on the healthy steps that
         follow, while the ESN residual anomaly still contributes per step.
         """
-        if isinstance(st, StepEvent) and event is None:
-            event = st
-            st = self._episodes.get(event.episode_id) or self._new_state()
+        episode_state: _EpisodeState
+        step_event: StepEvent
+        if isinstance(st, StepEvent):
+            step_event = st
+            episode_state = (
+                self._episodes.get(step_event.episode_id) or self._new_state()
+            )
+        elif event is not None:
+            episode_state = st
+            step_event = event
+        else:
+            return 0.0
 
         if self._baseline is None:
             return 0.0
-        key = event.tool_name or "default"
+        key = step_event.tool_name or "default"
         tb = self._baseline.tools.get(key)
         if tb is None:
-            if key in st.unseen_tools:
+            if key in episode_state.unseen_tools:
                 # Already credited this episode; the CUSUM must be able to
                 # decay on the healthy steps that follow the first one.
                 return 0.0
-            st.unseen_tools.add(key)
+            episode_state.unseen_tools.add(key)
             return _UNKNOWN_TOOL_SCORE
         if tb.count < 2:
             return 0.0
@@ -581,10 +590,10 @@ class EsnCusumDetector:
         dof = 0
         p = tb.error_rate
         sigma_e = max(math.sqrt(max(0.0, p * (1.0 - p))), _ERROR_SIGMA_FLOOR)
-        z_e = ((1.0 if event.error else 0.0) - p) / sigma_e
+        z_e = ((1.0 if step_event.error else 0.0) - p) / sigma_e
         terms += z_e * z_e
         dof += 1
-        lat = event.latency_ms
+        lat = step_event.latency_ms
         # The latency term needs real timed moments. std_latency is 0 below
         # two timed samples and mean_latency is 0 when none were timed, so the
         # floors alone would make one ordinary call a near-saturated z
