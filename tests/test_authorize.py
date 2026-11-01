@@ -925,7 +925,7 @@ def test_fail_closed_profile_does_not_short_circuit_allow_agent_tools_issue_683(
     """Explicit rules like allow_agent_tools take precedence over unknown_tool_decision (#683)."""
     policy = Policy(
         profile="fail_closed",
-        rules=[allow_agent_tools({"my_agent": ["custom_tool"]})],
+        rules=(allow_agent_tools({"my_agent": ["custom_tool"]}),),
     )
     req = ToolRequest.from_tool_input("custom_tool", {}, agent_id="my_agent")
     res = policy.decide(req)
@@ -953,7 +953,7 @@ def test_deny_command_glob_truncated_command_rejected_issue_695() -> None:
     cmd = "echo " + "a" * 5000 + " ; rm -rf /"
     req = ToolRequest.from_tool_input("Bash", {"command": cmd})
 
-    assert req.resource.endswith("...<truncated>")
+    assert req.resource is not None and req.resource.endswith("...<truncated>")
     verdict = rule(req)
     assert verdict is not None
     assert verdict.decision == "deny"

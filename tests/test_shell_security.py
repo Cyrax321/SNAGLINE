@@ -367,7 +367,7 @@ def test_shell_threat_config_validation() -> None:
         ShellThreatConfig(decision="allow")  # type: ignore[arg-type]
 
     with pytest.raises(ValueError, match="invalid severity override"):
-        ShellThreatConfig(severity_overrides={"destructive_command": "unknown"})  # type: ignore[arg-type]
+        ShellThreatConfig(severity_overrides={"destructive_command": "unknown"})  # type: ignore[arg-type,dict-item]
 
 
 def test_as_authorize_rule_full_command_truncation_guard() -> None:
@@ -452,7 +452,7 @@ def test_as_authorize_rule_truncated_command_rejected_issue_695() -> None:
     cmd = "echo " + "a" * 5000 + " ; rm -rf /"
     req = ToolRequest.from_tool_input("Bash", {"command": cmd})
 
-    assert req.resource.endswith("...<truncated>")
+    assert req.resource is not None and req.resource.endswith("...<truncated>")
     verdict = rule(req)
     assert verdict is not None
     assert verdict.decision == "deny"
