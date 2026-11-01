@@ -90,11 +90,11 @@ def test_security_scoring_policy_integration():
     policy = Policy(rules=(engine.as_authorize_rule(),), default_decision="allow")
 
     # Read tool scores 5 -> below ask threshold (30) -> allow
-    req_read = ToolRequest("Read", "read", {"path": "test.py"})
+    req_read = ToolRequest("Read", "read", tool_input={"path": "test.py"})
     assert policy.decide(req_read).decision == "allow"
 
     # Bash tool scores 35 -> above ask threshold (30) -> ask
-    req_bash = ToolRequest("Bash", "execute", {"command": "ls -la"})
+    req_bash = ToolRequest("Bash", "execute", tool_input={"command": "ls -la"})
     res_bash = policy.decide(req_bash)
     assert res_bash.decision == "ask"
     assert "Security risk score" in res_bash.reason

@@ -137,8 +137,7 @@ def test_monitor_pipeline_hard_fail_open_guarantee():
         def step(self, event):
             raise RuntimeError("Detector exploded!")
 
-    monitor = Monitor(detectors=[CrashingDetector()], sinks=[], fail_open=True)
+    monitor = Monitor(detectors=[CrashingDetector()], sinks=[], fail_open=True)  # type: ignore[list-item]
     event = StepEvent("step-1", "ep-1", 1700000000.0, "read", "sig-1", tool_name="Read")
     # Should not raise exception
-    risks = monitor.ingest(event)
-    assert risks is None or isinstance(risks, list)
+    monitor.ingest(event)

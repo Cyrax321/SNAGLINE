@@ -65,7 +65,7 @@ def test_security_audit_log_tampering_detection():
 
     is_valid, err = log.verify()
     assert is_valid is False
-    assert "Tampered content at entry 1" in err
+    assert err is not None and "Tampered content at entry 1" in err
 
 
 def test_security_audit_log_file_persistence_and_verification(tmp_path: Path):
@@ -97,7 +97,7 @@ def test_security_audit_log_file_persistence_and_verification(tmp_path: Path):
 
     is_valid, err = verify_audit_log_file(tampered_file)
     assert is_valid is False
-    assert "Hash mismatch" in err or "Tampered" in err
+    assert err is not None and ("Hash mismatch" in err or "Tampered" in err)
 
 
 def test_security_audit_log_secret_redaction():
@@ -146,9 +146,9 @@ def test_security_audit_log_policy_integration():
         policy_id="test-pol",
     )
 
-    req1 = ToolRequest("Read", "read", {"path": "a.py"})
-    req2 = ToolRequest("Bash", "execute", {"command": "rm -rf /"})
-    req3 = ToolRequest("Grep", "search", {"pattern": "foo"})
+    req1 = ToolRequest("Read", "read", tool_input={"path": "a.py"})
+    req2 = ToolRequest("Bash", "execute", tool_input={"command": "rm -rf /"})
+    req3 = ToolRequest("Grep", "search", tool_input={"pattern": "foo"})
 
     assert policy.decide(req1).decision == "allow"
     assert policy.decide(req2).decision == "deny"
