@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Release-notes extraction no longer silently publishes the whole `CHANGELOG.md`
+  when `VERSION` matches no heading. `RELEASE_NOTES.md` is the GitHub release
+  body, and the inline `python -c` step fell back to writing the entire file --
+  the whole `[Unreleased]` section included -- on a green run, so a
+  one-character version mismatch turned a release's notes into the changelog.
+  The step now runs `.github/scripts/extract_release_notes.py`, which exits
+  non-zero naming the missing version and writes no artifact. Moving it to a
+  script also fixes a latent blocker: the inline program had been indented for
+  YAML parseability (#585), which made it die with `IndentationError` at run
+  time, so the step had not actually executed once since (#601).
 - `policy_from_dict` now rejects an unknown key inside a rule entry and a missing
   `patterns`/`tools` list with a `PolicyError` naming `rules[i].<key>`. Before, a
   typo'd key was ignored and the rule was built with an empty list: a deny rule
