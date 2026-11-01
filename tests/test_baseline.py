@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
+from typing import Any
+
+import pytest
 
 from snagline.baseline import (
     BaselineProfile,
@@ -399,3 +404,140 @@ def test_cli_baseline_without_semantic_does_not_import_drift_extra(
     # Clean up poison for other tests.
     if orig is not None:
         monkeypatch.setitem(sys.modules, "snagline.drift.goal_drift", orig)
+
+
+# --------------------------------------------------------------------------
+# #722 -- the load path validates the counts, not just the moments
+# --------------------------------------------------------------------------
+
+
+def _profile_with_counts(**overrides: Any) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "count": 10,
+        "error_count": 1,
+        "latency_count": 10,
+        "mean_latency": 10.0,
+        "std_latency": 2.0,
+    }
+    entry.update(overrides)
+    return {
+        "version": 1,
+        "fitted_at": 0.0,
+        "total_steps": 10,
+        "tools": {"t": entry},
+    }
+
+
+def _round_trip_profile(profile: dict[str, Any]) -> BaselineProfile:
+    # json parses a literal NaN/Infinity back in by default, so writing the
+    # file with json.dump (allow_nan left on) is the honest load channel --
+    # the same one a hand-edited or pre-#722 profile arrives through.
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "baseline.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(profile, fh)
+        return load_baseline(path)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "field"),
+    [
+        # A NaN count made error_rate NaN, flattening every comparison
+        # against it to False: the error channel went permanently dark.
+        ({"count": float("nan"), "latency_count": 5}, "count"),
+        ({"count": float("inf")}, "count"),
+        # A negative count put the healthy rate below zero, so healthy live
+        # traffic paged critical on the first scored step.
+        ({"count": -3}, "count"),
+        ({"error_count": -5}, "error_count"),
+        ({"latency_count": -4}, "latency_count"),
+        # error_count / latency_count are subsets of count on every writer
+        # path, so a value above it is not a count of anything.
+        ({"error_count": 99}, "error_count"),
+        ({"latency_count": 99}, "latency_count"),
+    ],
+)
+def test_722_bad_counts_rejected_at_load(overrides: dict[str, Any], field: str) -> None:
+    with pytest.raises(ValueError, match=f"{field} must be"):
+        _round_trip_profile(_profile_with_counts(**overrides))
+
+
+def test_722_missing_count_rejected_naming_tool_and_field() -> None:
+    """A missing count used to raise a bare KeyError naming nothing."""
+    prof = _profile_with_counts()
+    del prof["tools"]["t"]["count"]
+    with pytest.raises(ValueError, match=r"'t'.*count"):
+        _round_trip_profile(prof)
+
+
+def test_722_nan_count_round_trips_then_is_rejected_on_load() -> None:
+    """``json`` writes and re-reads a literal NaN, so the guard must fire on load."""
+    prof = _profile_with_counts(count=float("nan"), latency_count=5)
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "baseline.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(prof, fh)
+        with pytest.raises(ValueError, match="count must be an integer"):
+            load_baseline(path)
+
+
+def test_722_valid_profiles_still_load_including_legacy_shapes() -> None:
+    # The modern shape and the pre-latency_count legacy shape (latency_count
+    # defaulting to count, issue #592's compatibility comment) both still load.
+    modern = _round_trip_profile(_profile_with_counts())
+    assert modern.tools["t"].count == 10
+    assert modern.tools["t"].error_rate == pytest.approx(0.1)
+    legacy = _profile_with_counts(count=8)
+    del legacy["tools"]["t"]["latency_count"]
+    loaded = _round_trip_profile(legacy)
+    assert loaded.tools["t"].latency_count == 8
+    # A tool that saw no traffic at all is still a legal, if empty, entry.
+    empty = _round_trip_profile(
+        _profile_with_counts(count=0, error_count=0, latency_count=0)
+    )
+    assert empty.tools["t"].error_rate == 0.0
+
+
+def test_722_corrupted_counts_cannot_darken_or_false_alarm_goal_drift() -> None:
+    """The detector-level payoff: corruption fails at load, by name."""
+    from snagline.config import Config
+    from snagline.detectors.goal_drift import GoalDriftDetector
+    from snagline.events import StepEvent
+
+    # The two #722 failure modes are rejected at load, so neither profile can
+    # reach a detector to darken it or to page on healthy traffic.
+    for bad in (
+        {"count": float("nan"), "latency_count": 50},
+        {"count": 2, "error_count": -5},
+    ):
+        with pytest.raises(ValueError, match="must be"):
+            _round_trip_profile(_profile_with_counts(**bad))
+
+    good = _round_trip_profile(_profile_with_counts())
+
+    def fired_risks(n: int, error: bool) -> list[Any]:
+        det = GoalDriftDetector(baseline=good, config=Config())
+        return [
+            r
+            for i in range(1, n + 1)
+            if (
+                r := det.observe(
+                    StepEvent(
+                        step_id=str(i),
+                        episode_id="ep",
+                        timestamp=float(i),
+                        action_type="tool_call",
+                        action_signature=f"s{i}",
+                        tool_name="t",
+                        latency_ms=10.0,
+                        error=error,
+                    )
+                )
+            )
+            is not None
+        ]
+
+    # A valid profile still fires on genuinely failing traffic ...
+    assert fired_risks(30, True)
+    # ... and stays quiet across 30 fully healthy steps.
+    assert fired_risks(30, False) == []

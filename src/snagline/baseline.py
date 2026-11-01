@@ -74,6 +74,39 @@ def _validate_moments(mean: Any, std: Any) -> tuple[float, float]:
     return mean_f, std_f
 
 
+def _validate_count(
+    value: Any, field: str, *, tool: str, limit: int | None = None
+) -> int:
+    """Coerce a persisted count, rejecting values that poison the rate channels.
+
+    Sibling of ``_validate_moments`` for the *count* fields (issue #722): the
+    live ``add()`` path only ever raises them, so a negative, non-finite, or
+    non-integer value proves the file was hand-edited, written by an older
+    version, or corrupted. A NaN ``count`` makes ``error_rate`` NaN, which
+    flattens every ``error_rate`` comparison to False and silently disables
+    the channel; a negative ``error_count`` moves the healthy reference rate
+    below zero, so any healthy live rate pages critical. ``error_count`` and
+    ``latency_count`` are subsets of ``count`` on every path that produces
+    them, so a value above it is not a count of anything.
+    """
+    try:
+        # int() raises ValueError for NaN and non-numeric strings, and
+        # OverflowError for an infinite JSON literal -- all corruption the
+        # diagnostic below should name, not propagate.
+        n = int(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(
+            f"baseline tool {tool!r}: {field} must be an integer; got {value!r}"
+        ) from exc
+    if n < 0:
+        raise ValueError(f"baseline tool {tool!r}: {field} must be >= 0; got {n!r}")
+    if limit is not None and n > limit:
+        raise ValueError(
+            f"baseline tool {tool!r}: {field} must be <= count ({limit}); got {n!r}"
+        )
+    return n
+
+
 def _optional_latency(value: Any) -> float | None:
     """Validate a persisted optional latency bound, or None when absent.
 
@@ -169,11 +202,25 @@ class ToolBaseline:
                 "key name to fall back on"
             )
         tb = cls(tool_name=tool_name)
-        tb.count = data["count"]
+        # Issue #722: the counts were restored verbatim while the moments got
+        # validated (#592), so the same hand-edited or corrupted profile that
+        # #592 closed the latency door on still walked in through the rate
+        # door. A NaN ``count`` makes ``error_rate`` NaN and every comparison
+        # against it False, silently disabling the error channel; a negative
+        # ``error_count`` puts the healthy rate below zero and pages critical
+        # on healthy traffic; a non-numeric ``count`` loaded fine and then
+        # raised TypeError inside the first detector that read the rate.
+        # Validate here, naming the tool, instead of trusting the file.
+        tb.count = _validate_count(data.get("count"), "count", tool=tool_name)
         # Profiles written before latency_count existed counted only
         # latency-bearing calls, which was also the error-rate denominator;
         # defaulting latency_count to count reproduces those statistics.
-        tb.latency_count = int(data.get("latency_count", tb.count))
+        tb.latency_count = _validate_count(
+            data.get("latency_count", tb.count),
+            "latency_count",
+            tool=tool_name,
+            limit=tb.count,
+        )
         mean = data.get("mean_latency", 0.0)
         std = data.get("std_latency", 0.0)
         # Issue #592: the load path used on-disk moments verbatim, so a
@@ -191,7 +238,12 @@ class ToolBaseline:
             if tb.latency_count
             else 0.0
         )
-        tb.error_count = data.get("error_count", 0)
+        tb.error_count = _validate_count(
+            data.get("error_count", 0),
+            "error_count",
+            tool=tool_name,
+            limit=tb.count,
+        )
         tb.min_latency = _optional_latency(data.get("min_latency"))
         tb.max_latency = _optional_latency(data.get("max_latency"))
         return tb
