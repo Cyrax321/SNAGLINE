@@ -531,12 +531,12 @@ def format_table(report: ScoreReport) -> str:
     if has_latencies:
         lines.append("detection latency (median steps to first alert):")
         for trig in SHIPPED_TRIGGERS:
-            s = report.per_trigger.get(trig)
-            if s and s.latencies:
-                med = s.median_latency
+            stats = report.per_trigger.get(trig)
+            if stats and stats.latencies:
+                med = stats.median_latency
                 med_str = f"{med:.1f}" if med is not None else "n/a"
                 lines.append(
-                    f"  {trig}: median={med_str} min={min(s.latencies)} max={max(s.latencies)}"
+                    f"  {trig}: median={med_str} min={min(stats.latencies)} max={max(stats.latencies)}"
                 )
 
     # Detector attribution clarification (issue #606)
