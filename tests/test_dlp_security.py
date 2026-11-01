@@ -586,3 +586,115 @@ def test_redact_text_overlapping_spans_prefers_stronger_severity() -> None:
     text = "secret: 4111111111111111"
     redacted = redact_text(text)
     assert redacted == "secret: [REDACTED:credit_card]"
+
+
+def test_redact_text_redacts_secrets_when_include_secrets_true() -> None:
+    """Issue #677: redact_text must redact credentials when include_secrets=True."""
+    aws_key = "AKIA" + "IOSFODNN7EXAMPLE"
+    gh_token = "ghp_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    text = f"Contact me at alice@example.com with key {aws_key} and token {gh_token}"
+    redacted = redact_text(text, DlpSecurityConfig(include_secrets=True))
+
+    assert "alice@example.com" not in redacted
+    assert aws_key not in redacted
+    assert gh_token not in redacted
+    assert "[REDACTED:email_address]" in redacted
+    assert "[REDACTED:secret:aws_access_key]" in redacted
+    assert "[REDACTED:secret:github_token]" in redacted
+    assert redacted.startswith(
+        "Contact me at [REDACTED:email_address] with key [REDACTED:secret:aws_access_key]"
+    )
+
+
+def test_redact_text_secrets_disabled_when_include_secrets_false() -> None:
+    """When include_secrets=False, secrets must be preserved while PII is redacted."""
+    aws_key = "AKIA" + "IOSFODNN7EXAMPLE"
+    text = f"Contact me at alice@example.com with key {aws_key}"
+    redacted = redact_text(text, DlpSecurityConfig(include_secrets=False))
+
+    assert "alice@example.com" not in redacted
+    assert "[REDACTED:email_address]" in redacted
+    assert aws_key in redacted
+    assert "[REDACTED:secret:" not in redacted
+
+
+def test_redact_text_secrets_custom_mask() -> None:
+    """Custom mask template must apply to both PII and secrets."""
+    oa_key = "sk-proj-" + "1234567890abcdef1234567890abcdef"
+    text = f"Call 555-123-4567 or use key {oa_key}"
+    redacted = redact_text(text, mask="<CONFIDENTIAL:{rule_id}>")
+
+    assert "555-123-4567" not in redacted
+    assert oa_key not in redacted
+    assert "<CONFIDENTIAL:phone_number>" in redacted
+    assert "<CONFIDENTIAL:secret:openai_api_key>" in redacted
+
+
+def test_redact_payload_redacts_secrets_in_containers() -> None:
+    """redact_payload must recursively redact secrets across nested data structures."""
+    aws_key = "AKIA" + "IOSFODNN7EXAMPLE"
+    gh_token = "ghp_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    ant_key = "sk-ant-api03-" + "1234567890abcdef1234567890"
+    stripe_key = "sk_live_" + "1234567890abcdef12345678"
+    payload = {
+        "admin": "alice@example.com",
+        "keys": [
+            aws_key,
+            gh_token,
+        ],
+        "config": {
+            "token": ant_key,
+            "db": "postgres://dbuser:pAssW0rd123@db.internal:5432/prod",
+        },
+        "tuple_data": ("secret", stripe_key),
+        "set_data": {aws_key},
+        "frozenset_data": frozenset({aws_key}),
+    }
+    redacted = redact_payload(payload)
+
+    assert redacted["admin"] == "[REDACTED:email_address]"
+    assert redacted["keys"] == [
+        "[REDACTED:secret:aws_access_key]",
+        "[REDACTED:secret:github_token]",
+    ]
+    assert redacted["config"]["token"] == "[REDACTED:secret:anthropic_api_key]"
+    assert "[REDACTED:secret:database_connection_uri]" in redacted["config"]["db"]
+    assert "pAssW0rd123" not in redacted["config"]["db"]
+    assert redacted["tuple_data"] == ("secret", "[REDACTED:secret:stripe_secret_key]")
+    assert "[REDACTED:secret:aws_access_key]" in redacted["set_data"]
+    assert "[REDACTED:secret:aws_access_key]" in redacted["frozenset_data"]
+
+
+def test_scan_text_secret_spans_match_raw_value_and_have_signatures() -> None:
+    """scan_text must populate non-zero span offsets matching raw_value for secrets."""
+    aws_key = "AKIA" + "IOSFODNN7EXAMPLE"
+    text = f"Key: {aws_key} and email test@test.org"
+    matches = scan_text(text, DlpSecurityConfig(include_secrets=True))
+
+    secret_match = next(m for m in matches if m.rule_id == "secret:aws_access_key")
+    assert secret_match.start < secret_match.end
+    assert text[secret_match.start : secret_match.end] == secret_match.raw_value
+    assert secret_match.raw_value == aws_key
+    assert len(secret_match.value_signature) == 64
+    assert secret_match.redacted_value == "[REDACTED:secret:aws_access_key]"
+
+
+def test_scan_text_secret_severity_override_and_disabled_rules() -> None:
+    """severity_overrides and disabled_rules on DlpSecurityConfig must apply to secret rules."""
+    aws_key = "AKIA" + "IOSFODNN7EXAMPLE"
+    text = f"Key: {aws_key}"
+
+    # Severity override
+    cfg_override = DlpSecurityConfig(
+        severity_overrides={"secret:aws_access_key": "info"}
+    )
+    matches_override = scan_text(text, cfg_override)
+    assert len(matches_override) == 1
+    assert matches_override[0].severity == "info"
+
+    # Disabled rule
+    cfg_disabled = DlpSecurityConfig(
+        disabled_rules=frozenset({"secret:aws_access_key"})
+    )
+    matches_disabled = scan_text(text, cfg_disabled)
+    assert not any(m.rule_id == "secret:aws_access_key" for m in matches_disabled)

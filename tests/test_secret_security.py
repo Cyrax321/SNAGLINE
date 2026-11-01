@@ -23,6 +23,7 @@ from snagline.secret_security import (
     inspect_tool_input,
     redact_mapping,
     redact_secrets,
+    scan_matches,
     strongest_severity,
 )
 
@@ -562,3 +563,20 @@ def test_edge_cases_and_coverage_branches() -> None:
         rule(ToolRequest(tool_name="Read", action="read", resource=None, tool_input={}))
         is None
     )
+
+
+def test_scan_matches_public_api() -> None:
+    """scan_matches must return SecretMatch objects with exact start/end spans."""
+    assert scan_matches("") == []
+    assert scan_matches("   ") == []
+
+    gh_token = "ghp_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    text = f"Deploy token: {gh_token} here"
+    matches = scan_matches(text)
+    assert len(matches) == 1
+    m = matches[0]
+    assert m.rule_id == "github_token"
+    assert m.severity == "critical"
+    assert m.start < m.end
+    assert text[m.start : m.end] == m.raw_secret
+    assert m.raw_secret == gh_token

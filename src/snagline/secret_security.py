@@ -277,6 +277,19 @@ def _active_rule_ids(cfg: SecretSecurityConfig) -> frozenset[str]:
 # ---------------------------------------------------------------------------
 
 
+def scan_matches(
+    text: str,
+    config: SecretSecurityConfig | None = None,
+    *,
+    extra_rules: Sequence[tuple[str, SecretRuleFn]] = (),
+) -> list[SecretMatch]:
+    """Scan string for secret pattern matches with span offsets."""
+    if not text:
+        return []
+    cfg = config or SecretSecurityConfig()
+    return _scan_matches(text, cfg, extra_rules)
+
+
 def inspect_text(
     text: str,
     config: SecretSecurityConfig | None = None,
