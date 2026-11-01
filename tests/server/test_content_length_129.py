@@ -54,7 +54,15 @@ def test_malformed_content_length_gets_400_not_dropped_connection() -> None:
     """Client must receive a 400 status line, not an empty reply."""
     server, port = _start()
     try:
-        for bad in [b"abc", b"-5", b"12.34", b""]:
+        for bad in [
+            b"abc",
+            b"-5",
+            b"12.34",
+            b"",
+            b"+171",
+            b"1_170",
+            "\u0661\u0667\u0661".encode("utf-8"),
+        ]:
             raw = (
                 b"POST /events HTTP/1.0\r\n"
                 b"Host: localhost\r\n"
