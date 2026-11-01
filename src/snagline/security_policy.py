@@ -244,49 +244,56 @@ def compile_policy(schema: SecurityPolicySchema) -> Any:
     """Compile a validated SecurityPolicySchema into an executable Authorization Policy."""
     from snagline.authorize import (
         Policy,
+        Rule,
         RuleVerdict,
         allow_tools,
         ask_tools,
         deny_tools,
     )
 
-    rules = []
+    rules: list[Rule] = []
     # 1. Per-agent rules take highest precedence
     if schema.agent_rules:
         for agent_id, a_spec in schema.agent_rules.items():
             if a_spec.denied_tools:
                 d_names = frozenset(a_spec.denied_tools)
-                rules.append(
-                    lambda req, aid=agent_id, names=d_names: RuleVerdict(
+
+                def _make_agent_deny(aid: str, names: frozenset[str]) -> Rule:
+                    return lambda req: RuleVerdict(
                         rule_id=f"agent_{aid}_deny",
                         decision="deny"
                         if req.agent_id == aid and req.tool_name in names
                         else None,
                         reason=f"Tool {req.tool_name!r} denied for agent {aid!r}",
                     )
-                )
+
+                rules.append(_make_agent_deny(agent_id, d_names))
             if a_spec.ask_tools:
                 ask_names = frozenset(a_spec.ask_tools)
-                rules.append(
-                    lambda req, aid=agent_id, names=ask_names: RuleVerdict(
+
+                def _make_agent_ask(aid: str, names: frozenset[str]) -> Rule:
+                    return lambda req: RuleVerdict(
                         rule_id=f"agent_{aid}_ask",
                         decision="ask"
                         if req.agent_id == aid and req.tool_name in names
                         else None,
                         reason=f"Tool {req.tool_name!r} requires approval for agent {aid!r}",
                     )
-                )
+
+                rules.append(_make_agent_ask(agent_id, ask_names))
             if a_spec.allowed_tools:
                 a_names = frozenset(a_spec.allowed_tools)
-                rules.append(
-                    lambda req, aid=agent_id, names=a_names: RuleVerdict(
+
+                def _make_agent_allow(aid: str, names: frozenset[str]) -> Rule:
+                    return lambda req: RuleVerdict(
                         rule_id=f"agent_{aid}_allow",
                         decision="allow"
                         if req.agent_id == aid and req.tool_name in names
                         else None,
                         reason=f"Tool {req.tool_name!r} explicitly allowed for agent {aid!r}",
                     )
-                )
+
+                rules.append(_make_agent_allow(agent_id, a_names))
 
     # 2. Global explicit rules
     if schema.denied_tools:
