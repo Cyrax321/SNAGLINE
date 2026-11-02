@@ -319,21 +319,26 @@ def scan_text(
 
     # Also run credentials detection if configured
     if cfg.include_secrets:
-        from snagline.secret_security import SecretSecurityConfig, inspect_text
+        from snagline.secret_security import SecretSecurityConfig, scan_matches
 
         sec_cfg = SecretSecurityConfig()
-        sec_findings = inspect_text(text, sec_cfg)
-        for sf in sec_findings:
+        sec_matches = scan_matches(text, sec_cfg)
+        for sm in sec_matches:
+            rule_id = f"secret:{sm.rule_id}"
+            if rule_id in cfg.disabled_rules:
+                continue
+            sev = cfg.severity_overrides.get(rule_id, sm.severity)
+            sig = make_signature("secret_credential", None, sm.raw_secret)
             matches.append(
                 DlpMatch(
-                    rule_id=f"secret:{sf.rule_id}",
-                    severity=sf.severity,
-                    start=0,
-                    end=0,
-                    raw_value="",
-                    redacted_value="[REDACTED:secret]",
-                    match_type=sf.match_type,
-                    value_signature=sf.secret_signature,
+                    rule_id=rule_id,
+                    severity=sev,
+                    start=sm.start,
+                    end=sm.end,
+                    raw_value=sm.raw_secret,
+                    redacted_value=f"[REDACTED:{rule_id}]",
+                    match_type=sm.match_type,
+                    value_signature=sig,
                 )
             )
 
