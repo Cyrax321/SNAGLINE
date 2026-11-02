@@ -271,4 +271,4 @@ jobs:
             echo "create it with: git tag -a v$ver -m \"SNAGLINE $ver -- see CHANGELOG.md\" && git push origin v$ver"
             exit 1
           fi
-          echo "tag v$ver exists at $(git rev-parse --short v$ver)"
+          echo "tag v$ver exists at $(git rev-parse --short "v$ver")"

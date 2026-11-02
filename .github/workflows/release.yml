@@ -56,10 +56,10 @@ jobs:
               echo "version mismatch: pyproject $PY_VER != tag $TAG_VER"
               exit 1
             fi
-            echo "VERSION=$TAG_VER" >> $GITHUB_ENV
+            echo "VERSION=$TAG_VER" >> "$GITHUB_ENV"
           else
             echo "no tag, using pyproject version $PY_VER"
-            echo "VERSION=$PY_VER" >> $GITHUB_ENV
+            echo "VERSION=$PY_VER" >> "$GITHUB_ENV"
           fi
 
       - name: Set up Python
