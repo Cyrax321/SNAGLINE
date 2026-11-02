@@ -160,15 +160,26 @@ def main() -> None:
     model = _build_fake_model(args.mode)
     agent = create_agent(model=model, tools=TOOLS)
 
+    # Configure the ToolNode to surface tool errors as messages (handle_tool_errors)
+    # so the run survives failures and ErrorCascadeDetector can observe consecutive
+    # error events (issue #614).
+    if hasattr(agent, "nodes") and "tools" in agent.nodes:
+        tool_node = getattr(agent.nodes["tools"], "bound", agent.nodes["tools"])
+        for attr in ("_handle_tool_errors", "handle_tool_errors"):
+            if hasattr(tool_node, attr):
+                setattr(tool_node, attr, True)
+
     print(f"[demo] mode={args.mode!r} -> expected: {_expected(args.mode)}")
     print("[demo] running a REAL create_agent (LangGraph) agent with the handler attached...")
     print("[demo] risks print as JSON to stderr below...\n")
 
-    agent.invoke(
-        {"messages": [("user", "Run the assigned task.")]},
-        config={"callbacks": [handler], "recursion_limit": 40},
-    )
-    handler.close()
+    try:
+        agent.invoke(
+            {"messages": [("user", "Run the assigned task.")]},
+            config={"callbacks": [handler], "recursion_limit": 40},
+        )
+    finally:
+        handler.close()
 
     print("\n[demo] done. If a risk line above matches the expected detector, it works.")
 
