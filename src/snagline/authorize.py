@@ -272,6 +272,11 @@ def _redact_value(value: Any, depth: int) -> Any:
             return _CONTENT_MARKER
         items = [_redact_value(item, depth - 1) for item in value]
         return tuple(items) if isinstance(value, tuple) else items
+    if isinstance(value, (set, frozenset)):
+        if depth <= 0:
+            return _CONTENT_MARKER
+        items = [_redact_value(item, depth - 1) for item in value]
+        return frozenset(items) if isinstance(value, frozenset) else set(items)
     if isinstance(value, str) and len(value) > _MAX_RESOURCE_CHARS:
         return value[:_MAX_RESOURCE_CHARS] + "...<truncated>"
     return value
@@ -295,6 +300,11 @@ def _cap_value(value: Any, depth: int) -> Any:
             return _CONTENT_MARKER
         items = [_cap_value(item, depth - 1) for item in value]
         return tuple(items) if isinstance(value, tuple) else items
+    if isinstance(value, (set, frozenset)):
+        if depth <= 0:
+            return _CONTENT_MARKER
+        items = [_cap_value(item, depth - 1) for item in value]
+        return frozenset(items) if isinstance(value, frozenset) else set(items)
     if isinstance(value, str) and len(value) > _MAX_RESOURCE_CHARS:
         return value[:_MAX_RESOURCE_CHARS] + "...<truncated>"
     return value
