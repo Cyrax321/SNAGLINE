@@ -831,6 +831,8 @@ For a full account of what is verified, believed, and neither, see the [issue tr
 
 Contributions are considered strictly subject to the project's intellectual property terms. Anyone wishing to propose changes or contribute code must receive prior authorization from Under Research.
 
+For the contributor guide — setup, the CI gates and their real output, the issue bar, and what a pull request is expected to carry — see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 - [docs/ADAPTER_GUIDE.md](docs/ADAPTER_GUIDE.md) -- wire any framework into SNAGLINE in an afternoon.
 - [docs/DETECTOR_GUIDE.md](docs/DETECTOR_GUIDE.md) -- the detector contract, constraints, and test shape.
 - [docs/FRAMEWORK_BRIDGES.md](docs/FRAMEWORK_BRIDGES.md) -- connect external agent processes via HTTP, command, or file bridges.
@@ -843,12 +845,16 @@ The project uses `pip` and `pyproject.toml` as its authoritative dependency work
 pip install -e ".[dev]"
 python -m pytest tests/ -q
 ruff check src tests && ruff format --check src tests
-mypy src
+mypy src tests
 ```
 
-Optional extras add their own test legs: `pip install ".[langchain]"`
+`mypy` type-checks the tests as well as the package — `mypy src` alone passes
+locally and then fails CI. Optional extras add their own test legs: `pip install ".[langchain]"`
 un-skips the LangChain integration tests, and `pip install ".[ml]"` enables
 the ESN ensemble leg.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contributor guide: the
+five gates' real output, the issue bar, and what a PR is expected to carry.
 
 Open an issue before submitting large PRs.
 
