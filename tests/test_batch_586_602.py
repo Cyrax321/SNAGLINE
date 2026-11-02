@@ -382,6 +382,64 @@ def test_589_per_client_async_invoke_emits_one_event() -> None:
     assert tools == ["langchain.ainvoke"], tools
 
 
+def test_589_instrument_client_invoke_emits_one_event() -> None:
+    """``instrument_langchain(monitor, client=...)`` is the other documented
+    per-client entrypoint (the issue names both) and must dedupe a delegated
+    ``invoke`` -> ``generate`` call exactly like ``wrap_client`` does."""
+    from snagline.auto import langchain as lc
+
+    monitor = _SpyMonitor()
+
+    class _ChatModel:
+        def invoke(self, *a: Any, **kw: Any) -> Any:
+            return self.generate(*a, **kw)
+
+        def generate(self, *a: Any, **kw: Any) -> Any:
+            return "result"
+
+    client = _ChatModel()
+    assert lc.instrument_langchain(monitor, client=client) is True
+    assert client.invoke("hello") == "result"
+    tools = [e.tool_name for e in monitor.events]
+    assert tools == ["langchain.invoke"], tools
+
+
+def test_589_instrument_client_direct_generate_still_recorded() -> None:
+    from snagline.auto import langchain as lc
+
+    monitor = _SpyMonitor()
+
+    class _ChatModel:
+        def generate(self, *a: Any, **kw: Any) -> Any:
+            return "batch"
+
+    client = _ChatModel()
+    lc.instrument_langchain(monitor, client=client)
+    assert client.generate("hello") == "batch"
+    assert [e.tool_name for e in monitor.events] == ["langchain.generate"]
+
+
+def test_589_instrument_client_async_invoke_emits_one_event() -> None:
+    import asyncio
+
+    from snagline.auto import langchain as lc
+
+    monitor = _SpyMonitor()
+
+    class _ChatModel:
+        async def ainvoke(self, *a: Any, **kw: Any) -> Any:
+            return await self.agenerate(*a, **kw)
+
+        async def agenerate(self, *a: Any, **kw: Any) -> Any:
+            return "result"
+
+    client = _ChatModel()
+    lc.instrument_langchain(monitor, client=client)
+    assert asyncio.run(client.ainvoke("hello")) == "result"
+    tools = [e.tool_name for e in monitor.events]
+    assert tools == ["langchain.ainvoke"], tools
+
+
 # --------------------------------------------------------------------------
 # #590 -- null in a JSON config means the documented "disabled"
 # --------------------------------------------------------------------------
