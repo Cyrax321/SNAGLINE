@@ -890,3 +890,37 @@ def test_goal_drift_structural_attribution_clarified_issue_606(harness) -> None:
     data = harness.report_to_json(report)
     assert "metadata" in data and "notes" in data["metadata"]
     assert "GoalDriftDetector" in data["metadata"]["notes"]["goal_drift"]
+
+
+# --------------------------------------------------------------------------
+# Fixture generator drift guard (issue #615)
+# --------------------------------------------------------------------------
+
+_COMMITTED_FIXTURES_DIR = _REPO_ROOT / "benchmarks" / "fixtures"
+_CORPUS_FILES = (
+    "labeled_episodes.jsonl",
+    "healthy_controls.jsonl",
+    "goal_drift_baseline.json",
+)
+
+
+def test_committed_corpus_matches_the_generator(tmp_path: Path) -> None:
+    """Issue #615: verify benchmarks/fixtures/ matches generate_fixtures.py.
+
+    generate_fixtures.py is deterministic and claims to produce the committed
+    accuracy corpus byte-for-byte. Regenerate into a temp directory and assert
+    that every generated file matches the committed version exactly.
+    """
+    if str(_REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(_REPO_ROOT))
+    from benchmarks.fixtures import generate_fixtures as gen
+
+    ret = gen.main(["--out", str(tmp_path)])
+    assert ret == 0
+
+    for name in _CORPUS_FILES:
+        committed = (_COMMITTED_FIXTURES_DIR / name).read_text(encoding="utf-8")
+        generated = (tmp_path / name).read_text(encoding="utf-8")
+        assert generated == committed, (
+            f"{name} no longer matches the generator; regenerate and commit it"
+        )
