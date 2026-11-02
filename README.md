@@ -614,7 +614,32 @@ snagline serve --host 127.0.0.1 --port 8787
 # POST /hooks/claude-code   body: native hook payload -> 202, mapped + ingested
 # GET  /health                                     -> 200
 # GET  /directive                                  -> 200, latest halt directive
+# GET  /metrics                                    -> 200, Prometheus exposition
 ```
+
+`GET /metrics` is the running sidecar's observability surface: eleven series,
+rendered with plain string formatting and no client library. The
+`snagline_monitor_*` series are the in-process `Monitor.metrics()` counters
+under Prometheus names, so an in-process monitor and its sidecar report the
+same numbers.
+
+| Series | Type | Meaning |
+|:--|:--|:--|
+| `snagline_events_total` | counter | Steps ingested through this sidecar. |
+| `snagline_risks_total{trigger,severity}` | counter | Risks emitted by trigger and severity. |
+| `snagline_episodes_active` | gauge | Distinct episode ids seen since start; ids are removed again on `POST /episodes/end`. |
+| `snagline_ingest_seconds_count` / `snagline_ingest_seconds_sum` | summary | Wall time spent ingesting steps. |
+| `snagline_monitor_events_ingested_total` | counter | Events ingested by the Monitor. |
+| `snagline_monitor_events_dropped_total` | counter | Events dropped before ingest (a non-string `episode_id`, for instance); fail-open. |
+| `snagline_monitor_risks_emitted_total` | counter | Risks emitted by the Monitor. |
+| `snagline_monitor_detector_errors_total` | counter | Detector exceptions swallowed (fail-open). |
+| `snagline_monitor_sink_errors_total` | counter | Sink exceptions swallowed (fail-open). |
+| `snagline_monitor_policy_errors_total` | counter | Enforcement faults swallowed fail-open: a raising callback, or the halt-webhook timeout/error fallbacks. |
+| `snagline_monitor_retained_episodes` | gauge | Live episode ids still retained by the Monitor (cleared by `end_episode`, else LRU-evicted). |
+
+`SNAGLINE_METRICS_FORMAT=classic` (or `?format=classic`, or an
+`Accept: application/json` request header) returns the same snapshot as raw
+JSON counters instead of the exposition format.
 
 ### Claude Code integration
 
@@ -686,6 +711,7 @@ from snagline import Monitor, StepEvent, FailureRisk, Config, make_signature, wa
 | `Monitor` | Orchestrator. `Monitor.default()` returns a ready-to-use instance. |
 | `Monitor.ingest(event)` | Run all detectors against one event. Never raises (fail-open). |
 | `Monitor.end_episode(episode_id)` | Clear per-episode detector state. MUST be called when an episode finishes; otherwise state is retained until LRU eviction. The retained count is exposed as `monitor.retained_episodes` and `snagline_monitor_retained_episodes` (prometheus) and `metrics()["retained_episodes"]`. |
+| `Monitor.metrics()` | Self-observability snapshot, eight keys: `events_ingested`, `events_dropped`, `risks_emitted`, `detector_errors`, `sink_errors`, `policy_errors` (each exception class SNAGLINE swallows fail-open has its own counter, so silence is inspectable), plus `live_episodes` and `retained_episodes` (both the current live-episode count). The sidecar serves the same numbers as the six `snagline_monitor_*` counters and the retained-episodes gauge. |
 | `StepEvent` | Frozen dataclass. The canonical event schema. |
 | `FailureRisk` | Frozen dataclass. The detection signal. |
 | `Config` | Dataclass. All tunable thresholds. |
