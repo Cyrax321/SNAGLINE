@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import threading
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
+
+logger = logging.getLogger(__name__)
 
 Decision = Literal["allow", "ask", "deny"]
 GENESIS_HASH: str = "0" * 64
@@ -95,7 +98,16 @@ class SecurityAuditLog:
             self._load_existing()
 
     def _load_existing(self) -> None:
-        """Load and verify existing records from log_path."""
+        """Load existing records from log_path and verify their hash chain.
+
+        Malformed lines are skipped unless ``fail_closed=True``. The parsed
+        records must also form an untampered chain: a history edit changes the
+        hashed content while leaving the stored hashes in place, so JSON
+        decoding alone cannot tell a pristine log from a rewritten one. A
+        broken chain raises :class:`AuditLogError` under ``fail_closed=True``
+        (tamper evidence is the ledger's purpose) and is logged but still
+        loaded in the fail-open mode, exactly as malformed lines are.
+        """
         if not self.log_path:
             return
         try:
@@ -119,6 +131,21 @@ class SecurityAuditLog:
                 raise AuditLogError(
                     f"Failed to read audit log {self.log_path}: {err}"
                 ) from err
+
+        is_valid, fault = self.verify()
+        if is_valid:
+            return
+        if self.fail_closed:
+            raise AuditLogError(
+                f"Loaded audit log {self.log_path} fails chain verification: {fault}"
+            )
+        logger.warning(
+            "Snagline audit log %s fails chain verification (%s); loading it "
+            "anyway because fail_open is enabled. Call verify() on the log "
+            "before trusting its history.",
+            self.log_path,
+            fault,
+        )
 
     def append(
         self,

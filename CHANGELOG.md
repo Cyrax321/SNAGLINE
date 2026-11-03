@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `SecurityAuditLog` now verifies the hash chain of an existing log while
+  loading it, as its docstring always claimed to. `_load_existing` only
+  JSON-decoded each line, so a history edit (changed content, stored hashes
+  left in place) loaded silently -- even with `fail_closed=True`, the mode
+  documented for tamper evidence, where the constructor raised only on a
+  malformed line. A broken chain now raises `AuditLogError` under
+  `fail_closed=True` and is logged (still loaded) in the fail-open mode,
+  matching how malformed lines are treated (#736).
 - Release-notes extraction no longer silently publishes the whole `CHANGELOG.md`
   when `VERSION` matches no heading. `RELEASE_NOTES.md` is the GitHub release
   body, and the inline `python -c` step fell back to writing the entire file --
