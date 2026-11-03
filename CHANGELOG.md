@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `SecurityScoringEngine` now rejects non-finite `unknown_tool_sensitivity` and
+  non-finite entries in `tool_sensitivities` at construction. A `nan` impact
+  propagated into the composite score made it `nan`, both threshold comparisons
+  on it are `False`, and the engine silently resolved to `allow` -- a fail-open
+  on the pre-execution security decision from one misconfigured knob, the same
+  class as the sink intervals in #432 (#738).
 - Release-notes extraction no longer silently publishes the whole `CHANGELOG.md`
   when `VERSION` matches no heading. `RELEASE_NOTES.md` is the GitHub release
   body, and the inline `python -c` step fell back to writing the entire file --
