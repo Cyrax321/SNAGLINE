@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `verify_audit_log_file` now counts records instead of physical lines, so a
+  blank line in an audit log no longer produces phantom "Broken index" failures.
+  The standalone verifier compared each record's `index` against `enumerate(f)`'s
+  physical line counter, while both readers treat blank lines as legal and skip
+  them -- so a file that loaded cleanly, verified in memory, and could still be
+  appended to failed standalone verification with one bogus index break per
+  blank line and no actual corruption (#737).
 - Release-notes extraction no longer silently publishes the whole `CHANGELOG.md`
   when `VERSION` matches no heading. `RELEASE_NOTES.md` is the GitHub release
   body, and the inline `python -c` step fell back to writing the entire file --

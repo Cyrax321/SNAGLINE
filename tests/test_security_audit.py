@@ -100,6 +100,41 @@ def test_security_audit_log_file_persistence_and_verification(tmp_path: Path):
     assert err is not None and ("Hash mismatch" in err or "Tampered" in err)
 
 
+def test_audit_log_blank_lines_do_not_break_file_verification(tmp_path: Path):
+    """Blank lines are legal fill the loader skips; the file verifier must
+    count records, not physical lines (issue #737)."""
+    log_file = tmp_path / "audit.jsonl"
+    log = SecurityAuditLog(log_path=log_file)
+    log.append("allow", "Read")
+    log.append("deny", "Bash")
+    log.append("ask", "Deploy")
+
+    blanked_file = tmp_path / "blanked.jsonl"
+    blanked_file.write_text(
+        "\n\n".join(log_file.read_text(encoding="utf-8").splitlines()) + "\n",
+        encoding="utf-8",
+    )
+
+    # The loader accepts the same file and the live chain verifies ...
+    loaded_log = SecurityAuditLog(log_path=blanked_file)
+    assert len(loaded_log.records) == 3
+    is_valid, err = loaded_log.verify()
+    assert is_valid is True and err is None
+
+    # ... so the standalone verifier must agree instead of reporting phantom
+    # broken indexes offset by the blank lines.
+    is_valid, err = verify_audit_log_file(blanked_file)
+    assert is_valid is True, err
+
+    # A genuine break after a blank line is still caught.
+    lines = blanked_file.read_text(encoding="utf-8").splitlines()
+    lines[4] = json.dumps({**json.loads(lines[4]), "index": 99})
+    broken_file = tmp_path / "broken.jsonl"
+    broken_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    is_valid, err = verify_audit_log_file(broken_file)
+    assert is_valid is False and "Broken index" in (err or "")
+
+
 def test_security_audit_log_secret_redaction():
     log = SecurityAuditLog()
     record = log.append(
