@@ -698,3 +698,21 @@ def test_scan_text_secret_severity_override_and_disabled_rules() -> None:
     )
     matches_disabled = scan_text(text, cfg_disabled)
     assert not any(m.rule_id == "secret:aws_access_key" for m in matches_disabled)
+
+
+def test_dlp_config_rejects_invalid_severity_fields() -> None:
+    """Invalid min_severity/decision/severity_overrides must fail at construction.
+
+    Before this, an invalid ``min_severity`` was accepted and later surfaced as a
+    bare ``KeyError`` from ``_SEVERITY_RANK`` inside ``as_authorize_rule`` /
+    ``strongest_severity``, and an out-of-contract ``decision`` was emitted
+    verbatim as the rule verdict.
+    """
+    with pytest.raises(ValueError, match="invalid min_severity"):
+        DlpSecurityConfig(min_severity="bogus")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="invalid decision"):
+        DlpSecurityConfig(decision="allow")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="invalid severity override"):
+        DlpSecurityConfig(severity_overrides={"us_ssn": "bogus"})  # type: ignore[arg-type,dict-item]

@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `PathSecurityConfig`, `DlpSecurityConfig`, and `SecretSecurityConfig` now
+  reject an invalid `min_severity`, `decision`, or `severity_overrides` value at
+  construction with a `ValueError`, matching `ShellThreatConfig`. Before, such a
+  value was accepted silently and resurfaced much later: an invalid
+  `min_severity` or override severity crashed `as_authorize_rule` with a bare
+  `KeyError` out of `findings_at_or_above`'s `_SEVERITY_RANK[...]` lookup once a
+  request produced findings, and an out-of-contract `decision` was emitted
+  verbatim as the rule verdict -- a security gate documented to only ever
+  escalate to `ask`/`deny` silently returning `allow`. The declarative
+  `policy_from_dict` path already validated these fields and is unaffected (#739).
 - Release-notes extraction no longer silently publishes the whole `CHANGELOG.md`
   when `VERSION` matches no heading. `RELEASE_NOTES.md` is the GitHub release
   body, and the inline `python -c` step fell back to writing the entire file --
