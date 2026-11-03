@@ -224,7 +224,12 @@ class SecurityAuditLog:
 
 
 def verify_audit_log_file(file_path: str | Path) -> tuple[bool, str | None]:
-    """Standalone utility to verify hash-chain integrity of an audit log file on disk."""
+    """Standalone utility to verify hash-chain integrity of an audit log file on disk.
+
+    Blank lines are tolerated (they are by :class:`SecurityAuditLog`'s loader
+    too) and are not counted as records, so a file the loader accepts verifies
+    with the same verdict as an in-memory :meth:`SecurityAuditLog.verify`.
+    """
     path = Path(file_path)
     if not path.exists():
         return False, f"Audit log file not found: {path}"
@@ -232,7 +237,11 @@ def verify_audit_log_file(file_path: str | Path) -> tuple[bool, str | None]:
     expected_prev = GENESIS_HASH
     try:
         with open(path, encoding="utf-8") as f:
-            for line_num, line in enumerate(f):
+            # Count records, not physical lines: a blank line is legal fill the
+            # loader skips, but ``enumerate(f)`` would charge every subsequent
+            # record with it and report phantom broken indexes.
+            record_num = 0
+            for line_num, line in enumerate(f, 1):
                 line = line.strip()
                 if not line:
                     continue
@@ -240,25 +249,26 @@ def verify_audit_log_file(file_path: str | Path) -> tuple[bool, str | None]:
                     data = json.loads(line)
                     record = AuditRecord.from_dict(data)
                 except Exception as err:
-                    return False, f"Malformed JSON at line {line_num + 1}: {err}"
+                    return False, f"Malformed JSON at line {line_num}: {err}"
 
-                if record.index != line_num:
+                if record.index != record_num:
                     return (
                         False,
-                        f"Broken index at line {line_num + 1}: expected {line_num}, got {record.index}",
+                        f"Broken index at line {line_num}: expected {record_num}, got {record.index}",
                     )
                 if record.previous_hash != expected_prev:
                     return False, (
-                        f"Broken chain link at line {line_num + 1}: expected previous {expected_prev}, "
+                        f"Broken chain link at line {line_num}: expected previous {expected_prev}, "
                         f"got {record.previous_hash}"
                     )
                 computed = record.compute_hash()
                 if record.entry_hash != computed:
                     return False, (
-                        f"Hash mismatch at line {line_num + 1}: computed {computed}, "
+                        f"Hash mismatch at line {line_num}: computed {computed}, "
                         f"recorded {record.entry_hash}"
                     )
                 expected_prev = record.entry_hash
+                record_num += 1
         return True, None
     except OSError as err:
         return False, f"Failed reading audit log: {err}"
