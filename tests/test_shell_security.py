@@ -20,6 +20,7 @@ from snagline.shell_security import (
     ShellThreatConfig,
     as_authorize_rule,
     inspect_command,
+    is_shell_request,
     rule_chaining,
     rule_destructive,
     rule_obfuscation,
@@ -377,6 +378,19 @@ def test_shell_threat_config_validation() -> None:
 
     with pytest.raises(ValueError, match="invalid severity override"):
         ShellThreatConfig(severity_overrides={"destructive_command": "unknown"})  # type: ignore[arg-type,dict-item]
+
+
+def test_is_shell_request_predicate() -> None:
+    """Issues #684/#734: an uninformative action still inspects shell work."""
+    assert is_shell_request("anything", "execute")
+    assert is_shell_request("bash", "execute")
+    assert is_shell_request("bash", "unknown")
+    assert is_shell_request("Terminal", "unknown")  # case-insensitive
+    assert is_shell_request("custom_runner", "unknown", {"command": "ls"})
+
+    assert not is_shell_request("bash", "read")  # explicit label taken at face value
+    assert not is_shell_request("Read", "unknown")
+    assert not is_shell_request("custom_runner", "unknown", {"path": "x"})
 
 
 def test_as_authorize_rule_full_command_truncation_guard() -> None:

@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `snagline eval` no longer greenlights destructive commands when no `--action`
+  is passed. `evaluate_request` ran shell-threat inspection only under
+  `action == "execute"`, but the `eval` subcommand defaults `--action` to
+  `"unknown"`, so `snagline eval --tool bash --resource "rm -rf /"` printed
+  `ALLOW` with zero findings and exit code 0 -- the identical command returned
+  `DENY` with `--action execute`, so the caller-supplied label, not the command,
+  decided whether the shell rules ran at all. The same held for direct
+  `evaluate_request` callers that could not label the action. Shell inspection
+  now consults `is_shell_request`, a shared predicate already used by
+  `as_authorize_rule`, which also treats an `unknown` action as shell work when
+  the tool name denotes a shell or the payload carries a `command` key (#734).
 - Release-notes extraction no longer silently publishes the whole `CHANGELOG.md`
   when `VERSION` matches no heading. `RELEASE_NOTES.md` is the GitHub release
   body, and the inline `python -c` step fell back to writing the entire file --
