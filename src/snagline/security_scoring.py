@@ -7,6 +7,7 @@ contributing factors and policy threshold integration.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -95,13 +96,28 @@ class SecurityScoringEngine:
             )
         self.ask_threshold = float(ask_threshold)
         self.deny_threshold = float(deny_threshold)
-        self.unknown_tool_sensitivity = float(unknown_tool_sensitivity)
+        # Non-finite sensitivities are rejected here rather than at the call
+        # site: a NaN impact propagates into the composite score, every
+        # threshold comparison on it is False, and the engine silently
+        # resolves to "allow" -- a fail-open from one bad knob (issue #432's
+        # class, fixed the same way for the sinks).
+        unknown = float(unknown_tool_sensitivity)
+        if not math.isfinite(unknown):
+            raise ValueError(
+                f"unknown_tool_sensitivity must be finite, got {unknown_tool_sensitivity!r}"
+            )
+        self.unknown_tool_sensitivity = unknown
         self.fail_closed = fail_closed
 
         self.tool_sensitivities: dict[str, float] = dict(DEFAULT_TOOL_SENSITIVITIES)
         if tool_sensitivities:
             for k, v in tool_sensitivities.items():
-                self.tool_sensitivities[k.lower()] = float(v)
+                sensitivity = float(v)
+                if not math.isfinite(sensitivity):
+                    raise ValueError(
+                        f"tool_sensitivities[{k!r}] must be finite, got {v!r}"
+                    )
+                self.tool_sensitivities[k.lower()] = sensitivity
 
     def evaluate(
         self,

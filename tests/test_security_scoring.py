@@ -98,3 +98,26 @@ def test_security_scoring_policy_integration():
     res_bash = policy.decide(req_bash)
     assert res_bash.decision == "ask"
     assert "Security risk score" in res_bash.reason
+
+
+def test_security_scoring_rejects_nonfinite_unknown_tool_sensitivity():
+    """A NaN sensitivity makes the composite score NaN, every threshold
+    comparison on it is False, and the engine silently returns "allow" (issue
+    #738); reject it at the constructor like the sinks did for #432."""
+    with pytest.raises(ValueError, match="unknown_tool_sensitivity must be finite"):
+        SecurityScoringEngine(unknown_tool_sensitivity=float("nan"))
+    with pytest.raises(ValueError, match="unknown_tool_sensitivity must be finite"):
+        SecurityScoringEngine(unknown_tool_sensitivity=float("inf"))
+    with pytest.raises(ValueError, match="unknown_tool_sensitivity must be finite"):
+        SecurityScoringEngine(unknown_tool_sensitivity=float("-inf"))
+
+
+def test_security_scoring_rejects_nonfinite_tool_sensitivity():
+    with pytest.raises(
+        ValueError, match=r"tool_sensitivities\['bash'\] must be finite"
+    ):
+        SecurityScoringEngine(tool_sensitivities={"bash": float("nan")})
+    with pytest.raises(
+        ValueError, match=r"tool_sensitivities\['bash'\] must be finite"
+    ):
+        SecurityScoringEngine(tool_sensitivities={"bash": float("inf")})
