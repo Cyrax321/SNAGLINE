@@ -2,9 +2,12 @@ import concurrent.futures
 import json
 from pathlib import Path
 
+import pytest
+
 from snagline.authorize import Policy, ToolRequest, allow_tools, deny_tools
 from snagline.security_audit import (
     GENESIS_HASH,
+    AuditLogError,
     AuditRecord,
     SecurityAuditLog,
     verify_audit_log_file,
@@ -164,3 +167,55 @@ def test_security_audit_log_policy_integration():
 
     is_valid, err = audit_log.verify()
     assert is_valid is True
+
+
+def _tampered_first_record(log_file: Path, tmp_path: Path) -> Path:
+    """Rewrite the first record's hashed content, keeping its stored hashes."""
+    lines = log_file.read_text(encoding="utf-8").splitlines()
+    lines[0] = json.dumps({**json.loads(lines[0]), "tool_name": "Rm"})
+    tampered = tmp_path / "tampered.jsonl"
+    tampered.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return tampered
+
+
+def test_load_existing_detects_tampered_chain_fail_closed(tmp_path: Path):
+    """_load_existing documents 'Load and verify'; a rewritten first record
+    must not pass silently in the mode advertised for tamper evidence (#736)."""
+    log_file = tmp_path / "audit.jsonl"
+    log = SecurityAuditLog(log_path=log_file)
+    log.append("allow", "Read")
+    log.append("deny", "Bash")
+
+    tampered = _tampered_first_record(log_file, tmp_path)
+    with pytest.raises(AuditLogError, match="chain verification"):
+        SecurityAuditLog(log_path=tampered, fail_closed=True)
+
+
+def test_load_existing_accepts_valid_chain_fail_closed(tmp_path: Path):
+    log_file = tmp_path / "audit.jsonl"
+    log = SecurityAuditLog(log_path=log_file)
+    log.append("allow", "Read")
+    log.append("deny", "Bash")
+
+    loaded = SecurityAuditLog(log_path=log_file, fail_closed=True)
+    assert len(loaded.records) == 2
+    is_valid, err = loaded.verify()
+    assert is_valid is True and err is None
+
+
+def test_load_existing_logs_broken_chain_fail_open(tmp_path: Path, caplog):
+    """Fail-open keeps loading (matching malformed-line behavior) but now says
+    why, so an operator is not told an edited history is intact."""
+    log_file = tmp_path / "audit.jsonl"
+    log = SecurityAuditLog(log_path=log_file)
+    log.append("allow", "Read")
+    log.append("deny", "Bash")
+
+    tampered = _tampered_first_record(log_file, tmp_path)
+    with caplog.at_level("WARNING", logger="snagline.security_audit"):
+        loaded = SecurityAuditLog(log_path=tampered)  # fail_open default
+
+    assert len(loaded.records) == 2
+    is_valid, err = loaded.verify()
+    assert is_valid is False and err is not None
+    assert "chain verification" in caplog.text
