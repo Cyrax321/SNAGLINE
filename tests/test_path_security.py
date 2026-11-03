@@ -560,3 +560,21 @@ def test_valid_absolute_path_in_allowed_roots_not_flagged_as_traversal_issue_678
     )
     win_findings = inspect_path("D:/scratch/test.txt", win_cfg)
     assert not any(f.rule_id == "path_traversal" for f in win_findings)
+
+
+def test_path_config_rejects_invalid_severity_fields() -> None:
+    """Invalid min_severity/decision/severity_overrides must fail at construction.
+
+    Before this, an invalid ``min_severity`` was accepted and later surfaced as a
+    bare ``KeyError`` from ``_SEVERITY_RANK`` inside ``findings_at_or_above`` when
+    ``as_authorize_rule`` evaluated a request, and an out-of-contract ``decision``
+    was emitted verbatim as the rule verdict.
+    """
+    with pytest.raises(ValueError, match="invalid min_severity"):
+        PathSecurityConfig(min_severity="bogus")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="invalid decision"):
+        PathSecurityConfig(decision="allow")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="invalid severity override"):
+        PathSecurityConfig(severity_overrides={"sensitive_locations": "bogus"})  # type: ignore[arg-type,dict-item]

@@ -580,3 +580,22 @@ def test_scan_matches_public_api() -> None:
     assert m.start < m.end
     assert text[m.start : m.end] == m.raw_secret
     assert m.raw_secret == gh_token
+
+
+def test_secret_config_rejects_invalid_severity_fields() -> None:
+    """Invalid min_severity/decision/severity_overrides must fail at construction.
+
+    Before this, an invalid ``min_severity`` was accepted and later surfaced as a
+    bare ``KeyError`` from ``_SEVERITY_RANK`` inside ``findings_at_or_above`` when
+    ``as_authorize_rule`` evaluated a request, an invalid ``severity_overrides``
+    value crashed the findings sort in ``inspect_text``, and an out-of-contract
+    ``decision`` was emitted verbatim as the rule verdict.
+    """
+    with pytest.raises(ValueError, match="invalid min_severity"):
+        SecretSecurityConfig(min_severity="bogus")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="invalid decision"):
+        SecretSecurityConfig(decision="allow")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="invalid severity override"):
+        SecretSecurityConfig(severity_overrides={"aws_access_key": "bogus"})  # type: ignore[arg-type,dict-item]

@@ -103,6 +103,23 @@ class DlpSecurityConfig:
     decision: Literal["ask", "deny"] = "deny"
     include_secrets: bool = True
 
+    def __post_init__(self) -> None:
+        if self.min_severity not in _SEVERITY_RANK:
+            raise ValueError(
+                f"invalid min_severity {self.min_severity!r}; "
+                f"must be one of {sorted(_SEVERITY_RANK)}"
+            )
+        if self.decision not in ("ask", "deny"):
+            raise ValueError(
+                f"invalid decision {self.decision!r}; must be 'ask' or 'deny'"
+            )
+        for rule_id, sev in self.severity_overrides.items():
+            if sev not in _SEVERITY_RANK:
+                raise ValueError(
+                    f"invalid severity override {sev!r} for rule {rule_id!r}; "
+                    f"must be one of {sorted(_SEVERITY_RANK)}"
+                )
+
 
 # ---------------------------------------------------------------------------
 # Checksum and Validation Helpers
