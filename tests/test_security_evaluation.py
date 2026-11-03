@@ -52,6 +52,43 @@ def test_evaluate_request_with_policy_file(tmp_path: Path):
     assert res["decision"] == "deny"
 
 
+def test_evaluate_request_shell_threat_on_unknown_action() -> None:
+    """Issue #734: an uninformative action label must not skip shell inspection.
+
+    ``evaluate_request`` gated shell inspection on ``action == "execute"``, but
+    the CLI's ``eval`` subcommand defaults ``--action`` to ``"unknown"``, so the
+    primary documented entrypoint returned ALLOW with zero findings for a
+    destructive command.
+    """
+    # Tool name marks the request as shell work despite the unknown action.
+    res = evaluate_request(
+        tool_name="bash",
+        action="unknown",
+        resource="rm -rf /",
+    )
+    assert res["decision"] == "deny"
+    rule_ids = [f["rule_id"] for f in res["findings"]]
+    assert "destructive_command" in rule_ids
+
+    # A "command" key in tool_input marks it too, even for an unknown tool name.
+    res_input = evaluate_request(
+        tool_name="custom_runner",
+        action="unknown",
+        resource="rm -rf /",
+        tool_input={"command": "rm -rf /"},
+    )
+    assert res_input["decision"] == "deny"
+
+    # Without either signal an unknown action stays ALLOW (no false positives).
+    res_plain = evaluate_request(
+        tool_name="Read",
+        action="unknown",
+        resource="/etc/shadow",
+    )
+    assert res_plain["decision"] == "allow"
+    assert all("command" not in f["rule_id"] for f in res_plain["findings"])
+
+
 def test_cli_eval_subcommand(capsys):
     ret = main(["eval", "--tool", "Read", "--action", "read", "--json"])
     assert ret == 0

@@ -37,7 +37,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 from snagline.events import make_signature
 
@@ -332,6 +332,46 @@ def findings_at_or_above(
     return tuple(f for f in findings if _SEVERITY_RANK[f.severity] >= floor)
 
 
+#: Tool names commonly backed by a shell. Used to keep shell inspection running
+#: when the caller-supplied action label carries no information (issues #684,
+#: #734): a harness that cannot tell which action a tool performs must not be
+#: able to silently opt its commands out of shell inspection.
+_SHELL_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "bash",
+        "sh",
+        "terminal",
+        "exec",
+        "cmd",
+        "shell",
+        "execute_code",
+    }
+)
+
+
+def is_shell_request(
+    tool_name: str,
+    action: str,
+    tool_input: Mapping[str, Any] | None = None,
+) -> bool:
+    """Decide whether a request should be inspected for shell threats.
+
+    ``execute`` always qualifies. An ``unknown`` action still qualifies when the
+    tool name denotes a shell or the payload carries a ``command`` key, so
+    hosts such as the CLI's ``eval`` subcommand -- which defaults to an
+    uninformative action label -- cannot make a destructive command pass as
+    ``ALLOW`` (issue #734). Any other action label is taken at face value,
+    matching what :func:`as_authorize_rule` enforces.
+    """
+    if action == "execute":
+        return True
+    if action != "unknown":
+        return False
+    if tool_input is not None and "command" in tool_input:
+        return True
+    return tool_name.lower() in _SHELL_TOOL_NAMES
+
+
 def as_authorize_rule(config: ShellThreatConfig | None = None):
     """Build a ``snagline.authorize.Rule`` from shell threat findings.
 
@@ -343,26 +383,8 @@ def as_authorize_rule(config: ShellThreatConfig | None = None):
     cfg = config or ShellThreatConfig()
 
     def _rule(request: ToolRequest) -> RuleVerdict | None:
-        is_exec = request.action == "execute" or (
-            request.action == "unknown"
-            and (
-                request.tool_name.lower()
-                in {
-                    "bash",
-                    "sh",
-                    "terminal",
-                    "exec",
-                    "cmd",
-                    "shell",
-                    "execute_code",
-                }
-                or (
-                    isinstance(request.tool_input, dict)
-                    and "command" in request.tool_input
-                )
-            )
-        )
-        if not is_exec:
+        if not is_shell_request(request.tool_name, request.action, request.tool_input):
+            return None
             return None
         if request.resource and (
             request.resource.endswith("...<truncated>") or len(request.resource) > 4096

@@ -61,9 +61,12 @@ def evaluate_request(
 
     # Shell threat inspection
     try:
-        from snagline.shell_security import inspect_command
+        from snagline.shell_security import inspect_command, is_shell_request
 
-        if action == "execute" and res_str:
+        # An uninformative action label must not suppress shell inspection
+        # (issue #734): the CLI's `eval` defaults --action to "unknown", so a
+        # tool name or a "command" key still marks the request as shell work.
+        if res_str and is_shell_request(tool_name, action, input_map):
             for sf in inspect_command(res_str):
                 findings.append(
                     {
