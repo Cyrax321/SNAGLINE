@@ -4,6 +4,7 @@ from snagline.adapters.mcp_gateway import (
     get_mcp_eval_tool_schema,
 )
 from snagline.authorize import Policy, ask_tools
+from snagline.path_security import PathSecurityConfig, as_authorize_rule
 
 
 def test_mcp_tool_request_normalization():
@@ -75,3 +76,31 @@ def test_mcp_tool_schema_export():
     assert "inputSchema" in schema
     assert "name" in schema["inputSchema"]["required"]
     assert "arguments" in schema["inputSchema"]["required"]
+
+
+def test_mcp_gateway_path_security_confinement():
+    """Issue #751: edit, delete_file, and remove map to recognized file actions."""
+    policy = Policy(
+        default_decision="allow",
+        rules=(
+            as_authorize_rule(
+                PathSecurityConfig(
+                    allowed_roots=("/home/alice/project",),
+                    decision="deny",
+                )
+            ),
+        ),
+    )
+    gw = McpSecurityGateway(policy=policy)
+
+    for name, args in [
+        ("write_file", {"file_path": "../../etc/cron.d/pwn"}),
+        ("edit", {"file_path": "../../etc/cron.d/pwn"}),
+        ("edit_file", {"file_path": "../../etc/cron.d/pwn"}),
+        ("delete_file", {"path": "../../../etc/shadow"}),
+        ("delete", {"path": "../../../etc/shadow"}),
+        ("remove", {"path": "../../../etc/shadow"}),
+    ]:
+        res = gw.evaluate(name, args)
+        assert res["decision"] == "deny", f"expected {name} to be denied"
+        assert res["allowed"] is False
