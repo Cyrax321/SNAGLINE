@@ -277,8 +277,13 @@ def rule_path_traversal(
 
     # If base_dir is configured, check if relative path escapes base_dir
     escapes_base = False
-    is_absolute = clean_raw.startswith("/") or bool(
-        re.match(r"^[a-zA-Z]:[/\\]", clean_raw)
+    # A "~"-rooted path is home-relative, not base_dir-relative: normalize_lexical_path
+    # expands it to an absolute home path, so it is exempt from the escapes_base check
+    # the same way a raw absolute path is (#678, #692, #743).
+    is_absolute = (
+        clean_raw.startswith("/")
+        or clean_raw.startswith("~")
+        or bool(re.match(r"^[a-zA-Z]:[/\\]", clean_raw))
     )
     if config.base_dir and not is_absolute:
         norm_base = normalize_lexical_path(config.base_dir)
