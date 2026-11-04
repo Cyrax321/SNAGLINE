@@ -215,19 +215,24 @@ def load_security_policy(source: str | Any) -> SecurityPolicySchema:
                     f"Invalid JSON in policy source: {err}"
                 ) from err
         else:
-            # Attempt yaml parsing if pyyaml is installed, otherwise lightweight key-value parser
+            # YAML loading needs pyyaml, which is a dev-only dependency: the
+            # core package is intentionally dependency-free (pyproject.toml:
+            # "core: zero required dependencies, non-negotiable"). A hand-rolled
+            # subset parser cannot express this schema's lists or nested
+            # mappings -- list items are skipped outright and a nested
+            # agent_rules block leaks in as a top-level key -- so a schema-valid
+            # policy it "parses" is then reported as the operator's validation
+            # error. Refuse to guess; JSON policies need no dependency.
             try:
                 import yaml  # type: ignore
 
                 raw = yaml.safe_load(content)
-            except ImportError:
-                # Basic key-value parser for simple YAML specs
-                raw = {}
-                for line in content.splitlines():
-                    line = line.strip()
-                    if line and not line.startswith("#") and ":" in line:
-                        k, v = line.split(":", 1)
-                        raw[k.strip()] = v.strip()
+            except ImportError as err:
+                raise PolicyValidationError(
+                    "loading a YAML security policy requires pyyaml; install it "
+                    "with 'pip install pyyaml', or load the policy as JSON, "
+                    "which needs no extra dependency"
+                ) from err
             except Exception as err:
                 raise PolicyValidationError(
                     f"Invalid YAML in policy source: {err}"

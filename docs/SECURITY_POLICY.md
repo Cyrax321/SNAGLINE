@@ -11,6 +11,8 @@ The `snagline.security_policy` module defines a strict, deterministic schema and
 
 ## Example Policy (YAML/JSON)
 
+> **Note:** loading a YAML policy requires `pyyaml` (install with `pip install pyyaml`, or the `dev` extra). SNAGLINE's core is dependency-free, so without it the loader declines YAML with a clear error rather than mis-parsing the policy. JSON policies need no extra dependency.
+
 ```yaml
 version: "1.0"
 name: "production_sandbox_policy"
