@@ -19,15 +19,17 @@ ACTION_MAP: dict[str, str] = {
     "cat": "read",
     "write_file": "write",
     "write": "write",
-    "edit": "edit",
+    "edit": "write",
+    "edit_file": "write",
     "create": "write",
     "bash": "execute",
     "sh": "execute",
     "terminal": "execute",
     "execute_command": "execute",
     "run_command": "execute",
-    "delete_file": "delete",
-    "remove": "delete",
+    "delete_file": "write",
+    "delete": "write",
+    "remove": "write",
 }
 
 RESOURCE_KEYS = ("command", "path", "file_path", "uri", "url", "file", "target")
