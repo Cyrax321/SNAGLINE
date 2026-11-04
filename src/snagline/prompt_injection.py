@@ -58,6 +58,13 @@ class PromptInjectionConfig:
         default_factory=list
     )
 
+    def __post_init__(self) -> None:
+        if self.min_severity not in SEVERITY_ORDER:
+            raise ValueError(
+                f"invalid min_severity {self.min_severity!r}; "
+                f"must be one of {sorted(SEVERITY_ORDER)}"
+            )
+
 
 DEFAULT_PATTERNS: list[tuple[str, InjectionSeverity, str, str]] = [
     (
