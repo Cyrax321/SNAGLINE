@@ -1003,3 +1003,102 @@ def test_deny_command_glob_truncated_command_rejected_issue_695() -> None:
     assert verdict is not None
     assert verdict.decision == "deny"
     assert "truncated" in verdict.reason
+
+
+@pytest.mark.parametrize(
+    "rule_type", ["shell_threats", "path_security", "secret_exposure"]
+)
+def test_declarative_disabled_rules_rejects_unknown_id_issue_748(
+    rule_type: str,
+) -> None:
+    """A typo'd disabled rule id must fail at load time, not silently match nothing (#748)."""
+    with pytest.raises(PolicyError, match="disabled_rules has unknown ids"):
+        policy_from_dict(
+            {"rules": [{"type": rule_type, "disabled_rules": ["does_not_exist"]}]}
+        )
+
+
+@pytest.mark.parametrize(
+    "rule_type", ["shell_threats", "path_security", "secret_exposure"]
+)
+def test_declarative_severity_overrides_rejects_unknown_id_issue_748(
+    rule_type: str,
+) -> None:
+    """A typo'd severity_overrides key must fail at load time, not silently never apply (#748)."""
+    with pytest.raises(PolicyError, match="severity_overrides has unknown ids"):
+        policy_from_dict(
+            {
+                "rules": [
+                    {
+                        "type": rule_type,
+                        "severity_overrides": {"does_not_exist": "critical"},
+                    }
+                ]
+            }
+        )
+
+
+def test_declarative_dlp_accepts_synthesized_secret_rule_ids_issue_748() -> None:
+    """dlp's disabled_rules/severity_overrides legitimately accept secret:<id> ids (#748).
+
+    scan_text synthesizes ``secret:<id>`` rule ids from secret_security when
+    include_secrets is true, so the valid id set is wider than BUILTIN_DLP_RULE_IDS.
+    """
+    pol = policy_from_dict(
+        {
+            "rules": [
+                {
+                    "type": "dlp",
+                    "disabled_rules": ["secret:aws_access_key"],
+                    "severity_overrides": {"secret:aws_access_key": "critical"},
+                }
+            ]
+        }
+    )
+    assert len(pol.rules) == 1
+
+
+def test_declarative_dlp_rejects_unknown_secret_rule_id_issue_748() -> None:
+    """A bogus secret: id is still an unknown id, not a silent no-op (#748)."""
+    with pytest.raises(PolicyError, match="disabled_rules has unknown ids"):
+        policy_from_dict(
+            {"rules": [{"type": "dlp", "disabled_rules": ["secret:not_a_rule"]}]}
+        )
+    with pytest.raises(PolicyError, match="severity_overrides has unknown ids"):
+        policy_from_dict(
+            {
+                "rules": [
+                    {
+                        "type": "dlp",
+                        "severity_overrides": {"secret:not_a_rule": "critical"},
+                    }
+                ]
+            }
+        )
+
+
+def test_declarative_disabled_rules_typo_does_not_silently_keep_rule_armed_issue_748() -> (
+    None
+):
+    """The exact repro from the issue: a misspelled disarm leaves the rule firing.
+
+    Spelled correctly the rule is disarmed and the request is allowed; the typo
+    used to be dropped on the floor, keeping the decision 'ask'.
+    """
+    p = policy_from_dict(
+        {
+            "rules": [
+                {
+                    "type": "shell_threats",
+                    "decision": "ask",
+                    "disabled_rules": ["command_chaining"],
+                }
+            ]
+        }
+    )
+    assert (
+        p.decide(
+            ToolRequest.from_tool_input("Bash", {"command": "ls && echo hi"})
+        ).decision
+        == "allow"
+    )
