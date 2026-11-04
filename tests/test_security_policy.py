@@ -1,4 +1,5 @@
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -112,3 +113,60 @@ def test_load_security_policy_json(tmp_path: Path):
     schema = load_security_policy(file_path)
     assert schema.name == "json_policy"
     assert schema.allowed_tools == ["Grep"]
+
+
+def test_yaml_policy_without_pyyaml_raises_clear_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issue #735: without pyyaml a YAML policy must fail with a clear error.
+
+    The old inline key-value parser could not express lists or nested
+    mappings, so a schema-valid YAML file was type-corrupted and then
+    reported as the operator's validation error (or as an unknown field
+    when a nested agent_rules block leaked in as a top-level key).
+    """
+    monkeypatch.setitem(sys.modules, "yaml", None)
+    yaml_doc = (
+        'version: "1.0"\n'
+        'name: "needs_yaml"\n'
+        "allowed_tools:\n"
+        '  - "Read"\n'
+        "agent_rules:\n"
+        "  untrusted_subagent:\n"
+        "    denied_tools:\n"
+        '      - "Bash"\n'
+    )
+    with pytest.raises(PolicyValidationError, match="requires pyyaml"):
+        load_security_policy(yaml_doc)
+
+
+def test_json_policy_still_loads_without_pyyaml(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issue #735: JSON policies use the stdlib, so pyyaml must not be required."""
+    monkeypatch.setitem(sys.modules, "yaml", None)
+    schema = load_security_policy(
+        json.dumps({"version": "1.0", "allowed_tools": ["Read"]})
+    )
+    assert schema.allowed_tools == ["Read"]
+
+
+def test_yaml_policy_loads_when_pyyaml_available() -> None:
+    """Issue #735: the documented YAML form loads correctly when pyyaml exists."""
+    pytest.importorskip("yaml")
+    yaml_doc = (
+        'version: "1.0"\n'
+        'name: "production_sandbox_policy"\n'
+        "allowed_tools:\n"
+        '  - "Read"\n'
+        '  - "Grep"\n'
+        "agent_rules:\n"
+        "  untrusted_subagent:\n"
+        "    denied_tools:\n"
+        '      - "Bash"\n'
+    )
+    schema = load_security_policy(yaml_doc)
+    assert schema.name == "production_sandbox_policy"
+    assert schema.allowed_tools == ["Read", "Grep"]
+    assert "untrusted_subagent" in schema.agent_rules
+    assert schema.agent_rules["untrusted_subagent"].denied_tools == ["Bash"]
