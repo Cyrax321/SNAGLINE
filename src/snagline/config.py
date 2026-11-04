@@ -206,23 +206,26 @@ def _validated_horizon(cfg: Config) -> None:
         raise ValueError(
             f"warn_fraction must be within (0, 1]; got {cfg.warn_fraction!r}"
         )
-    if cfg.max_episode_wall_seconds is not None and cfg.max_episode_wall_seconds <= 0:
+    if (
+        cfg.max_episode_wall_seconds is not None
+        and not cfg.max_episode_wall_seconds > 0
+    ):
         raise ValueError(
             "max_episode_wall_seconds must be positive when set; "
             f"got {cfg.max_episode_wall_seconds!r}"
         )
-    if cfg.idle_warn_seconds is not None and cfg.idle_warn_seconds <= 0:
+    if cfg.idle_warn_seconds is not None and not cfg.idle_warn_seconds > 0:
         raise ValueError(
             f"idle_warn_seconds must be positive when set; got {cfg.idle_warn_seconds!r}"
         )
-    if cfg.window_scale_steps < 0:
+    if not cfg.window_scale_steps >= 0:
         raise ValueError(
             f"window_scale_steps must be >= 0 (0 disables scaling); "
             f"got {cfg.window_scale_steps!r}"
         )
-    if cfg.max_window < 1:
+    if not cfg.max_window >= 1:
         raise ValueError(f"max_window must be >= 1; got {cfg.max_window!r}")
-    if cfg.cusum_refit_every < 0:
+    if not cfg.cusum_refit_every >= 0:
         raise ValueError(
             f"cusum_refit_every must be >= 0 (0 disables refits); "
             f"got {cfg.cusum_refit_every!r}"
@@ -251,7 +254,7 @@ def _validated_token_runaway(cfg: Config) -> None:
     the budget, so the pre-breach warning can never fire before the breach
     silences it.
     """
-    if cfg.episode_token_budget is not None and cfg.episode_token_budget <= 0:
+    if cfg.episode_token_budget is not None and not cfg.episode_token_budget > 0:
         raise ValueError(
             "episode_token_budget must be positive when set (None disables "
             f"the envelope); got {cfg.episode_token_budget!r}"
@@ -290,7 +293,7 @@ def _validated_enforcement(cfg: Config) -> None:
     # Monitor.default() then rejects a config the direct constructor accepted
     # (issue #353, adjacent observation). Checking it here makes both entry
     # points agree and catches the typo at startup.
-    if float(cfg.halt_timeout_s) <= 0:
+    if not float(cfg.halt_timeout_s) > 0:
         raise ValueError(f"halt_timeout_s must be positive; got {cfg.halt_timeout_s!r}")
     # Issue #587: the *endpoint* was the one enforcement knob still validated
     # only in Monitor._configure_policy. serve/watch/replay build the Config
@@ -348,7 +351,7 @@ def validate_policy(value: str) -> str:
 
 def _validated_max_live_episodes(cfg: Config) -> None:
     """Validate the per-episode cap (issue #184); raise when invalid."""
-    if cfg.max_live_episodes < 1:
+    if not cfg.max_live_episodes >= 1:
         raise ValueError(
             f"max_live_episodes must be >= 1; got {cfg.max_live_episodes!r}"
         )
@@ -390,7 +393,7 @@ def _validated_stagnation(cfg: Config) -> None:
     instead: with the default window of 50 the share moves in steps of 0.02,
     so e.g. ``0.01`` fires precisely when nothing in the window was new.
     """
-    if cfg.stagnation_window_size < 1:
+    if not cfg.stagnation_window_size >= 1:
         raise ValueError(
             f"stagnation_window_size must be >= 1; got {cfg.stagnation_window_size!r}"
         )
@@ -400,7 +403,7 @@ def _validated_stagnation(cfg: Config) -> None:
             "the fire condition unreachable and silently disable the detector; "
             f"got {cfg.stagnation_min_novelty!r}"
         )
-    if cfg.stagnation_patience < 1:
+    if not cfg.stagnation_patience >= 1:
         raise ValueError(
             f"stagnation_patience must be >= 1; got {cfg.stagnation_patience!r}"
         )
@@ -425,7 +428,7 @@ def _validated_side_effect_guard(cfg: Config) -> None:
     it, and ``Config(...)`` itself accepted any value until now.
     """
     value = cfg.side_effect_allowed_repeats
-    if value < 1:
+    if not value >= 1:
         raise ValueError(f"side_effect_allowed_repeats must be >= 1; got {value!r}")
     if value != int(value):
         raise ValueError(
@@ -565,7 +568,7 @@ def _validated_divisor_thresholds(cfg: Config) -> None:
         ("loop_stall_steps", cfg.loop_stall_steps),
     )
     for name, value in knobs:
-        if value < 1:
+        if not value >= 1:
             raise ValueError(
                 f"{name} must be >= 1; got {value!r}. A threshold of 0 makes the "
                 "fire condition trivially true and the score computation divides "
@@ -610,7 +613,7 @@ def _validated_cusum(cfg: Config) -> None:
     # derived sigma0 a zero denominator on a stable baseline.
     for name in ("cusum_sigma_floor_abs", "cusum_sigma_floor_rel"):
         value = getattr(cfg, name)
-        if value < 0:
+        if not value >= 0:
             raise ValueError(
                 f"{name} must be >= 0; got {value!r}. A negative sigma floor is "
                 "discarded by the max() that derives sigma0 and cannot do anything "
@@ -658,7 +661,7 @@ def _validated_counts_and_windows(cfg: Config) -> None:
         "semantic_drift_window_size",
     ):
         value = getattr(cfg, name)
-        if value < 1:
+        if not value >= 1:
             raise ValueError(
                 f"{name} must be >= 1; got {value!r}. A window or sample count of 0 "
                 "either makes the detector's condition unreachable (a silent "
@@ -669,7 +672,7 @@ def _validated_counts_and_windows(cfg: Config) -> None:
     # deque(maxlen=<0) is empty, so the detector silently never fires.
     for name in ("loop_window_size", "cascade_window_size"):
         value = getattr(cfg, name)
-        if value < 0:
+        if not value >= 0:
             raise ValueError(
                 f"{name} must be >= 0; got {value!r}. 0 is a valid fail-safe "
                 "disable for this detector, but a negative window is an empty "
@@ -685,7 +688,7 @@ def _validated_counts_and_windows(cfg: Config) -> None:
     # tool twice. Three is the smallest window able to express "collapse onto
     # one tool among several": it admits a 2:1 split (~0.92 bits) that stays
     # quiet, leaving the alarm for a genuine collapse.
-    if cfg.meltdown_window_size < 3:
+    if not cfg.meltdown_window_size >= 3:
         raise ValueError(
             f"meltdown_window_size must be >= 3; got {cfg.meltdown_window_size!r}. "
             "Below 3 the entropy statistic is vacuous: a one-item window scores "
@@ -732,13 +735,13 @@ def _validated_semantic_drift(cfg: Config) -> None:
     of subtracting, so either one storms a false positive on nearly every
     step.
     """
-    if cfg.semantic_drift_cusum_h <= 0:
+    if not cfg.semantic_drift_cusum_h > 0:
         raise ValueError(
             "semantic_drift_cusum_h must be positive; it is the denominator "
             "of the alarm score, so 0 deadens the detector with a swallowed "
             f"ZeroDivisionError; got {cfg.semantic_drift_cusum_h!r}"
         )
-    if cfg.semantic_drift_cusum_k < 0:
+    if not cfg.semantic_drift_cusum_k >= 0:
         raise ValueError(
             "semantic_drift_cusum_k must be >= 0; a negative slack adds to "
             "the CUSUM debt instead of subtracting and storms false "
@@ -776,7 +779,7 @@ def _validated_score_thresholds(cfg: Config) -> None:
             )
     for name in ("goal_drift_error_tolerance", "goal_drift_latency_k"):
         value = getattr(cfg, name)
-        if value < 0.0:
+        if not value >= 0.0:
             raise ValueError(
                 f"{name} must be >= 0; got {value!r}. The value is slack "
                 "subtracted from a non-negative drift measure, so a negative "
@@ -803,7 +806,7 @@ def _validated_cusum_slack(cfg: Config) -> None:
     """
     for name in ("cusum_k", "token_cusum_k"):
         value = getattr(cfg, name)
-        if value < 0:
+        if not value >= 0:
             raise ValueError(
                 f"{name} must be >= 0; got {value!r}. The slack is subtracted "
                 "from the CUSUM accumulator each scored step, so a negative "
