@@ -112,3 +112,79 @@ def test_load_security_policy_json(tmp_path: Path):
     schema = load_security_policy(file_path)
     assert schema.name == "json_policy"
     assert schema.allowed_tools == ["Grep"]
+
+
+def test_reject_conflicting_agent_tool_rules():
+    """Issue #741: the per-agent conflict check must reject all three pairs, like the global one."""
+    with pytest.raises(PolicyValidationError, match=r"in both denied and ask"):
+        validate_policy_dict(
+            {
+                "version": "1.0",
+                "agent_rules": {
+                    "worker": {"denied_tools": ["Bash"], "ask_tools": ["Bash"]}
+                },
+            }
+        )
+
+    with pytest.raises(PolicyValidationError, match=r"in both allowed and ask"):
+        validate_policy_dict(
+            {
+                "version": "1.0",
+                "agent_rules": {
+                    "worker": {
+                        "allowed_tools": ["Bash"],
+                        "ask_tools": ["Bash"],
+                    }
+                },
+            }
+        )
+
+    with pytest.raises(PolicyValidationError, match=r"in both allowed and denied"):
+        validate_policy_dict(
+            {
+                "version": "1.0",
+                "agent_rules": {
+                    "worker": {
+                        "allowed_tools": ["Bash"],
+                        "denied_tools": ["Bash"],
+                    }
+                },
+            }
+        )
+
+    # The message names the agent and both lists
+    with pytest.raises(PolicyValidationError, match=r"'worker'.*'Bash'.*allowed.*ask"):
+        validate_policy_dict(
+            {
+                "version": "1.0",
+                "agent_rules": {
+                    "worker": {
+                        "allowed_tools": ["Bash"],
+                        "ask_tools": ["Bash"],
+                    }
+                },
+            }
+        )
+
+
+def test_agent_list_conflicts_with_global_list_still_valid():
+    """Issue #741: the new checks are scoped per agent.
+
+    A tool shared between an agent's list and a *global* list is not a
+    conflict -- the agent rule intentionally overrides the global one.
+    """
+    raw = {
+        "version": "1.0",
+        "allowed_tools": ["Read"],
+        "denied_tools": ["Bash"],
+        "ask_tools": ["Write"],
+        "agent_rules": {
+            "researcher": {
+                "allowed_tools": ["Bash"],
+                "ask_tools": ["Read"],
+                "denied_tools": ["Write"],
+            }
+        },
+    }
+    schema = validate_policy_dict(raw)
+    assert schema.agent_rules["researcher"].allowed_tools == ["Bash"]

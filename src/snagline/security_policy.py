@@ -161,10 +161,23 @@ def validate_policy_dict(raw: dict[str, Any]) -> SecurityPolicySchema:
                 f"Tool lists for agent {agent_id!r} must be lists of strings"
             )
 
-        if overlap := set(a_allowed).intersection(set(a_denied)):
-            raise PolicyValidationError(
-                f"Conflicting tools for agent {agent_id!r}: {sorted(overlap)}"
-            )
+        # Mirror the global conflict check: the three tool lists are mutually
+        # exclusive per agent too, not just allowed vs denied.
+        a_allow_set, a_deny_set, a_ask_set = (
+            set(a_allowed),
+            set(a_denied),
+            set(a_ask),
+        )
+        for left, right, left_name, right_name in (
+            (a_allow_set, a_deny_set, "allowed", "denied"),
+            (a_allow_set, a_ask_set, "allowed", "ask"),
+            (a_deny_set, a_ask_set, "denied", "ask"),
+        ):
+            if overlap := left.intersection(right):
+                raise PolicyValidationError(
+                    f"Conflicting tools for agent {agent_id!r}: "
+                    f"{sorted(overlap)} in both {left_name} and {right_name}"
+                )
 
         agent_rules[agent_id] = AgentRuleSpec(
             allowed_tools=list(a_allowed),
