@@ -1,3 +1,5 @@
+import pytest
+
 from snagline.authorize import Policy, ToolRequest
 from snagline.prompt_injection import (
     PromptInjectionConfig,
@@ -73,6 +75,16 @@ def test_disabled_rules_and_min_severity():
     # tool manipulation is high, so should be filtered out by min_severity="critical"
     text_tool = "force execute the task"
     assert inspect_text(text_tool, cfg_strict) == []
+
+
+def test_min_severity_validated_at_construction():
+    """Issue #742: an invalid min_severity must raise, not silently behave as medium."""
+    for ms in ("low", "medium", "high", "critical"):
+        PromptInjectionConfig(min_severity=ms)
+
+    for bad in ("bogus", "High", 5, None):
+        with pytest.raises(ValueError, match="invalid min_severity"):
+            PromptInjectionConfig(min_severity=bad)  # type: ignore[arg-type]
 
 
 def test_as_authorize_rule_integration():
