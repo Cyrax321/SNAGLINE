@@ -100,6 +100,47 @@ def test_unexpandable_tilde_path_not_joined_under_base_dir(
     assert norm == unexpandable
 
 
+def test_traversal_verdict_consistent_for_tilde_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issue #743: a ~-rooted path must not be flagged as escaping base_dir.
+
+    The same file is clean when written absolutely (#678 exempts absolute paths
+    from the escapes_base check); the ~ spelling must agree, because
+    normalize_lexical_path treats it as home-relative, not base_dir-relative.
+    """
+    fake_home = "C:/Users/alice" if os.name == "nt" else "/home/alice"
+    monkeypatch.setenv("HOME", fake_home)
+    if os.name == "nt":
+        monkeypatch.setenv("USERPROFILE", "C:\\Users\\alice")
+
+    cfg = PathSecurityConfig(base_dir="/workspace")
+    hits = [f.rule_id for f in inspect_path("~/notes.txt", cfg)]
+    assert "path_traversal" not in hits
+    # The genuinely absolute spelling of the same file stays clean too
+    hits_abs = [f.rule_id for f in inspect_path(f"{fake_home}/notes.txt", cfg)]
+    assert "path_traversal" not in hits_abs
+
+
+def test_traversal_verdict_consistent_for_unexpandable_tilde_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issue #743: an unexpandable ~user path is home-relative too, not a traversal."""
+    monkeypatch.setattr(os.path, "expanduser", lambda p: p)
+    cfg = PathSecurityConfig(base_dir="/workspace")
+    hits = [f.rule_id for f in inspect_path("~nobody/notes.txt", cfg)]
+    assert "path_traversal" not in hits
+
+
+def test_traversal_still_fires_for_genuinely_escaping_relative_paths() -> None:
+    """Issue #743: exempting ~-rooted paths must not blunt the relative-path check."""
+    cfg = PathSecurityConfig(base_dir="/workspace")
+    hits = [f.rule_id for f in inspect_path("../esc.py", cfg)]
+    assert "path_traversal" in hits
+    hits_in_base = [f.rule_id for f in inspect_path("src/a.py", cfg)]
+    assert "path_traversal" not in hits_in_base
+
+
 # ---------------------------------------------------------------------------
 # Path traversal tests
 # ---------------------------------------------------------------------------
