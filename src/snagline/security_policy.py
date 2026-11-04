@@ -295,7 +295,22 @@ def compile_policy(schema: SecurityPolicySchema) -> Any:
 
                 rules.append(_make_agent_allow(agent_id, a_names))
 
-    # 2. Global explicit rules
+    # 2. Filesystem confinement. `allowed_roots` is a validated schema field
+    #    (the canonical example in docs/SECURITY_POLICY.md lists it), and
+    #    validation accepting a field the compiler silently drops is a
+    #    downgrade with no diagnostic -- so route it through the same
+    #    path-security rule authorize's own policy loader builds instead of
+    #    leaving the boundary unenforced.
+    if schema.allowed_roots:
+        from snagline.path_security import PathSecurityConfig, as_authorize_rule
+
+        rules.append(
+            as_authorize_rule(
+                PathSecurityConfig(allowed_roots=tuple(schema.allowed_roots))
+            )
+        )
+
+    # 3. Global explicit rules
     if schema.denied_tools:
         rules.append(deny_tools(*schema.denied_tools))
     if schema.ask_tools:
