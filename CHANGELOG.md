@@ -87,6 +87,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`semantic_drift_window_size`, default 20) using dual complementary
   statistics (windowed centroid deviation and mean per-event deviation) with a
   calibrated default tolerance of 0.2, resolving the multi-tool ceiling blind spot.
+- `SecurityScoringEngine.evaluate()` now reads the `action` it was already
+  passed. The base-sensitivity lookup keyed solely on the tool name, so the six
+  action-word entries in `DEFAULT_TOOL_SENSITIVITIES` (`write`, `edit`, `patch`,
+  `delete`, `rm`, `read`) could fire only for a tool literally named that. A
+  mutating tool with an unrecognized name -- `cleanup_files` with
+  `action="delete"` -- scored the 25.0 unknown-tool baseline, identical to an
+  unrecognized reader, even though the caller told the engine what the tool
+  does. When the tool name has no entry, the engine now falls back to the
+  action-word sensitivity before the unknown-tool baseline; the name still wins
+  where it has its own entry (#753).
 
 ### Added
 - Added optional `intent: str | None = None` field to `StepEvent` and the `raw`

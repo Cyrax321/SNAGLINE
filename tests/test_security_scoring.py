@@ -22,6 +22,30 @@ def test_security_scoring_baseline_sensitivity():
     assert res_bash.decision == "allow"
 
 
+def test_security_scoring_action_fallback():
+    """Issue #753: an unrecognized tool name falls back to the action-word
+    sensitivity instead of the unknown-tool baseline."""
+    engine = SecurityScoringEngine()
+
+    # A mutating tool the caller declares as "delete" scores 30, not the 25 baseline.
+    res = engine.evaluate(tool_name="cleanup_files", action="delete")
+    assert res.score == 30.0
+    assert res.factors[0].name == "tool_sensitivity"
+    assert "action 'delete'" in res.factors[0].reason
+
+    # A reader with an unrecognized name scores like a read, not like an unknown tool.
+    assert engine.evaluate(tool_name="fetch_weather", action="read").score == 5.0
+
+    # The tool name still wins when it has its own entry.
+    assert engine.evaluate(tool_name="read_file", action="read").score == 5.0
+    assert engine.evaluate(tool_name="rm", action="delete").score == 30.0
+
+    # With neither a known name nor a known action, the baseline still applies.
+    res_unknown = engine.evaluate(tool_name="CustomTool")
+    assert res_unknown.score == 25.0
+    assert res_unknown.factors[0].name == "unknown_tool_penalty"
+
+
 def test_security_scoring_findings_impact():
     engine = SecurityScoringEngine(ask_threshold=40.0, deny_threshold=75.0)
 

@@ -116,6 +116,7 @@ class SecurityScoringEngine:
 
         # 1. Base Tool Sensitivity Factor
         t_key = tool_name.strip().lower()
+        a_key = action.strip().lower() if action else ""
         if t_key in self.tool_sensitivities:
             t_impact = self.tool_sensitivities[t_key]
             factors.append(
@@ -123,6 +124,20 @@ class SecurityScoringEngine:
                     name="tool_sensitivity",
                     impact=t_impact,
                     reason=f"Base sensitivity for tool {tool_name!r} is {t_impact:.1f}",
+                )
+            )
+        elif a_key and a_key in self.tool_sensitivities:
+            # Unrecognized tool name, but the caller told us what the tool does:
+            # fall back to the action-word sensitivity (e.g. action="delete").
+            t_impact = self.tool_sensitivities[a_key]
+            factors.append(
+                SecurityFactor(
+                    name="tool_sensitivity",
+                    impact=t_impact,
+                    reason=(
+                        f"Base sensitivity for tool {tool_name!r} "
+                        f"(action {action!r}) is {t_impact:.1f}"
+                    ),
                 )
             )
         else:
