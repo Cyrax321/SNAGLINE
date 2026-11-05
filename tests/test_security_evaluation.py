@@ -30,6 +30,37 @@ def test_evaluate_request_high_risk():
     assert len(res["findings"]) >= 1
 
 
+def test_evaluate_request_secret_in_non_resource_argument():
+    """Issue #752: secrets must be scanned across all tool_input values, not just
+    the extracted resource, so a key pasted into ``content`` is still caught."""
+    res = evaluate_request(
+        tool_name="write_file",
+        action="write",
+        resource="/tmp/notes.txt",
+        tool_input={
+            "file_path": "/tmp/notes.txt",
+            "content": "aws key AKIAIOSFODNN7EXAMPLE "
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+        },
+    )
+    rule_ids = [f["rule_id"] for f in res["findings"]]
+    assert "aws_access_key" in rule_ids
+    assert res["decision"] in ("ask", "deny")
+
+
+def test_evaluate_request_secret_not_double_counted():
+    """Issue #752: a secret appearing in both the resource and tool_input is
+    reported (and scored) once."""
+    res = evaluate_request(
+        tool_name="write_file",
+        action="write",
+        resource="aws key AKIAIOSFODNN7EXAMPLE wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+        tool_input={"file_path": "aws key AKIAIOSFODNN7EXAMPLE"},
+    )
+    rule_ids = [f["rule_id"] for f in res["findings"]]
+    assert rule_ids == ["aws_access_key"]
+
+
 def test_evaluate_request_missing_tool_name():
     with pytest.raises(ValueError, match="tool_name is required"):
         evaluate_request(tool_name="")
