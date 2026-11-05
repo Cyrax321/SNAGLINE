@@ -87,6 +87,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`semantic_drift_window_size`, default 20) using dual complementary
   statistics (windowed centroid deviation and mean per-event deviation) with a
   calibrated default tolerance of 0.2, resolving the multi-tool ceiling blind spot.
+- `evaluate_request()` now scans every value in `tool_input` for exposed secrets,
+  not just the extracted resource string. Its prompt-injection pass already used
+  `inspect_tool_input`, but the secret pass ran `inspect_text` on the resource
+  alone -- so on a `write_file`/`edit` call, where `file_path` is extracted as
+  the resource, an AWS key pasted into `content` sailed through `snagline eval`
+  and the MCP gateway while the same key placed in the resource was flagged
+  critical. The secret pass now runs the same `inspect_tool_input` walk the
+  authorize integration already used, and deduplicates by
+  `(rule_id, secret_signature)` so a secret present in both the resource and
+  `tool_input` is reported and scored once, not twice (#752).
 
 ### Added
 - Added optional `intent: str | None = None` field to `StepEvent` and the `raw`
