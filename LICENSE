@@ -1,230 +1,201 @@
-UNDER RESEARCH STRICT PROPRIETARY SOFTWARE LICENSE
-AND GLOBAL RESTRICTIVE COVENANT
-=============================================================
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
 
-Copyright (c) 2026 Under Research.
-Maintainer and Authorized Licensor: Cyrax321
-Official Repository: https://github.com/Cyrax321/SNAGLINE
-Official Contact: research@underresearch.com
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
 
-ALL RIGHTS STRICTLY RESERVED WORLDWIDE.
+   1. Definitions.
 
-LEGAL NOTICE:
-THIS IS A BINDING PROPRIETARY LEGAL AGREEMENT AND GLOBAL RESTRICTIVE
-COVENANT. ACCESSING, DOWNLOADING, CLONING, FORKING, VIEWING, INSPECTING,
-COMPILING, EXECUTING, OR USING ANY PORTION OF THIS SOFTWARE CONSTITUTES
-YOUR UNCONDITIONAL ACCEPTANCE OF ALL TERMS, COVENANTS, AND RESTRICTIONS
-CONTAINED HEREIN. IF YOU DO NOT AGREE TO THESE TERMS, YOU ARE STRICTLY
-PROHIBITED FROM ACCESSING, COPYING, OR USING THIS SOFTWARE IN ANY MANNER,
-ANYWHERE IN THE WORLD.
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
 
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
 
-1. EXCLUSIVE PROPRIETARY OWNERSHIP & SCOPE
-------------------------------------------
-The Software—including, without limitation, all source code, object code,
-byte code, logic, architectures, algorithms, heuristics, signatures, detectors,
-framework adapters, security policies, test fixtures, documentation, interfaces,
-and associated intellectual property assets (collectively, the "Software")—is
-the exclusive proprietary work, trade secret, and confidential property of
-Under Research ("Licensor").
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
 
-Under Research retains full, complete, exclusive, and unencumbered copyright,
-title, ownership, and all intellectual property rights in and to the Software
-in all countries and territories across the globe. Nothing in this License
-grants, transfers, conveys, or assigns any ownership, title, or proprietary
-interest to you or to any third party.
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
 
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
 
-2. ABSOLUTE PROHIBITION OF UNAUTHORIZED ACTS
---------------------------------------------
-Except strictly to the extent required by mandatory, non-waivable statutory
-provisions of applicable law (such as non-derogable fair dealing provisions
-under Section 52 of the Indian Copyright Act, 1957, or mandatory reverse
-engineering provisions under Article 5(3) and Article 6 of EU Directive 2009/24/EC
-that cannot be contractually altered), NO PERMISSION, LICENSE, IMMUNITY, OR
-AUTHORIZATION (WHETHER EXPRESS, IMPLIED, BY ESTOPPEL, OR OTHERWISE) IS GRANTED.
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
 
-Under Research expressly prohibits any individual, company, organization,
-governmental entity, or third party from performing any of the following acts
-without prior, express, written authorization executed by Under Research:
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
 
-  (a) COPYING & REPRODUCTION: You shall not copy, duplicate, reproduce, clone,
-      fork, mirror, snapshot, store, archive, scrape, or cache the Software, or
-      any portion, file, class, function, method, AST, or line of code thereof,
-      in any physical, digital, cloud, or virtual medium.
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
 
-  (b) MODIFICATION & DERIVATIVE WORKS: You shall not modify, adapt, alter, edit,
-      patch, translate, refactor, enhance, combine, or prepare derivative works
-      based upon the Software or any portion thereof.
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
 
-  (c) DISTRIBUTION & DISSEMINATION: You shall not distribute, publish, broadcast,
-      circulate, share, transmit, transfer, convey, publicly display, publicly
-      perform, or communicate the Software to the public through any medium,
-      repository, package index, package manager, or network channel.
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
 
-  (d) COMMERCIAL EXPLOITATION & SUBLICENSING: You shall not sell, resell, lease,
-      rent, loan, sublicense, distribute, package, or commercially exploit the
-      Software, or provide access to its functionality as a service (SaaS),
-      managed service, cloud offering, or hosted solution.
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
 
-  (e) REBRANDING & REPACKAGING: You shall not repackage, rebrand, rename, or
-      redistribute the Software, or any derivative or subset thereof, under a
-      different name, moniker, trade name, organization, or corporate entity.
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
 
-  (f) REVERSE ENGINEERING: You shall not decompile, disassemble, reverse engineer,
-      or attempt to reconstruct or discover the source code, internal logic, or
-      underlying algorithms of any binary, byte-compiled, or obfuscated component,
-      except strictly where such prohibition is expressly invalid under
-      non-waivable statutory law.
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
 
-  (g) ARTIFICIAL INTELLIGENCE & MACHINE LEARNING INGESTION: You shall not use,
-      ingest, scrape, tokenize, or process the Software, its code, structure, or
-      documentation as training data, fine-tuning data, validation data, or
-      ground truth for any machine learning model, large language model (LLM),
-      code synthesis engine, neural network, or artificial intelligence system.
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
 
-  (h) SUPPRESSION OF NOTICES: You shall not remove, obscure, delete, or alter
-      any copyright notice, trademark, proprietary designation, disclaimer, or
-      Copyright Management Information (CMI) contained in or affixed to the
-      Software.
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
 
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
 
-3. MULTI-JURISDICTIONAL LEGAL ENFORCEMENT & RIGHT TO SUE
---------------------------------------------------------
-Under Research actively audits and vigorously protects its intellectual property
-globally.
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
 
-Any unauthorized copying, cloning, forking, reproduction, extraction,
-distribution, modification, reverse engineering, commercial use, or infringement
-of this Software constitutes an intentional, willful violation of applicable
-intellectual property and computer protection laws across jurisdictions, including:
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
 
-  (i)   INTERNATIONAL TREATIES & CONVENTIONS:
-        - The Berne Convention for the Protection of Literary and Artistic Works;
-        - The WIPO Copyright Treaty (WCT);
-        - The Universal Copyright Convention (UCC); and
-        - The Agreement on Trade-Related Aspects of Intellectual Property Rights
-          (TRIPS Agreement).
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
 
-  (ii)  INDIA:
-        - Section 51 and Section 55 of the Indian Copyright Act, 1957 (Infringement
-          and Civil Remedies);
-        - Sections 73 and 74 of the Indian Contract Act, 1872 (Breach of Contract);
-        - Specific Relief Act, 1963 (Injunctions and Specific Enforcement); and
-        - Section 43 and Section 66 of the Information Technology Act, 2000
-          (Unauthorized copying, extraction, and downloading of computer data/code).
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
 
-  (iii) UNITED STATES:
-        - Title 17 of the United States Code (U.S. Copyright Act, 17 U.S.C. § 101
-          et seq., including § 501 Infringement);
-        - The Digital Millennium Copyright Act (17 U.S.C. § 1201 Anti-Circumvention
-          and § 1202 Integrity of Copyright Management Information);
-        - The Defend Trade Secrets Act of 2016 (DTSA, 18 U.S.C. § 1836 et seq.)
-          and applicable state Uniform Trade Secrets Acts (UTSA); and
-        - The Computer Fraud and Abuse Act (CFAA, 18 U.S.C. § 1030).
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
 
-  (iv)  UNITED KINGDOM & COMMONWEALTH:
-        - The Copyright, Designs and Patents Act 1988 (CDPA 1988);
-        - The Computer Misuse Act 1990;
-        - The Australian Copyright Act 1968; and
-        - The Singapore Copyright Act 2021.
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or exemplary damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
 
-  (v)   EUROPEAN UNION:
-        - Directive 2009/24/EC on the legal protection of computer programs;
-        - Directive 2001/29/EC (InfoSoc Directive);
-        - Directive (EU) 2016/943 on the protection of undisclosed know-how and
-          business information (Trade Secrets Directive); and
-        - Directive (EU) 2019/790 on copyright in the Digital Single Market.
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
 
-IN THE EVENT OF ANY INFRINGEMENT OR BREACH, UNDER RESEARCH RESERVES ALL RIGHTS
-TO INITIATE IMMEDIATE CIVIL LITIGATION AND PURSUE ALL REMEDIES AVAILABLE AT LAW
-AND IN EQUITY IN ANY COURT OF COMPETENT JURISDICTION, INCLUDING:
+   END OF TERMS AND CONDITIONS
 
-  (a) IMMEDIATE INJUNCTIVE RELIEF: The user acknowledges that unauthorized
-      copying, disclosure, or distribution causes immediate, irreversible, and
-      irreparable harm to Under Research for which monetary damages alone are
-      inadequate. Under Research shall be entitled to seek and obtain immediate
-      ex-parte temporary restraining orders (TROs), preliminary injunctions,
-      interlocutory injunctions, permanent injunctions, search and seizure orders
-      (including Anton Piller orders), asset-freezing orders (Mareva injunctions),
-      and John Doe / Ashok Kumar orders from any competent court worldwide
-      without the necessity of proving actual monetary damages or posting a bond.
+   APPENDIX: How to apply the Apache License to your work.
 
-  (b) ACTUAL DAMAGES, STATUTORY DAMAGES & DISGORGEMENT OF PROFITS: Under
-      Research shall be entitled to seek and recover all actual economic damages
-      suffered, statutory damages where provided by applicable law (such as under
-      17 U.S.C. § 504), full restitution, and an accounting and disgorgement of
-      all revenues, gross profits, and commercial advantages derived by the
-      infringing party from the unauthorized handling of the Software.
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
 
-  (c) LEGAL FEES & INVESTIGATION COSTS: To the fullest extent permitted under
-      applicable law, the infringing party shall be strictly liable to reimburse
-      Under Research for all attorney's fees, advocate fees, court costs, expert
-      witness fees, and forensic/investigative expenses incurred in identifying,
-      halting, and litigating the infringement.
+   Copyright 2026 SNAGLINE contributors
 
-  (d) IMPOUNDMENT, SEIZURE & DESTRUCTION: Under Research shall be entitled to an
-      order mandating the immediate impoundment, delivery up, deletion, and
-      irreversible destruction of all infringing copies, forks, mirrors, and
-      derivative works, together with all storage media holding the same.
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
 
+       http://www.apache.org/licenses/LICENSE-2.0
 
-4. TRADEMARKS AND BRANDING
---------------------------
-"SNAGLINE", "Under Research", the Under Research emblems, and all associated
-product names, logos, and stylizations are exclusive proprietary trademarks of
-Under Research. No license, right, or permission to use any trademark, service
-mark, trade name, or brand is granted under this License.
-
-
-5. DISCLAIMER OF WARRANTIES
----------------------------
-TO THE MAXIMUM EXTENT PERMITTED UNDER APPLICABLE LAW:
-THE SOFTWARE IS PROVIDED "AS IS" AND "AS AVAILABLE", WITHOUT WARRANTY,
-CONDITION, OR REPRESENTATION OF ANY KIND, EITHER EXPRESS, IMPLIED, STATUTORY,
-OR OTHERWISE. UNDER RESEARCH EXPRESSLY DISCLAIMS ALL WARRANTIES, INCLUDING,
-WITHOUT LIMITATION, ANY IMPLIED WARRANTIES OF TITLE, NON-INFRINGEMENT,
-MERCHANTABILITY, SATISFACTORY QUALITY, ACCURACY, SYSTEM INTEGRATION, QUIET
-ENJOYMENT, OR FITNESS FOR A PARTICULAR PURPOSE.
-
-
-6. LIMITATION OF LIABILITY
---------------------------
-TO THE FULLEST EXTENT PERMITTED BY APPLICABLE LAW:
-IN NO EVENT SHALL UNDER RESEARCH, CYRAX321, OR ITS AUTHORIZED REPRESENTATIVES
-BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE
-DAMAGES ARISING OUT OF OR IN CONNECTION WITH THE ACCESS, USE, OR INABILITY TO
-USE THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
-
-
-7. GOVERNING LAW, JURISDICTION & WORLDWIDE ENFORCEMENT
-------------------------------------------------------
-This License, and all claims, disputes, or proceedings arising out of or
-relating to this Software, its unauthorized copying, or its intellectual property,
-shall be governed by, interpreted, and construed in accordance with the
-substantive laws of India, including the Indian Copyright Act, 1957, the Indian
-Contract Act, 1872, and the Specific Relief Act, 1963, without regard to conflict
-of law rules.
-
-Subject to mandatory statutory provisions, the courts of competent jurisdiction
-in India shall have primary jurisdiction over disputes arising hereunder.
-Notwithstanding the foregoing, Under Research reserves the irrevocable,
-unrestricted right to commence legal proceedings, file lawsuits, and seek
-injunctive relief, asset freezing, search orders, and enforcement of judgments
-in any court of competent jurisdiction worldwide where the infringing party
-resides, is incorporated, does business, operates computer systems, maintains
-servers, or holds assets.
-
-
-8. AUTHORIZATION AND COMMERCIAL LICENSING INQUIRIES
----------------------------------------------------
-Any use, deployment, commercialization, reproduction, or distribution of this
-Software beyond the terms explicitly stated herein requires a prior, formal,
-written commercial license agreement duly executed by Under Research.
-
-For all licensing inquiries, enterprise permissions, or legal notices, contact:
-
-  Under Research
-  Authorized Representative: Cyrax321
-  Email: research@underresearch.com
-  GitHub: https://github.com/Cyrax321
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
