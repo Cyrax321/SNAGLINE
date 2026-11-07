@@ -241,7 +241,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Lint workflows (actionlint)
-        uses: rhysd/actionlint@v1.7.7
+        uses: rhysd/actionlint@v1.7.12
 
   version-tag-check:
     # Guard for #105: ensure the version in pyproject.toml has a matching
