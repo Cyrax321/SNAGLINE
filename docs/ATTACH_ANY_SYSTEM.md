@@ -396,3 +396,6 @@ between them is purely operational.
     in #145 via `--client-ca`.
   - Then P2 (ml/drift extras, calibration, eval harness) - the research
     differentiators that approach the paper's accuracy.
+
+---
+*Licensed under the Apache License, Version 2.0. Contributions are welcome.*
