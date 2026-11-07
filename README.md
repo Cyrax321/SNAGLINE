@@ -829,9 +829,9 @@ For a full account of what is verified, believed, and neither, see the [issue tr
 
 ## Contributing
 
-Contributions are considered strictly subject to the project's intellectual property terms. Anyone wishing to propose changes or contribute code must receive prior authorization from Under Research.
+Contributions are welcome! SNAGLINE is an open-source project licensed under the Apache License, Version 2.0. Whether you are fixing bugs, improving docs, adding framework adapters, or creating new detectors, your help is appreciated and contributors are warmly welcome.
 
-For the contributor guide — setup, the CI gates and their real output, the issue bar, and what a pull request is expected to carry — see [CONTRIBUTING.md](CONTRIBUTING.md).
+For the full contributor guide — setup, the CI gates and their real output, the issue bar, and what a pull request is expected to carry — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 - [docs/ADAPTER_GUIDE.md](docs/ADAPTER_GUIDE.md) -- wire any framework into SNAGLINE in an afternoon.
 - [docs/DETECTOR_GUIDE.md](docs/DETECTOR_GUIDE.md) -- the detector contract, constraints, and test shape.
