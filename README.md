@@ -860,20 +860,25 @@ Open an issue before submitting large PRs.
 
 ## License
 
-**Proprietary** - Copyright (c) 2026 Under Research. All Rights Reserved. See [LICENSE](LICENSE).
+SNAGLINE is released under the [Apache License, Version 2.0](LICENSE).
 
-### Proprietary Status
-This software is the exclusive proprietary and confidential property of Under Research (represented by Cyrax321). All rights are strictly reserved worldwide. No permission, license, or authorization is granted to copy, reproduce, modify, merge, adapt, create derivative works of, publish, distribute, sublicense, sell, repackage, rebrand, decompile, train machine learning models on, or commercially exploit any portion of the software without prior, express written authorization from Under Research.
+```text
+Copyright 2026 SNAGLINE contributors
 
-### Legal Enforcement
-Under Research actively protects its intellectual property and reserves all rights to initiate civil litigation and pursue all available remedies, including immediate ex-parte temporary restraining orders, preliminary and permanent injunctions, Anton Piller search and seizure orders, John Doe / Ashok Kumar orders, actual and statutory damages, full disgorgement of profits, and recovery of attorney/advocate fees across all competent jurisdictions worldwide.
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-### Inquiries & Commercial Licensing
-For enterprise licensing, commercial deployment agreements, or authorization inquiries, please contact:
-- **Entity**: Under Research
-- **Authorized Representative**: Cyrax321
-- **Official Contact**: [research@underresearch.com](mailto:research@underresearch.com)
-- **Official Repository**: [https://github.com/Cyrax321/SNAGLINE](https://github.com/Cyrax321/SNAGLINE)
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+```
+
+See [LICENSE](LICENSE) for the full license text, and [NOTICE](NOTICE) for attribution and provenance records.
 
 ---
 
