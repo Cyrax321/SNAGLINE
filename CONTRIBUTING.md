@@ -1,5 +1,7 @@
 # Contributing to SNAGLINE
 
+Contributors are welcome! SNAGLINE is open-source software licensed under the [Apache License, Version 2.0](LICENSE).
+
 Short and practical: the path from clone to green suite, then the conventions
 the maintainers hold. For the design contracts behind detectors, adapters, and
 bridges, read [docs/DETECTOR_GUIDE.md](docs/DETECTOR_GUIDE.md),
