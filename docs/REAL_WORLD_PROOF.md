@@ -313,3 +313,6 @@ Bucharest, Sofia, Zagreb, Belgrade, Reykjavik. \
 
 See also `docs/FRAMEWORK_BRIDGES.md` (how non-Python agents connect via HTTP /
 command / file bridges) and `README.md` (quickstart).
+
+---
+*Licensed under the Apache License, Version 2.0. Contributions are welcome.*
