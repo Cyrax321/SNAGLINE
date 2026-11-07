@@ -168,3 +168,6 @@ def observe(step_id, tool, latency_ms, error=False, episode_id="run"):
 Call `observe(...)` once per tool/LLM call in your loop (or wrap the call).
 Detection and escalation happen automatically; a fault in detection never
 breaks your agent.
+
+---
+*Licensed under the Apache License, Version 2.0. Contributions are welcome.*
