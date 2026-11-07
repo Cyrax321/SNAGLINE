@@ -13,7 +13,7 @@
 <p align="center">
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.10+" /></a>
   <a href="https://pypi.org/project/snagline/"><img src="https://img.shields.io/pypi/v/snagline?style=flat-square&label=PyPI" alt="PyPI" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Proprietary-red?style=flat-square" alt="License" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" alt="License" /></a>
   <a href="https://github.com/Cyrax321/SNAGLINE/issues"><img src="https://img.shields.io/github/issues/Cyrax321/SNAGLINE?style=flat-square" alt="Issues" /></a>
   <a href="https://github.com/Cyrax321/SNAGLINE/actions/workflows/ci.yml"><img src="https://github.com/Cyrax321/SNAGLINE/actions/workflows/ci.yml/badge.svg?style=flat-square" alt="Tests" /></a>
 </p>
