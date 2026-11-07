@@ -46,3 +46,6 @@ SNAGLINE operates two fundamentally distinct execution pipelines:
 1. **Local Hash Chain vs Host Compromise**: A local hash chain is *tamper-evident*, not *tamper-proof*. An adversary who gains root access to the filesystem can rewrite the entire log.
 2. **Regex & Heuristic Parsers**: Static heuristics cannot replace full AST shell interpreters or solve the halting problem. Complex shell string evaluations (e.g. `eval $(printf ...)` ) must be barred by restricting shell access altogether.
 3. **Semantic Injections**: Advisory prompt injection detectors cannot guarantee complete elimination of indirect prompt injection. They must be combined with strict tool allowlists.
+
+---
+*Licensed under the Apache License, Version 2.0. Contributions are welcome.*
