@@ -1706,10 +1706,12 @@ def _cmd_eval(args: argparse.Namespace) -> int:
 
 
 def _cmd_validate_policy(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
     from snagline.security_policy import load_security_policy
 
     try:
-        schema = load_security_policy(args.policy_file)
+        schema = load_security_policy(Path(args.policy_file))
         print(f"Policy {schema.name!r} (v{schema.version}) is valid.")
         return 0
     except Exception as err:

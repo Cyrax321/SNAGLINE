@@ -57,7 +57,7 @@ def evaluate_request(
     if policy is not None:
         active_policy = policy
     elif policy_path is not None:
-        schema = load_security_policy(policy_path)
+        schema = load_security_policy(Path(policy_path))
         active_policy = compile_policy(schema)
     else:
         active_policy = Policy(default_decision="allow")
