@@ -24,3 +24,6 @@ When introducing a new security rule or pattern:
   - Negative tests: verify ordinary benign developer commands/queries do **not** false-positive.
   - Non-execution test: verify the inspector performs no I/O or process spawning.
 - **Document Limitations**: Explicitly document known bypasses or evasion strategies in the corresponding module documentation.
+
+---
+*Licensed under the Apache License, Version 2.0. Contributions are welcome.*
