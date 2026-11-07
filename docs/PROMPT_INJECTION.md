@@ -37,3 +37,6 @@ policy = Policy(
 
 > [!WARNING]
 > Heuristic pattern matching is **advisory** and cannot reliably detect all indirect or obfuscated prompt injections. A clean verdict is never proof that an input is benign. Prompt injection indicators should serve as defense-in-depth alongside strict tool allowlists, least-privilege scoping, and approval barriers.
+
+---
+*Licensed under the Apache License, Version 2.0. Contributions are welcome.*
