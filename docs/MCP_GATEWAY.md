@@ -63,3 +63,6 @@ if not result["allowed"]:
 
 > [!IMPORTANT]
 > The `McpSecurityGateway` evaluates whether a tool call should proceed, but does **not** invoke the tool. The hosting MCP server or agent framework is responsible for enforcing the returned `allow`, `ask`, or `deny` decision before dispatching execution.
+
+---
+*Licensed under the Apache License, Version 2.0. Contributions are welcome.*
