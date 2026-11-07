@@ -53,3 +53,6 @@ is_valid, error = verify_audit_log_file("var/log/snagline_audit.jsonl")
 if not is_valid:
     print(f"Audit log integrity violation: {error}")
 ```
+
+---
+*Licensed under the Apache License, Version 2.0. Contributions are welcome.*
