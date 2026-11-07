@@ -49,3 +49,6 @@ policy = Policy(
     default_decision="allow",
 )
 ```
+
+---
+*Licensed under the Apache License, Version 2.0. Contributions are welcome.*
