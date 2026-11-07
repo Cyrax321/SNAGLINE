@@ -132,3 +132,6 @@ and reduced to those aggregates; no prompt or response content ever reaches
 `baseline.json`, the store, or the retrain log output. Rotate window files
 under your normal log-retention policy; the baseline store itself never needs
 to hold content.
+
+---
+*Licensed under the Apache License, Version 2.0. Contributions are welcome.*
