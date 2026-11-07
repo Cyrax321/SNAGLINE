@@ -216,3 +216,6 @@ No visibility, no detection: frameworks with neither a compaction hook nor
 context introspection leave this detector permanently silent. That is
 inert-by-design, not a gap we paper over; DETECTOR_GUIDE and ADAPTER_GUIDE
 state the same limit.
+
+---
+*Licensed under the Apache License, Version 2.0. Contributions are welcome.*
