@@ -80,3 +80,6 @@ False positives (may over-flag):
 
 Prefer combining shell threat rules with path/tool allowlists rather than
 relying on detection alone.
+
+---
+*Licensed under the Apache License, Version 2.0. Contributions are welcome.*
