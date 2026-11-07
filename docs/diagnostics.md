@@ -5,3 +5,6 @@ The `DiagnosticMetrics` collector provides lightweight runtime telemetry with bo
 - Fixed ring-buffer capacity per metric series (`DEFAULT_MAX_SAMPLES = 1000`, strictly validated positive integer).
 - Exact count accumulation for step events.
 - Quantile/percentile interpolation for latency analysis.
+
+---
+*Licensed under the Apache License, Version 2.0. Contributions are welcome.*
