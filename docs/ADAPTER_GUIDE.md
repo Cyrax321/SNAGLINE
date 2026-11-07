@@ -193,3 +193,6 @@ framework yields (see `tests/adapters/test_langgraph_adapter.py`). Assert
 two things: events reach the Monitor with the right fields, and a known-bad
 sequence (repeated identical action, consecutive errors) actually trips a
 detector through your adapter.
+
+---
+*Licensed under the Apache License, Version 2.0. Contributions are welcome.*
