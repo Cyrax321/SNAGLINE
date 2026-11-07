@@ -481,3 +481,26 @@ def test_baseline_list_versions_without_trajectory_positional_arg(capsys, tmp_pa
     assert rc_store_only == 2
     err_store_only = capsys.readouterr().err
     assert "the following arguments are required: trajectory|retrain" in err_store_only
+
+
+def test_validate_policy_missing_file_cli(capsys, tmp_path):
+    """Ensure validate-policy on a non-existent file reports file not found and exits 2 (#764)."""
+    missing_file = tmp_path / "non_existent_policy.yaml"
+    rc = main(["validate-policy", str(missing_file)])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "Security policy file not found" in err
+    assert "Policy must be a mapping" not in err
+
+
+def test_validate_policy_valid_file_cli(capsys, tmp_path):
+    """Ensure validate-policy on a valid file succeeds and exits 0 (#764)."""
+    valid_file = tmp_path / "valid_policy.json"
+    valid_file.write_text(
+        json.dumps({"version": "1.0", "name": "my_policy"}),
+        encoding="utf-8",
+    )
+    rc = main(["validate-policy", str(valid_file)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Policy 'my_policy' (v1.0) is valid." in out

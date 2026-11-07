@@ -112,3 +112,16 @@ def test_load_security_policy_json(tmp_path: Path):
     schema = load_security_policy(file_path)
     assert schema.name == "json_policy"
     assert schema.allowed_tools == ["Grep"]
+
+
+def test_load_security_policy_missing_file_raises_filenotfound(tmp_path: Path):
+    missing_path = tmp_path / "non_existent_policy.yaml"
+    with pytest.raises(FileNotFoundError, match="Security policy file not found"):
+        load_security_policy(missing_path)
+
+
+def test_load_security_policy_directory_raises_filenotfound(tmp_path: Path):
+    policy_dir = tmp_path / "policy_dir"
+    policy_dir.mkdir()
+    with pytest.raises(FileNotFoundError, match="Security policy file not found"):
+        load_security_policy(policy_dir)

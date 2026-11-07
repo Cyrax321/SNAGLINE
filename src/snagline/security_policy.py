@@ -214,11 +214,19 @@ def load_security_policy(source: str | Any) -> SecurityPolicySchema:
     if isinstance(source, dict):
         raw = source
     elif isinstance(source, (str, Path)):
-        p = Path(source)
-        if p.exists() and p.is_file():
-            content = p.read_text(encoding="utf-8")
+        if isinstance(source, Path):
+            if not source.exists() or not source.is_file():
+                raise FileNotFoundError(f"Security policy file not found: {source}")
+            content = source.read_text(encoding="utf-8")
         else:
-            content = str(source)
+            p = Path(source)
+            try:
+                if p.exists() and p.is_file():
+                    content = p.read_text(encoding="utf-8")
+                else:
+                    content = str(source)
+            except OSError:
+                content = str(source)
 
         content = content.strip()
         if content.startswith("{"):
