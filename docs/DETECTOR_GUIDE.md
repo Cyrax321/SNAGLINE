@@ -526,3 +526,6 @@ of deliberate silence, and a snapshot written with a different
 `reservoir_size` is dropped rather than reshaped, so a restart onto a
 differently-configured host costs a cold start on the ESN leg. The
 deterministic detectors have no such gap.
+
+---
+*Licensed under the Apache License, Version 2.0. Contributions are welcome.*
