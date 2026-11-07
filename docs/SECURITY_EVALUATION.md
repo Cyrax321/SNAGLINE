@@ -62,3 +62,6 @@ Content-Type: application/json
 
 **Response (`200 OK`):**
 Returns the same evaluation payload as `snagline eval --json`.
+
+---
+*Licensed under the Apache License, Version 2.0. Contributions are welcome.*
