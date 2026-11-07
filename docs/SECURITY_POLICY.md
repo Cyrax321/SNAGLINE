@@ -56,3 +56,6 @@ policy = compile_policy(schema)
 # Evaluate incoming requests
 result = policy.decide(request)
 ```
+
+---
+*Licensed under the Apache License, Version 2.0. Contributions are welcome.*
